@@ -209,6 +209,8 @@ struct ProjectSessionListView: View {
                                     trimmedProjectSearch.isEmpty ? "No Projects" : "No Matching Projects",
                                     systemImage: "folder"
                                 )
+                                .frame(maxWidth: .infinity, minHeight: 260)
+                                .listRowSeparator(.hidden)
                             }
                         }
                     case .sessions:
@@ -225,6 +227,8 @@ struct ProjectSessionListView: View {
                             }
                             if model.threads.isEmpty {
                                 ContentUnavailableView("No Sessions", systemImage: "bubble.left.and.bubble.right")
+                                    .frame(maxWidth: .infinity, minHeight: 260)
+                                    .listRowSeparator(.hidden)
                             }
                         }
                     }
