@@ -70,7 +70,7 @@ final class AppViewModelTests: XCTestCase {
         viewModel.selectProject(project.id)
         await viewModel.startNewThread()
 
-        XCTAssertEqual(viewModel.statusMessage, "Connect to the app-server before starting a new thread.")
+        XCTAssertEqual(viewModel.statusMessage, "Connect to the app-server before starting a new session.")
     }
 
     @MainActor
@@ -286,7 +286,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.threads.map(\.id), ["thread-new", "thread-1"])
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
         XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
-        XCTAssertEqual(viewModel.statusMessage, "New thread created.")
+        XCTAssertEqual(viewModel.statusMessage, "New session created.")
         await viewModel.disconnect()
     }
 

@@ -430,7 +430,7 @@ final class AppViewModel: ObservableObject {
         let scope = currentThreadLoadScope
         await runBusy("Starting thread") {
             guard let appServer else {
-                statusMessage = "Connect to the app-server before starting a new thread."
+                statusMessage = "Connect to the app-server before starting a new session."
                 return
             }
             let thread = try await appServer.startThread(cwd: scope.cwd)
@@ -440,7 +440,7 @@ final class AppViewModel: ObservableObject {
             selectedThreadID = thread.id
             hydrateConversation(from: thread)
             threads = prioritizeActiveThreads([thread] + threads.filter { $0.id != thread.id })
-            statusMessage = "New thread created."
+            statusMessage = "New session created."
         }
     }
 

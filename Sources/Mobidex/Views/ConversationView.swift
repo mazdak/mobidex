@@ -15,7 +15,10 @@ struct ConversationView: View {
             } else if let project = model.selectedProject {
                 projectHeader(project)
                 Divider()
-                ContentUnavailableView("No Sessions", systemImage: "bubble.left.and.bubble.right")
+                ContentUnavailableView(
+                    model.canSendMessage ? "No Sessions" : "Connect to Create a Session",
+                    systemImage: "bubble.left.and.bubble.right"
+                )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView("Select a Session", systemImage: "bubble.left.and.bubble.right")
@@ -51,14 +54,20 @@ struct ConversationView: View {
             Button {
                 Task { await model.startNewThread() }
             } label: {
-                Label("New Thread", systemImage: "plus.bubble")
+                Label("New Session", systemImage: "plus.bubble")
             }
             .buttonStyle(.bordered)
             .disabled(model.isBusy || !model.canSendMessage)
+            .accessibilityHint(model.canSendMessage ? "Creates a Codex session for this project." : "Connect to the server before creating a session.")
             .accessibilityIdentifier("newThreadButton")
             Label(thread.status.sessionLabel, systemImage: thread.status.isActive ? "dot.radiowaves.left.and.right" : "checkmark.circle")
                 .font(.caption)
                 .foregroundStyle(thread.status.isActive ? .green : .secondary)
+            if !model.canSendMessage {
+                Label("Connect to create sessions", systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding()
     }
@@ -78,10 +87,11 @@ struct ConversationView: View {
             Button {
                 Task { await model.startNewThread() }
             } label: {
-                Label("New Thread", systemImage: "plus.bubble")
+                Label("New Session", systemImage: "plus.bubble")
             }
             .buttonStyle(.bordered)
             .disabled(model.isBusy || !model.canSendMessage)
+            .accessibilityHint(model.canSendMessage ? "Creates a Codex session for this project." : "Connect to the server before creating a session.")
             .accessibilityIdentifier("newThreadButton")
         }
         .padding()

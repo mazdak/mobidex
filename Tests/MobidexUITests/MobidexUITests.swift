@@ -26,11 +26,11 @@ final class MobidexUITests: XCTestCase {
         projectRow.tap()
 
         let newThreadButton = app.buttons["newThreadButton"]
-        XCTAssertTrue(waitForEnabled(newThreadButton, timeout: timeout), "New Thread button did not become enabled after opening the seeded project.")
+        XCTAssertTrue(waitForEnabled(newThreadButton, timeout: timeout), "New Session button did not become enabled after opening the seeded project.")
         newThreadButton.tap()
 
         let composer = app.descendants(matching: .any)["messageComposer"]
-        XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after starting a new thread.")
+        XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after starting a new session.")
         composer.tap()
         composer.typeText(smokeText("PROMPT", defaultValue: "Start control smoke"))
 
