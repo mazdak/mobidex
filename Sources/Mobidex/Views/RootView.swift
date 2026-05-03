@@ -114,6 +114,8 @@ struct ProjectSessionListView: View {
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var preferredCompactColumn: NavigationSplitViewColumn
     @State private var showingProjectAdd = false
+    @State private var selectedMode: ProjectSessionMode = .projects
+    @State private var projectSearchText = ""
 
     var body: some View {
         Group {
@@ -150,38 +152,79 @@ struct ProjectSessionListView: View {
                         .buttonStyle(.bordered)
                     }
 
-                    Section("Projects") {
-                        ForEach(server.projects) { project in
-                            Button {
-                                model.selectProject(project.id)
-                                promoteDetailIfCompact()
-                                Task { await model.refreshThreads() }
-                            } label: {
-                                ProjectRow(project: project, selected: project.id == model.selectedProjectID)
+                    Section {
+                        Picker("List", selection: $selectedMode) {
+                            ForEach(ProjectSessionMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("projectRow")
-                            .swipeActions {
-                                Button(role: .destructive) {
-                                    model.removeProject(project)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
+                    switch selectedMode {
+                    case .projects:
+                        Section("Projects") {
+                            ForEach(visibleProjects(from: server.projects)) { project in
+                                HStack(spacing: 10) {
+                                    Button {
+                                        model.selectProject(project.id)
+                                        promoteDetailIfCompact()
+                                        Task { await model.refreshThreads() }
+                                    } label: {
+                                        ProjectRow(project: project, selected: project.id == model.selectedProjectID)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("projectRow")
+
+                                    Button {
+                                        _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
+                                    } label: {
+                                        Image(systemName: project.isFavorite ? "star.fill" : "star")
+                                            .foregroundStyle(project.isFavorite ? .yellow : .secondary)
+                                            .frame(width: 32, height: 32)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .accessibilityLabel(project.isFavorite ? "Remove Favorite" : "Add Favorite")
+                                    .accessibilityIdentifier("projectFavoriteButton")
+                                }
+                                .swipeActions {
+                                    Button {
+                                        _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
+                                    } label: {
+                                        Label(project.isFavorite ? "Unfavorite" : "Favorite", systemImage: project.isFavorite ? "star.slash" : "star")
+                                    }
+                                    .tint(.yellow)
+
+                                    Button(role: .destructive) {
+                                        model.removeProject(project)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
                                 }
                             }
                         }
-                    }
-
-                    Section("Sessions") {
-                        ForEach(model.threads) { thread in
-                            Button {
-                                promoteDetailIfCompact()
-                                Task { await model.openThread(thread) }
-                            } label: {
-                                ThreadRow(thread: thread, selected: thread.id == model.selectedThreadID)
+                    case .sessions:
+                        Section("Sessions") {
+                            ForEach(model.threads) { thread in
+                                Button {
+                                    promoteDetailIfCompact()
+                                    Task { await model.openThread(thread) }
+                                } label: {
+                                    ThreadRow(thread: thread, selected: thread.id == model.selectedThreadID)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("threadRow")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("threadRow")
+                            if model.threads.isEmpty {
+                                ContentUnavailableView("No Sessions", systemImage: "bubble.left.and.bubble.right")
+                            }
                         }
+                    }
+                }
+                .searchable(text: $projectSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search Projects")
+                .onChange(of: projectSearchText) { _, newValue in
+                    if !newValue.isEmpty {
+                        selectedMode = .projects
                     }
                 }
                 .toolbar {
@@ -223,6 +266,42 @@ struct ProjectSessionListView: View {
         if horizontalSizeClass == .compact {
             preferredCompactColumn = .detail
             columnVisibility = .detailOnly
+        }
+    }
+
+    private func visibleProjects(from projects: [ProjectRecord]) -> [ProjectRecord] {
+        let trimmedSearch = projectSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = projects.filter { project in
+            guard !trimmedSearch.isEmpty else {
+                return true
+            }
+            return project.displayName.localizedCaseInsensitiveContains(trimmedSearch)
+                || project.path.localizedCaseInsensitiveContains(trimmedSearch)
+        }
+        return filtered.sorted { lhs, rhs in
+            if lhs.isFavorite != rhs.isFavorite {
+                return lhs.isFavorite && !rhs.isFavorite
+            }
+            let lhsDate = lhs.lastSeenAt ?? .distantPast
+            let rhsDate = rhs.lastSeenAt ?? .distantPast
+            if lhsDate != rhsDate {
+                return lhsDate > rhsDate
+            }
+            return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
+        }
+    }
+}
+
+private enum ProjectSessionMode: String, CaseIterable, Identifiable {
+    case projects
+    case sessions
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .projects: "Projects"
+        case .sessions: "Sessions"
         }
     }
 }

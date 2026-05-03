@@ -66,6 +66,17 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
     var discovered: Bool
     var threadCount: Int
     var lastSeenAt: Date?
+    var isFavorite: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case path
+        case displayName
+        case discovered
+        case threadCount
+        case lastSeenAt
+        case isFavorite
+    }
 
     init(
         id: UUID = UUID(),
@@ -73,7 +84,8 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         displayName: String? = nil,
         discovered: Bool = false,
         threadCount: Int = 0,
-        lastSeenAt: Date? = nil
+        lastSeenAt: Date? = nil,
+        isFavorite: Bool = false
     ) {
         self.id = id
         self.path = path
@@ -81,6 +93,18 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         self.discovered = discovered
         self.threadCount = threadCount
         self.lastSeenAt = lastSeenAt
+        self.isFavorite = isFavorite
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        path = try container.decode(String.self, forKey: .path)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        discovered = try container.decode(Bool.self, forKey: .discovered)
+        threadCount = try container.decode(Int.self, forKey: .threadCount)
+        lastSeenAt = try container.decodeIfPresent(Date.self, forKey: .lastSeenAt)
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
     }
 }
 

@@ -120,6 +120,36 @@ final class AppViewModel: ObservableObject {
     }
 
     @discardableResult
+    func setProjectFavorite(_ project: ProjectRecord, isFavorite: Bool) -> Bool {
+        guard let selectedServerID else {
+            return false
+        }
+
+        var nextServers = servers
+        guard let serverIndex = nextServers.firstIndex(where: { $0.id == selectedServerID }),
+              let projectIndex = nextServers[serverIndex].projects.firstIndex(where: { $0.id == project.id })
+        else {
+            return false
+        }
+
+        guard nextServers[serverIndex].projects[projectIndex].isFavorite != isFavorite else {
+            return true
+        }
+
+        nextServers[serverIndex].projects[projectIndex].isFavorite = isFavorite
+        nextServers[serverIndex].updatedAt = .now
+
+        do {
+            try persistServers(nextServers)
+            servers = nextServers
+            return true
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
     func saveServer(_ server: ServerRecord, credential: SSHCredential) async -> Bool {
         let trimmedHost = server.host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedHost.isEmpty else {

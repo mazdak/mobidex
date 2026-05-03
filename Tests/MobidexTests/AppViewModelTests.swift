@@ -92,6 +92,25 @@ final class AppViewModelTests: XCTestCase {
         )
     }
 
+    func testProjectRecordDecodesMissingFavoriteAsFalse() throws {
+        let data = Data("""
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "path": "/srv/app",
+          "displayName": "app",
+          "discovered": true,
+          "threadCount": 2,
+          "lastSeenAt": 1770000300
+        }
+        """.utf8)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .secondsSince1970
+        let project = try decoder.decode(ProjectRecord.self, from: data)
+
+        XCTAssertFalse(project.isFavorite)
+    }
+
     @MainActor
     func testPrepareNewThreadClearsExistingSelectedThreadWhenConnected() async throws {
         let project = ProjectRecord(path: "/srv/app")
@@ -229,6 +248,38 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(project.discovered)
         XCTAssertEqual(project.threadCount, 3)
         XCTAssertEqual(project.lastSeenAt, Date(timeIntervalSince1970: 1_770_000_300))
+    }
+
+    @MainActor
+    func testProjectFavoritePersistsAndSurvivesDiscoveryRefresh() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: StubSSHService(discoveredProjects: [
+                RemoteProject(path: "/srv/app", threadCount: 4, lastSeenAt: Date(timeIntervalSince1970: 1_770_000_400))
+            ])
+        )
+
+        XCTAssertTrue(viewModel.setProjectFavorite(project, isFavorite: true))
+        var savedProject = try XCTUnwrap(try repository.loadServers().first?.projects.first)
+        XCTAssertTrue(savedProject.isFavorite)
+
+        await viewModel.refreshProjects()
+
+        savedProject = try XCTUnwrap(viewModel.selectedServer?.projects.first)
+        XCTAssertTrue(savedProject.isFavorite)
+        XCTAssertEqual(savedProject.threadCount, 4)
     }
 
     @MainActor
