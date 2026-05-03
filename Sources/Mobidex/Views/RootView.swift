@@ -226,7 +226,10 @@ struct ProjectSessionListView: View {
                                 .accessibilityIdentifier("threadRow")
                             }
                             if model.threads.isEmpty {
-                                ContentUnavailableView("No Sessions", systemImage: "bubble.left.and.bubble.right")
+                                ContentUnavailableView(
+                                    model.connectionState == .connected ? "No Sessions" : "Connect to Load Sessions",
+                                    systemImage: "bubble.left.and.bubble.right"
+                                )
                                     .frame(maxWidth: .infinity, minHeight: 260)
                                     .listRowSeparator(.hidden)
                             }
@@ -294,28 +297,15 @@ struct ProjectSessionListView: View {
     }
 
     private func projectRow(_ project: ProjectRecord) -> some View {
-        HStack(spacing: 10) {
-            Button {
-                model.selectProject(project.id)
-                promoteDetailIfCompact()
-                Task { await model.refreshThreads() }
-            } label: {
-                ProjectRow(project: project, selected: project.id == model.selectedProjectID)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("projectRow")
-
-            Button {
-                _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
-            } label: {
-                Image(systemName: project.isFavorite ? "star.fill" : "star")
-                    .foregroundStyle(project.isFavorite ? .yellow : .secondary)
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel(project.isFavorite ? "Remove Favorite" : "Add Favorite")
-            .accessibilityIdentifier("projectFavoriteButton")
+        Button {
+            model.selectProject(project.id)
+            promoteDetailIfCompact()
+            Task { await model.refreshThreads() }
+        } label: {
+            ProjectRow(project: project, selected: project.id == model.selectedProjectID)
         }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("projectRow")
         .swipeActions {
             Button {
                 _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
@@ -324,10 +314,12 @@ struct ProjectSessionListView: View {
             }
             .tint(.yellow)
 
-            Button(role: .destructive) {
-                model.removeProject(project)
-            } label: {
-                Label("Remove", systemImage: "minus.circle")
+            if !project.discovered {
+                Button(role: .destructive) {
+                    model.removeProject(project)
+                } label: {
+                    Label("Remove", systemImage: "minus.circle")
+                }
             }
         }
     }
@@ -376,7 +368,7 @@ struct ProjectSections: Equatable {
             !project.discovered && !project.isFavorite
         }
         showFilter = projects.contains { $0.discovered && !$0.isFavorite && $0.threadCount == 0 }
-        discoveredTitle = (showInactiveDiscoveredProjects || searching) ? "Discovered" : "Discovered Active"
+        discoveredTitle = "Discovered"
     }
 }
 
@@ -412,7 +404,7 @@ struct ProjectRow: View {
                 if project.discovered {
                     Text(
                         project.threadCount > 0
-                            ? "\(project.threadCount) active \(project.threadCount == 1 ? "chat" : "chats")"
+                            ? "\(project.threadCount) \(project.threadCount == 1 ? "chat" : "chats")"
                             : "No chats"
                     )
                         .font(.caption2)
@@ -425,10 +417,10 @@ struct ProjectRow: View {
                 }
             }
             Spacer()
-            if project.discovered {
-                Image(systemName: "sparkle.magnifyingglass")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if project.isFavorite {
+                Image(systemName: "star.fill")
+                    .font(.body)
+                    .foregroundStyle(.yellow)
             }
         }
     }

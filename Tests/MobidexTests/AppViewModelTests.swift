@@ -164,7 +164,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(sections.favorites.map(\.path), ["/srv/favorite"])
         XCTAssertEqual(sections.discovered.map(\.path), ["/srv/active"])
         XCTAssertTrue(sections.showFilter)
-        XCTAssertEqual(sections.discoveredTitle, "Discovered Active")
+        XCTAssertEqual(sections.discoveredTitle, "Discovered")
     }
 
     func testProjectSectionsCanIncludeInactiveDiscoveredProjects() throws {
