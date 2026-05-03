@@ -193,21 +193,31 @@ actor CodexAppServerClient {
     }
 
     func listThreads(cwd: String? = nil, limit: Int = 80) async throws -> [CodexThread] {
-        var params: [String: JSONValue] = [
-            "limit": .int(limit),
-            "sortKey": .string("updated_at"),
-            "sortDirection": .string("desc"),
-            "archived": .bool(false),
-            "sourceKinds": Self.allThreadSourceKinds
-        ]
-        if let cwd, !cwd.isEmpty {
-            params["cwd"] = .string(cwd)
-        }
-        let response = try await requestDecoded(ThreadListResponse.self, method: "thread/list", params: .object(params))
+        var cursor: String?
+        var threads: [CodexThread] = []
+        repeat {
+            var params: [String: JSONValue] = [
+                "limit": .int(limit),
+                "sortKey": .string("updated_at"),
+                "sortDirection": .string("desc"),
+                "archived": .bool(false),
+                "sourceKinds": Self.allThreadSourceKinds
+            ]
+            if let cwd, !cwd.isEmpty {
+                params["cwd"] = .string(cwd)
+            }
+            if let cursor {
+                params["cursor"] = .string(cursor)
+            }
+            let response = try await requestDecoded(ThreadListResponse.self, method: "thread/list", params: .object(params))
+            threads.append(contentsOf: response.data)
+            cursor = response.nextCursor
+        } while cursor != nil
+
         guard let cwd, !cwd.isEmpty else {
-            return response.data
+            return threads
         }
-        return response.data.filter { $0.cwd == cwd }
+        return threads.filter { $0.cwd == cwd }
     }
 
     func listLoadedThreadIDs(limit: Int = 200) async throws -> [String] {

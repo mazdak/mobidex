@@ -378,7 +378,7 @@ final class AppViewModel: ObservableObject {
             startEventLoop()
             connectionState = .connected
             statusMessage = "App-server connected."
-            try await refreshProjectsUsingCredential(credential, server: targetServer)
+            try await refreshProjectsUsingCredential(credential, server: targetServer, syncActiveThreadCounts: false)
             guard selectedServerID == targetServer.id else {
                 throw AppViewModelError.selectionChanged
             }
@@ -390,7 +390,7 @@ final class AppViewModel: ObservableObject {
         guard let selectedServer else { return }
         await runBusy("Discovering projects") {
             let credential = try credentialStore.loadCredential(serverID: selectedServer.id)
-            try await refreshProjectsUsingCredential(credential, server: selectedServer)
+            try await refreshProjectsUsingCredential(credential, server: selectedServer, syncActiveThreadCounts: true)
         }
     }
 
@@ -571,7 +571,7 @@ final class AppViewModel: ObservableObject {
         try repository.saveServers(servers)
     }
 
-    private func refreshProjectsUsingCredential(_ credential: SSHCredential, server: ServerRecord) async throws {
+    private func refreshProjectsUsingCredential(_ credential: SSHCredential, server: ServerRecord, syncActiveThreadCounts: Bool) async throws {
         let previousScope = currentThreadLoadScope
         let discovered = try await sshService.discoverProjects(server: server, credential: credential)
         var nextServers = servers
@@ -602,6 +602,10 @@ final class AppViewModel: ObservableObject {
             record.threadCount = project.threadCount
             record.lastSeenAt = project.lastSeenAt
             existing[project.path] = record
+        }
+        if syncActiveThreadCounts, let appServer {
+            let activeThreads = try await appServer.listThreads(limit: 1_000)
+            applyActiveThreadCounts(activeThreads, to: &existing)
         }
         nextServers[index].projects = existing.values.sorted { lhs, rhs in
             (lhs.lastSeenAt ?? .distantPast) > (rhs.lastSeenAt ?? .distantPast)
@@ -879,6 +883,32 @@ final class AppViewModel: ObservableObject {
                 return lhs.updatedAt > rhs.updatedAt
             }
             return lhs.id < rhs.id
+        }
+    }
+
+    private func applyActiveThreadCounts(_ threads: [CodexThread], to projects: inout [String: ProjectRecord]) {
+        for path in projects.keys {
+            guard var record = projects[path] else { continue }
+            record.threadCount = 0
+            record.lastSeenAt = nil
+            projects[path] = record
+        }
+
+        var projectPathBySessionPath: [String: String] = [:]
+        for (path, record) in projects {
+            for sessionPath in ProjectRecord.normalizedSessionPaths(record.sessionPaths, primaryPath: record.path) {
+                projectPathBySessionPath[sessionPath] = path
+            }
+        }
+
+        for thread in threads {
+            let projectPath = projectPathBySessionPath[thread.cwd] ?? thread.cwd
+            var record = projects[projectPath] ?? ProjectRecord(path: projectPath, discovered: true)
+            record.discovered = true
+            record.sessionPaths = ProjectRecord.normalizedSessionPaths(record.sessionPaths + [thread.cwd], primaryPath: record.path)
+            record.threadCount += 1
+            record.lastSeenAt = max(record.lastSeenAt ?? .distantPast, thread.updatedAt)
+            projects[projectPath] = record
         }
     }
 

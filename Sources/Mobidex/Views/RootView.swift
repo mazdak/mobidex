@@ -331,8 +331,8 @@ struct ProjectRow: View {
                 if project.discovered {
                     Text(
                         project.threadCount > 0
-                            ? "\(project.threadCount) \(project.threadCount == 1 ? "session" : "sessions") found in .codex"
-                            : "No sessions found in .codex"
+                            ? "\(project.threadCount) active \(project.threadCount == 1 ? "chat" : "chats")"
+                            : "No chats"
                     )
                         .font(.caption2)
                         .foregroundStyle(.secondary)

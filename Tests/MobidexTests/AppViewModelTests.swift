@@ -161,13 +161,7 @@ final class AppViewModelTests: XCTestCase {
         let viewModel = AppViewModel(
             repository: repository,
             credentialStore: credentials,
-            sshService: ScriptedSSHService(
-                appServer: CodexAppServerClient(transport: transport),
-                discoveredProjectBatches: [
-                    [RemoteProject(path: "/srv/old", threadCount: 1, lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300))],
-                    []
-                ]
-            )
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
         )
 
         let connectTask = Task { await viewModel.connectSelectedServer() }
@@ -581,7 +575,16 @@ final class AppViewModelTests: XCTestCase {
         await connectTask.value
         XCTAssertEqual(viewModel.selectedThreadID, "thread-old")
 
-        await viewModel.refreshProjects()
+        cursor = transport.sentLinesSnapshot.count
+        let refreshTask = Task { await viewModel.refreshProjects() }
+        let activeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        let params = try requestParams(for: activeList, in: transport)
+        XCTAssertNil(params["cwd"])
+        XCTAssertEqual(params["archived"] as? Bool, false)
+        transport.receive("""
+        {"id":\(activeList.id),"result":{"data":[],"nextCursor":null}}
+        """)
+        await refreshTask.value
 
         XCTAssertTrue(try XCTUnwrap(viewModel.selectedServer).projects.isEmpty)
         XCTAssertNil(viewModel.selectedProject)
@@ -589,6 +592,67 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.selectedThreadID)
         XCTAssertNil(viewModel.selectedThread)
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testConnectedRefreshReplacesDiscoveryCountsWithActiveThreadCounts() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let discovered = [
+            RemoteProject(path: "/srv/app", threadCount: 37, lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300))
+        ]
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(
+                appServer: CodexAppServerClient(transport: transport),
+                discoveredProjectBatches: [discovered]
+            )
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = initialList.nextCursor
+        var params = try requestParams(for: initialList, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/srv/app")
+        transport.receive("""
+        {"id":\(initialList.id),"result":{"data":[],"nextCursor":null}}
+        """)
+        await connectTask.value
+        XCTAssertEqual(viewModel.selectedServer?.projects.first?.threadCount, 37)
+
+        cursor = transport.sentLinesSnapshot.count
+        let refreshTask = Task { await viewModel.refreshProjects() }
+        let activeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        params = try requestParams(for: activeList, in: transport)
+        XCTAssertNil(params["cwd"])
+        XCTAssertEqual(params["archived"] as? Bool, false)
+        transport.receive("""
+        {"id":\(activeList.id),"result":{"data":[
+          {"id":"thread-active-1","preview":"One","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-active-2","preview":"Two","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000500,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        await refreshTask.value
+
+        let refreshedProject = try XCTUnwrap(viewModel.selectedServer?.projects.first)
+        XCTAssertEqual(refreshedProject.threadCount, 2)
+        XCTAssertEqual(refreshedProject.lastSeenAt, Date(timeIntervalSince1970: 1_770_000_500))
         await viewModel.disconnect()
     }
 

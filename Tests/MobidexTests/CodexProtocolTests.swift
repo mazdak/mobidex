@@ -75,6 +75,42 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testThreadListFollowsPaginationCursor() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.listThreads(limit: 1) }
+
+        let firstLine = try await waitForSentLine(in: transport)
+        let firstObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(firstLine.utf8)) as? [String: Any])
+        let firstID = try XCTUnwrap(firstObject["id"] as? Int)
+        let firstParams = try XCTUnwrap(firstObject["params"] as? [String: Any])
+        XCTAssertNil(firstParams["cursor"])
+        XCTAssertEqual(firstParams["archived"] as? Bool, false)
+
+        transport.receive("""
+        {"id":\(firstID),"result":{"data":[
+          {"id":"thread-1","preview":"First","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":"cursor-2"}}
+        """)
+
+        let secondLine = try await waitForSentLine(in: transport, after: 1)
+        let secondObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(secondLine.utf8)) as? [String: Any])
+        let secondID = try XCTUnwrap(secondObject["id"] as? Int)
+        let secondParams = try XCTUnwrap(secondObject["params"] as? [String: Any])
+        XCTAssertEqual(secondParams["cursor"] as? String, "cursor-2")
+        XCTAssertEqual(secondParams["archived"] as? Bool, false)
+
+        transport.receive("""
+        {"id":\(secondID),"result":{"data":[
+          {"id":"thread-2","preview":"Second","cwd":"/srv/other","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        let threads = try await task.value
+        XCTAssertEqual(threads.map(\.id), ["thread-1", "thread-2"])
+        await client.close()
+    }
+
     func testSteerEncodesExpectedTurnPrecondition() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport)
@@ -159,10 +195,11 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertEqual(response.thread.turns.first?.items.count, 6)
     }
 
-    private func waitForSentLine(in transport: MockCodexLineTransport) async throws -> String {
+    private func waitForSentLine(in transport: MockCodexLineTransport, after cursor: Int = 0) async throws -> String {
         for _ in 0..<100 {
-            if let line = transport.sentLinesSnapshot.last {
-                return line
+            let lines = transport.sentLinesSnapshot
+            if lines.count > cursor {
+                return lines[cursor]
             }
             try await Task.sleep(nanoseconds: 10_000_000)
         }
