@@ -49,11 +49,12 @@ struct ConversationView: View {
                 .accessibilityIdentifier("stopTurnButton")
             }
             Button {
-                model.prepareNewThread()
+                Task { await model.startNewThread() }
             } label: {
                 Label("New Thread", systemImage: "plus.bubble")
             }
             .buttonStyle(.bordered)
+            .disabled(model.isBusy)
             .accessibilityIdentifier("newThreadButton")
             Label(thread.status.label, systemImage: thread.status.isActive ? "dot.radiowaves.left.and.right" : "circle")
                 .font(.caption)
@@ -75,11 +76,12 @@ struct ConversationView: View {
             }
             Spacer()
             Button {
-                model.prepareNewThread()
+                Task { await model.startNewThread() }
             } label: {
                 Label("New Thread", systemImage: "plus.bubble")
             }
             .buttonStyle(.bordered)
+            .disabled(model.isBusy)
             .accessibilityIdentifier("newThreadButton")
         }
         .padding()

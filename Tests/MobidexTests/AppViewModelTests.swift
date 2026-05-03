@@ -53,7 +53,7 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testPrepareNewThreadRequiresAppServerConnection() async throws {
+    func testStartNewThreadRequiresAppServerConnection() async throws {
         let project = ProjectRecord(path: "/Users/mazdak/Code/mobdex")
         let server = ServerRecord(
             displayName: "Mazdak",
@@ -68,7 +68,7 @@ final class AppViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.selectServer(server.id))
         viewModel.selectProject(project.id)
-        viewModel.prepareNewThread()
+        await viewModel.startNewThread()
 
         XCTAssertEqual(viewModel.statusMessage, "Connect to the app-server before starting a new thread.")
     }
@@ -144,7 +144,7 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testPrepareNewThreadClearsExistingSelectedThreadWhenConnected() async throws {
+    func testStartNewThreadCreatesAndSelectsThreadWhenConnected() async throws {
         let project = ProjectRecord(path: "/srv/app")
         let server = ServerRecord(
             displayName: "Build Box",
@@ -190,13 +190,82 @@ final class AppViewModelTests: XCTestCase {
         await connectTask.value
         XCTAssertEqual(viewModel.selectedThreadID, "thread-1")
 
-        viewModel.prepareNewThread()
+        cursor = transport.sentLinesSnapshot.count
+        let newThreadTask = Task { await viewModel.startNewThread() }
+        let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
+        let params = try requestParams(for: startThread, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/srv/app")
+        transport.receive("""
+        {"id":\(startThread.id),"result":{"thread":{
+          "id":"thread-new",
+          "preview":"New thread",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000400,
+          "createdAt":1770000400,
+          "turns":[]
+        }}}
+        """)
+        await newThreadTask.value
 
-        XCTAssertNil(viewModel.selectedThreadID)
-        XCTAssertNil(viewModel.selectedThread)
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-new")
+        XCTAssertEqual(viewModel.selectedThread?.id, "thread-new")
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-new", "thread-1"])
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
         XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
-        XCTAssertEqual(viewModel.statusMessage, "New thread ready.")
+        XCTAssertEqual(viewModel.statusMessage, "New thread created.")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testStartNewThreadIgnoresSecondTapWhileBusy() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = list.nextCursor
+        transport.receive(#"{"id":\#(list.id),"result":{"data":[],"nextCursor":null}}"#)
+        await connectTask.value
+
+        cursor = transport.sentLinesSnapshot.count
+        let firstTap = Task { await viewModel.startNewThread() }
+        let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
+        await viewModel.startNewThread()
+        let sentMethods = transport.sentLinesSnapshot.compactMap(methodName)
+        XCTAssertEqual(sentMethods.filter { $0 == "thread/start" }.count, 1)
+
+        transport.receive("""
+        {"id":\(startThread.id),"result":{"thread":{
+          "id":"thread-new",
+          "preview":"New thread",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000400,
+          "createdAt":1770000400,
+          "turns":[]
+        }}}
+        """)
+        await firstTap.value
         await viewModel.disconnect()
     }
 

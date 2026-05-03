@@ -416,17 +416,24 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func prepareNewThread() {
+    func startNewThread() async {
         guard selectedProject != nil else { return }
-        guard isAppServerConnected else {
-            statusMessage = "Connect to the app-server before starting a new thread."
-            return
+        guard !isBusy else { return }
+        let scope = currentThreadLoadScope
+        await runBusy("Starting thread") {
+            guard let appServer else {
+                statusMessage = "Connect to the app-server before starting a new thread."
+                return
+            }
+            let thread = try await appServer.startThread(cwd: scope.cwd)
+            guard currentThreadLoadScope == scope, threadMatchesScope(thread, scope: scope) else {
+                return
+            }
+            selectedThreadID = thread.id
+            hydrateConversation(from: thread)
+            threads = prioritizeActiveThreads([thread] + threads.filter { $0.id != thread.id })
+            statusMessage = "New thread created."
         }
-        selectedThreadID = nil
-        selectedThread = nil
-        conversationSections = []
-        pendingApprovals = []
-        statusMessage = "New thread ready."
     }
 
     func sendComposerText(_ text: String) async {
