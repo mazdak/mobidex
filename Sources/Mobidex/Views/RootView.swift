@@ -23,6 +23,13 @@ struct RootView: View {
         .sheet(isPresented: $showingAddServer) {
             ServerEditorView(server: nil)
         }
+        .alert(item: $model.statusAlert) { alert in
+            Alert(
+                title: Text(alert.title),
+                message: Text(alert.message),
+                dismissButton: .default(Text("OK"))
+            )
+        }
         .onChange(of: horizontalSizeClass) { _, newValue in
             if newValue != .compact {
                 columnVisibility = .automatic

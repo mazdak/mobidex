@@ -9,6 +9,12 @@ struct PendingApproval: Identifiable, Equatable {
     var detail: String
 }
 
+struct StatusAlert: Identifiable, Equatable {
+    var id = UUID()
+    var title: String
+    var message: String
+}
+
 private enum AppViewModelError: LocalizedError {
     case selectionChanged
 
@@ -38,6 +44,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var pendingApprovals: [PendingApproval] = []
     @Published private(set) var connectionState: ServerConnectionState = .disconnected
     @Published private(set) var statusMessage: String?
+    @Published var statusAlert: StatusAlert?
     @Published private(set) var isBusy = false
 
     private let repository: ServerRepository
@@ -326,14 +333,24 @@ final class AppViewModel: ObservableObject {
 
     func testSelectedConnection() async {
         guard let selectedServer else { return }
-        await runBusy("Testing connection") {
+        isBusy = true
+        statusMessage = "Testing connection"
+        do {
             let credential = try credentialStore.loadCredential(serverID: selectedServer.id)
             try await sshService.testConnection(server: selectedServer, credential: credential)
             if appServer == nil {
                 connectionState = .disconnected
             }
-            statusMessage = "Connection test passed for \(selectedServer.displayName)."
+            let message = "Connection test passed for \(selectedServer.displayName)."
+            statusMessage = message
+            statusAlert = StatusAlert(title: "Connection Test Passed", message: message)
+        } catch {
+            let message = error.localizedDescription
+            connectionState = .failed(message)
+            statusMessage = message
+            statusAlert = StatusAlert(title: "Connection Test Failed", message: message)
         }
+        isBusy = false
     }
 
     func connectSelectedServer() async {

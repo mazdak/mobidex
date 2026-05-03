@@ -74,6 +74,38 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testTestConnectionPublishesSuccessAlert() async throws {
+        let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = SpyCredentialStore(values: [server.id: SSHCredential(password: "secret")])
+        let viewModel = AppViewModel(repository: repository, credentialStore: credentials, sshService: StubSSHService())
+
+        await viewModel.testSelectedConnection()
+
+        XCTAssertEqual(viewModel.statusMessage, "Connection test passed for Build Box.")
+        XCTAssertEqual(viewModel.statusAlert?.title, "Connection Test Passed")
+        XCTAssertEqual(viewModel.statusAlert?.message, "Connection test passed for Build Box.")
+    }
+
+    @MainActor
+    func testTestConnectionPublishesFailureAlert() async throws {
+        let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = SpyCredentialStore(values: [server.id: SSHCredential(password: "secret")])
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: StubSSHService(testConnectionError: SSHServiceError.authenticationFailed)
+        )
+
+        await viewModel.testSelectedConnection()
+
+        XCTAssertEqual(viewModel.statusAlert?.title, "Connection Test Failed")
+        XCTAssertEqual(viewModel.statusAlert?.message, "SSH authentication failed. Check the username and saved password or private key.")
+        XCTAssertEqual(viewModel.connectionState, .failed("SSH authentication failed. Check the username and saved password or private key."))
+    }
+
+    @MainActor
     func testConnectMapsClosedChannelToAppServerMessage() async throws {
         let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
         let repository = InMemoryServerRepository(servers: [server])
