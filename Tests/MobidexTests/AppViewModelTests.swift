@@ -124,7 +124,7 @@ final class AppViewModelTests: XCTestCase {
         )
     }
 
-    func testProjectRecordDecodesMissingFavoriteAsFalse() throws {
+    func testProjectRecordDecodesMissingFavoriteAndSessionPathsWithDefaults() throws {
         let data = Data("""
         {
           "id": "00000000-0000-0000-0000-000000000001",
@@ -141,6 +141,7 @@ final class AppViewModelTests: XCTestCase {
         let project = try decoder.decode(ProjectRecord.self, from: data)
 
         XCTAssertFalse(project.isFavorite)
+        XCTAssertEqual(project.sessionPaths, ["/srv/app"])
     }
 
     @MainActor
@@ -160,7 +161,13 @@ final class AppViewModelTests: XCTestCase {
         let viewModel = AppViewModel(
             repository: repository,
             credentialStore: credentials,
-            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+            sshService: ScriptedSSHService(
+                appServer: CodexAppServerClient(transport: transport),
+                discoveredProjectBatches: [
+                    [RemoteProject(path: "/srv/old", threadCount: 1, lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300))],
+                    []
+                ]
+            )
         )
 
         let connectTask = Task { await viewModel.connectSelectedServer() }
@@ -218,6 +225,80 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testConnectLoadsProjectThreadsAcrossWorktreeSessionPaths() async throws {
+        let project = ProjectRecord(
+            path: "/srv/fullstack",
+            sessionPaths: ["/srv/fullstack", "/srv/.codex/worktrees/a/fullstack"]
+        )
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(
+                appServer: CodexAppServerClient(transport: transport),
+                discoveredProjectBatches: [
+                    [RemoteProject(path: "/srv/old", threadCount: 1, lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300))],
+                    []
+                ]
+            )
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let worktreeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = worktreeList.nextCursor
+        var params = try requestParams(for: worktreeList, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/srv/.codex/worktrees/a/fullstack")
+        XCTAssertEqual(params["archived"] as? Bool, false)
+        transport.receive("""
+        {"id":\(worktreeList.id),"result":{"data":[
+          {"id":"thread-worktree","preview":"Worktree","cwd":"/srv/.codex/worktrees/a/fullstack","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-other","preview":"Other","cwd":"/srv/other","status":{"type":"idle"},"updatedAt":1770000500,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let mainList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = mainList.nextCursor
+        params = try requestParams(for: mainList, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/srv/fullstack")
+        XCTAssertEqual(params["archived"] as? Bool, false)
+        transport.receive("""
+        {"id":\(mainList.id),"result":{"data":[
+          {"id":"thread-main","preview":"Main","cwd":"/srv/fullstack","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-worktree",
+          "preview":"Worktree",
+          "cwd":"/srv/.codex/worktrees/a/fullstack",
+          "status":{"type":"idle"},
+          "updatedAt":1770000400,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+        await connectTask.value
+
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-worktree", "thread-main"])
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-worktree")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
     func testStartNewThreadIgnoresSecondTapWhileBusy() async throws {
         let project = ProjectRecord(path: "/srv/app")
         let server = ServerRecord(
@@ -234,7 +315,13 @@ final class AppViewModelTests: XCTestCase {
         let viewModel = AppViewModel(
             repository: repository,
             credentialStore: credentials,
-            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+            sshService: ScriptedSSHService(
+                appServer: CodexAppServerClient(transport: transport),
+                discoveredProjectBatches: [
+                    [RemoteProject(path: "/srv/old", threadCount: 1, lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300))],
+                    []
+                ]
+            )
         )
 
         let connectTask = Task { await viewModel.connectSelectedServer() }
@@ -346,9 +433,37 @@ final class AppViewModelTests: XCTestCase {
 
         let project = try XCTUnwrap(viewModel.selectedServer?.projects.first)
         XCTAssertEqual(project.path, "/srv/app")
+        XCTAssertEqual(project.sessionPaths, ["/srv/app"])
         XCTAssertTrue(project.discovered)
         XCTAssertEqual(project.threadCount, 3)
         XCTAssertEqual(project.lastSeenAt, Date(timeIntervalSince1970: 1_770_000_300))
+    }
+
+    @MainActor
+    func testRefreshProjectsStoresDiscoveredWorktreeSessionPaths() async throws {
+        let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: StubSSHService(discoveredProjects: [
+                RemoteProject(
+                    path: "/srv/fullstack",
+                    sessionPaths: ["/srv/fullstack", "/srv/.codex/worktrees/a/fullstack"],
+                    threadCount: 5,
+                    lastSeenAt: Date(timeIntervalSince1970: 1_770_000_500)
+                )
+            ])
+        )
+
+        await viewModel.refreshProjects()
+
+        let project = try XCTUnwrap(viewModel.selectedServer?.projects.first)
+        XCTAssertEqual(project.path, "/srv/fullstack")
+        XCTAssertEqual(project.sessionPaths, ["/srv/fullstack", "/srv/.codex/worktrees/a/fullstack"])
+        XCTAssertEqual(project.threadCount, 5)
     }
 
     @MainActor
@@ -384,7 +499,7 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRefreshProjectsClearsStaleDiscoveryCounts() async throws {
+    func testRefreshProjectsRemovesStaleDiscoveredProjects() async throws {
         let project = ProjectRecord(
             path: "/srv/app",
             displayName: "app",
@@ -410,11 +525,107 @@ final class AppViewModelTests: XCTestCase {
 
         await viewModel.refreshProjects()
 
+        XCTAssertTrue(try XCTUnwrap(viewModel.selectedServer).projects.isEmpty)
+    }
+
+    @MainActor
+    func testRefreshProjectsClearsThreadStateWhenSelectedProjectIsRemoved() async throws {
+        let project = ProjectRecord(path: "/srv/old", discovered: true, threadCount: 1)
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(
+                appServer: CodexAppServerClient(transport: transport),
+                discoveredProjectBatches: [
+                    [RemoteProject(path: "/srv/old", threadCount: 1, lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300))],
+                    []
+                ]
+            )
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = list.nextCursor
+        transport.receive("""
+        {"id":\(list.id),"result":{"data":[
+          {"id":"thread-old","preview":"Old","cwd":"/srv/old","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-old",
+          "preview":"Old",
+          "cwd":"/srv/old",
+          "status":{"type":"idle"},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+        await connectTask.value
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-old")
+
+        await viewModel.refreshProjects()
+
+        XCTAssertTrue(try XCTUnwrap(viewModel.selectedServer).projects.isEmpty)
+        XCTAssertNil(viewModel.selectedProject)
+        XCTAssertTrue(viewModel.threads.isEmpty)
+        XCTAssertNil(viewModel.selectedThreadID)
+        XCTAssertNil(viewModel.selectedThread)
+        XCTAssertTrue(viewModel.conversationSections.isEmpty)
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testRefreshProjectsKeepsFavoriteStaleDiscoveredProject() async throws {
+        let project = ProjectRecord(
+            path: "/srv/app",
+            displayName: "app",
+            discovered: true,
+            threadCount: 3,
+            lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300),
+            isFavorite: true
+        )
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: StubSSHService(discoveredProjects: [])
+        )
+
+        await viewModel.refreshProjects()
+
         let refreshed = try XCTUnwrap(viewModel.selectedServer?.projects.first)
         XCTAssertEqual(refreshed.path, "/srv/app")
         XCTAssertFalse(refreshed.discovered)
         XCTAssertEqual(refreshed.threadCount, 0)
         XCTAssertNil(refreshed.lastSeenAt)
+        XCTAssertTrue(refreshed.isFavorite)
     }
 
     @MainActor
@@ -1490,15 +1701,26 @@ private final class SpyCredentialStore: CredentialStore, @unchecked Sendable {
 
 private final class ScriptedSSHService: SSHService, @unchecked Sendable {
     private let appServer: CodexAppServerClient
+    private let lock = NSLock()
+    private var discoveredProjectBatches: [[RemoteProject]]
 
-    init(appServer: CodexAppServerClient) {
+    init(appServer: CodexAppServerClient, discoveredProjectBatches: [[RemoteProject]] = [[]]) {
         self.appServer = appServer
+        self.discoveredProjectBatches = discoveredProjectBatches
     }
 
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws {}
 
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] {
-        []
+        lock.withLock {
+            guard !discoveredProjectBatches.isEmpty else {
+                return []
+            }
+            if discoveredProjectBatches.count == 1 {
+                return discoveredProjectBatches[0]
+            }
+            return discoveredProjectBatches.removeFirst()
+        }
     }
 
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {

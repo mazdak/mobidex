@@ -30,6 +30,7 @@ private struct ThreadLoadScope: Equatable {
     var serverID: UUID?
     var projectID: UUID?
     var cwd: String?
+    var sessionPaths: Set<String>
 }
 
 @MainActor
@@ -548,7 +549,12 @@ final class AppViewModel: ObservableObject {
     }
 
     private var currentThreadLoadScope: ThreadLoadScope {
-        ThreadLoadScope(serverID: selectedServerID, projectID: selectedProjectID, cwd: selectedProject?.path)
+        ThreadLoadScope(
+            serverID: selectedServerID,
+            projectID: selectedProjectID,
+            cwd: selectedProject?.path,
+            sessionPaths: Set(selectedProject?.sessionPaths ?? selectedProject.map { [$0.path] } ?? [])
+        )
     }
 
     private func loadServers() {
@@ -566,6 +572,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refreshProjectsUsingCredential(_ credential: SSHCredential, server: ServerRecord) async throws {
+        let previousScope = currentThreadLoadScope
         let discovered = try await sshService.discoverProjects(server: server, credential: credential)
         var nextServers = servers
         guard let index = nextServers.firstIndex(where: { $0.id == server.id }) else {
@@ -578,7 +585,12 @@ final class AppViewModel: ObservableObject {
             guard var record = existing[path], record.discovered else {
                 continue
             }
+            guard record.isFavorite else {
+                existing.removeValue(forKey: path)
+                continue
+            }
             record.discovered = false
+            record.sessionPaths = [record.path]
             record.threadCount = 0
             record.lastSeenAt = nil
             existing[path] = record
@@ -586,6 +598,7 @@ final class AppViewModel: ObservableObject {
         for project in discovered {
             var record = existing[project.path] ?? ProjectRecord(path: project.path)
             record.discovered = true
+            record.sessionPaths = ProjectRecord.normalizedSessionPaths(project.sessionPaths, primaryPath: project.path)
             record.threadCount = project.threadCount
             record.lastSeenAt = project.lastSeenAt
             existing[project.path] = record
@@ -594,11 +607,16 @@ final class AppViewModel: ObservableObject {
             (lhs.lastSeenAt ?? .distantPast) > (rhs.lastSeenAt ?? .distantPast)
         }
         nextServers[index].updatedAt = .now
-        let nextSelectedProjectID = selectedProjectID ?? nextServers[index].projects.first?.id
+        let nextSelectedProjectID = nextServers[index].projects.contains { $0.id == selectedProjectID }
+            ? selectedProjectID
+            : nextServers[index].projects.first?.id
         try persistServers(nextServers)
         servers = nextServers
         if selectedServerID == server.id {
             selectedProjectID = nextSelectedProjectID
+            if currentThreadLoadScope != previousScope {
+                resetSessionState(clearThreads: true)
+            }
         }
     }
 
@@ -607,7 +625,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         let scope = currentThreadLoadScope
-        let loadedThreads = try await appServer.listThreads(cwd: scope.cwd)
+        let loadedThreads = try await listThreads(matching: scope)
         guard currentThreadLoadScope == scope else {
             return
         }
@@ -786,7 +804,7 @@ final class AppViewModel: ObservableObject {
                 return
             }
             hydrateConversation(from: thread)
-            let loadedThreads = try await appServer.listThreads(cwd: scope.cwd)
+            let loadedThreads = try await listThreads(matching: scope)
             guard currentThreadLoadScope == scope else {
                 return
             }
@@ -800,7 +818,7 @@ final class AppViewModel: ObservableObject {
         guard let appServer else { return }
         let scope = currentThreadLoadScope
         do {
-            let loadedThreads = try await appServer.listThreads(cwd: scope.cwd)
+            let loadedThreads = try await listThreads(matching: scope)
             guard currentThreadLoadScope == scope else {
                 return
             }
@@ -835,10 +853,33 @@ final class AppViewModel: ObservableObject {
     }
 
     private func threadMatchesScope(_ thread: CodexThread, scope: ThreadLoadScope) -> Bool {
-        guard let cwd = scope.cwd, !cwd.isEmpty else {
+        guard !scope.sessionPaths.isEmpty else {
             return true
         }
-        return thread.cwd == cwd
+        return scope.sessionPaths.contains(thread.cwd)
+    }
+
+    private func listThreads(matching scope: ThreadLoadScope) async throws -> [CodexThread] {
+        guard let appServer else {
+            return []
+        }
+        guard scope.sessionPaths.count > 1 else {
+            return try await appServer.listThreads(cwd: scope.cwd)
+        }
+        var merged: [CodexThread] = []
+        var seen = Set<String>()
+        for cwd in scope.sessionPaths.sorted() {
+            let loaded = try await appServer.listThreads(cwd: cwd)
+            for thread in loaded where seen.insert(thread.id).inserted {
+                merged.append(thread)
+            }
+        }
+        return merged.sorted { lhs, rhs in
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            return lhs.id < rhs.id
+        }
     }
 
     private func hydrateConversation(from thread: CodexThread) {

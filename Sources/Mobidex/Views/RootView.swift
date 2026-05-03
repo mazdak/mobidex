@@ -205,7 +205,7 @@ struct ProjectSessionListView: View {
                                     Button(role: .destructive) {
                                         model.removeProject(project)
                                     } label: {
-                                        Label("Delete", systemImage: "trash")
+                                        Label("Remove", systemImage: "minus.circle")
                                     }
                                 }
                             }
@@ -336,6 +336,11 @@ struct ProjectRow: View {
                     )
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    if project.sessionPaths.count > 1 {
+                        Text("\(project.sessionPaths.count) worktree paths grouped")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             Spacer()

@@ -6,8 +6,31 @@ import NIOCore
 struct RemoteProject: Identifiable, Codable, Equatable {
     var id: String { path }
     var path: String
+    var sessionPaths: [String]
     var threadCount: Int
     var lastSeenAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case path
+        case sessionPaths
+        case threadCount
+        case lastSeenAt
+    }
+
+    init(path: String, sessionPaths: [String]? = nil, threadCount: Int, lastSeenAt: Date?) {
+        self.path = path
+        self.sessionPaths = sessionPaths ?? [path]
+        self.threadCount = threadCount
+        self.lastSeenAt = lastSeenAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        path = try container.decode(String.self, forKey: .path)
+        sessionPaths = try container.decodeIfPresent([String].self, forKey: .sessionPaths) ?? [path]
+        threadCount = try container.decode(Int.self, forKey: .threadCount)
+        lastSeenAt = try container.decodeIfPresent(Date.self, forKey: .lastSeenAt)
+    }
 }
 
 protocol SSHService: Sendable {

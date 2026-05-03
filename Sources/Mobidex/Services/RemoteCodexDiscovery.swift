@@ -17,6 +17,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 from collections import defaultdict
 
 MAX_PROJECTS = 200
@@ -42,7 +43,7 @@ def find_cwd(value):
 
 
 home = os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex"))
-paths = defaultdict(lambda: {"threadCount": 0, "lastSeenAt": None})
+paths = defaultdict(lambda: {"threadCount": 0, "lastSeenAt": None, "sessionPaths": set()})
 
 
 def existing_directory(path):
@@ -51,7 +52,48 @@ def existing_directory(path):
     expanded = os.path.expanduser(path)
     if not os.path.isabs(expanded) or not os.path.isdir(expanded):
         return None
-    return expanded
+    return os.path.realpath(expanded)
+
+
+def main_worktree(path):
+    try:
+        output = subprocess.check_output(
+            ["git", "-C", path, "worktree", "list", "--porcelain"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+        for line in output.splitlines():
+            if line.startswith("worktree "):
+                candidate = existing_directory(line[len("worktree "):])
+                if candidate:
+                    return candidate
+                break
+    except Exception:
+        pass
+
+    try:
+        common_dir = subprocess.check_output(
+            ["git", "-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        ).strip()
+        if common_dir.endswith("/.git"):
+            return existing_directory(os.path.dirname(common_dir))
+    except Exception:
+        pass
+
+    return path
+
+
+def add_project_path(path, thread_count=0, last_seen_at=None):
+    canonical = main_worktree(path)
+    paths[canonical]["sessionPaths"].add(canonical)
+    paths[canonical]["sessionPaths"].add(path)
+    paths[canonical]["threadCount"] += thread_count
+    if last_seen_at is not None:
+        paths[canonical]["lastSeenAt"] = max(paths[canonical]["lastSeenAt"] or 0, last_seen_at)
 
 
 config = os.path.join(home, "config.toml")
@@ -61,7 +103,7 @@ if os.path.exists(config):
         for match in re.finditer(r'^\s*\[projects\."([^"]+)"\]', text, flags=re.MULTILINE):
             path = existing_directory(match.group(1))
             if path:
-                paths[path]["lastSeenAt"] = paths[path]["lastSeenAt"] or int(os.path.getmtime(config))
+                add_project_path(path, last_seen_at=int(os.path.getmtime(config)))
     except Exception:
         pass
 
@@ -86,13 +128,17 @@ for root in ("sessions",):
                         break
             cwd = existing_directory(cwd)
             if cwd:
-                paths[cwd]["threadCount"] += 1
-                paths[cwd]["lastSeenAt"] = max(paths[cwd]["lastSeenAt"] or 0, mtime)
+                add_project_path(cwd, thread_count=1, last_seen_at=mtime)
         except Exception:
             pass
 
 result = [
-    {"path": path, "threadCount": value["threadCount"], "lastSeenAt": value["lastSeenAt"]}
+    {
+        "path": path,
+        "sessionPaths": sorted(value["sessionPaths"]),
+        "threadCount": value["threadCount"],
+        "lastSeenAt": value["lastSeenAt"],
+    }
     for path, value in paths.items()
 ]
 result.sort(key=lambda item: (item["lastSeenAt"] or 0, item["path"]), reverse=True)
