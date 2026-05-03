@@ -16,6 +16,7 @@ struct ServerEditorView: View {
     @State private var privateKeyPassphrase: String
     @State private var credentialLoaded: Bool
     @State private var isSaving = false
+    @State private var validationMessage: String?
 
     init(server: ServerRecord?) {
         original = server
@@ -67,6 +68,14 @@ struct ServerEditorView: View {
                         SecureField("Passphrase", text: $privateKeyPassphrase)
                     }
                 }
+
+                if let validationMessage {
+                    Section {
+                        Text(validationMessage)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("serverValidationMessage")
+                    }
+                }
             }
             .navigationTitle(original == nil ? "Add Server" : "Edit Server")
             .toolbar {
@@ -77,7 +86,7 @@ struct ServerEditorView: View {
                     Button("Save") {
                         Task { await save() }
                     }
-                    .disabled(!canSave || isSaving)
+                    .disabled(!credentialLoaded || isSaving)
                 }
             }
             .task {
@@ -94,11 +103,22 @@ struct ServerEditorView: View {
         }
     }
 
-    private var canSave: Bool {
-        credentialLoaded
-            && !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && credentialIsPresent
+    private var validationError: String? {
+        if host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Enter the SSH host for this server."
+        }
+        if username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Enter the SSH username for this server."
+        }
+        if !credentialIsPresent {
+            switch authMethod {
+            case .password:
+                return "Enter the SSH password for this server."
+            case .privateKey:
+                return "Paste an OpenSSH private key for this server."
+            }
+        }
+        return nil
     }
 
     private var credentialIsPresent: Bool {
@@ -112,6 +132,11 @@ struct ServerEditorView: View {
 
     @MainActor
     private func save() async {
+        if let validationError {
+            validationMessage = validationError
+            return
+        }
+        validationMessage = nil
         isSaving = true
         defer { isSaving = false }
 
@@ -136,6 +161,8 @@ struct ServerEditorView: View {
         )
         if await model.saveServer(server, credential: credential) {
             dismiss()
+        } else {
+            validationMessage = model.statusMessage ?? "Mobidex could not save this server."
         }
     }
 }

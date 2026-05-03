@@ -117,6 +117,16 @@ final class AppViewModel: ObservableObject {
 
     @discardableResult
     func saveServer(_ server: ServerRecord, credential: SSHCredential) async -> Bool {
+        let trimmedHost = server.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedHost.isEmpty else {
+            statusMessage = "Enter the SSH host for this server."
+            return false
+        }
+        let trimmedUsername = server.username.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUsername.isEmpty else {
+            statusMessage = "Enter the SSH username for this server."
+            return false
+        }
         let normalizedCredential = normalizedCredential(for: server.authMethod, credential: credential)
         guard credentialIsUsable(normalizedCredential, authMethod: server.authMethod) else {
             statusMessage = credentialRequiredMessage(for: server.authMethod)
@@ -124,6 +134,16 @@ final class AppViewModel: ObservableObject {
         }
 
         var next = server
+        next.host = trimmedHost
+        next.username = trimmedUsername
+        next.displayName = next.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if next.displayName.isEmpty {
+            next.displayName = trimmedHost
+        }
+        next.codexPath = next.codexPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        if next.codexPath.isEmpty {
+            next.codexPath = "codex"
+        }
         next.updatedAt = .now
 
         var nextServers = servers

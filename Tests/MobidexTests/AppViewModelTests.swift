@@ -3,6 +3,56 @@ import XCTest
 
 final class AppViewModelTests: XCTestCase {
     @MainActor
+    func testSaveServerRejectsMissingHostBeforePersistence() async throws {
+        let repository = InMemoryServerRepository()
+        let credentials = SpyCredentialStore()
+        let viewModel = AppViewModel(repository: repository, credentialStore: credentials, sshService: StubSSHService())
+        let server = ServerRecord(displayName: "", host: "  ", username: "mazdak", authMethod: .password)
+
+        let saved = await viewModel.saveServer(server, credential: SSHCredential(password: "secret"))
+
+        XCTAssertFalse(saved)
+        XCTAssertTrue(viewModel.servers.isEmpty)
+        XCTAssertTrue(try repository.loadServers().isEmpty)
+        XCTAssertTrue(credentials.savedServerIDs.isEmpty)
+        XCTAssertEqual(viewModel.statusMessage, "Enter the SSH host for this server.")
+    }
+
+    @MainActor
+    func testSaveServerRejectsMissingCredentialBeforePersistence() async throws {
+        let repository = InMemoryServerRepository()
+        let credentials = SpyCredentialStore()
+        let viewModel = AppViewModel(repository: repository, credentialStore: credentials, sshService: StubSSHService())
+        let server = ServerRecord(displayName: "", host: "build.example.com", username: "mazdak", authMethod: .password)
+
+        let saved = await viewModel.saveServer(server, credential: SSHCredential(password: ""))
+
+        XCTAssertFalse(saved)
+        XCTAssertTrue(viewModel.servers.isEmpty)
+        XCTAssertTrue(try repository.loadServers().isEmpty)
+        XCTAssertTrue(credentials.savedServerIDs.isEmpty)
+        XCTAssertEqual(viewModel.statusMessage, "Enter the SSH password for this server.")
+    }
+
+    @MainActor
+    func testSaveServerNormalizesRequiredFields() async throws {
+        let repository = InMemoryServerRepository()
+        let credentials = SpyCredentialStore()
+        let viewModel = AppViewModel(repository: repository, credentialStore: credentials, sshService: StubSSHService())
+        let server = ServerRecord(displayName: "  ", host: " build.example.com ", username: " mazdak ", codexPath: "  ", authMethod: .password)
+
+        let saved = await viewModel.saveServer(server, credential: SSHCredential(password: "secret"))
+
+        XCTAssertTrue(saved)
+        let savedServer = try XCTUnwrap(viewModel.servers.first)
+        XCTAssertEqual(savedServer.displayName, "build.example.com")
+        XCTAssertEqual(savedServer.host, "build.example.com")
+        XCTAssertEqual(savedServer.username, "mazdak")
+        XCTAssertEqual(savedServer.codexPath, "codex")
+        XCTAssertEqual(try credentials.loadCredential(serverID: savedServer.id).password, "secret")
+    }
+
+    @MainActor
     func testDeleteServerRestoresCredentialWhenMetadataRollbackIsNeeded() async throws {
         let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
         let repository = FailingSaveServerRepository(servers: [server], failOnSaveNumber: 1)
