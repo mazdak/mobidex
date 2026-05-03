@@ -279,6 +279,7 @@
 				LastUpgradeCheck = 1600;
 				TargetAttributes = {
 					DBF1917B71416F679CE962A4 = {
+						DevelopmentTeam = JX3932QCN8;
 						ProvisioningStyle = Automatic;
 					};
 					E7D6D4C9487286DCD35B98D3 = {
@@ -388,6 +389,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/Mobidex/Mobidex.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = JX3932QCN8;
 				INFOPLIST_FILE = Sources/Mobidex/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -611,6 +613,7 @@
 				CODE_SIGN_ENTITLEMENTS = Sources/Mobidex/Mobidex.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = JX3932QCN8;
 				INFOPLIST_FILE = Sources/Mobidex/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (

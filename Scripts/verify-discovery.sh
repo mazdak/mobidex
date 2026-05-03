@@ -7,7 +7,6 @@ WORK_DIR="$(mktemp -d)"
 CODEX_HOME_DIR="$WORK_DIR/codex-home"
 APP_DIR="$WORK_DIR/projects/app"
 CONFIG_ONLY_DIR="$WORK_DIR/projects/config-only"
-LEGACY_DIR="$WORK_DIR/projects/legacy"
 MISSING_CONFIG_DIR="$WORK_DIR/projects/missing-config"
 MISSING_SESSION_DIR="$WORK_DIR/projects/missing-session"
 PYTHON_SOURCE="$WORK_DIR/discovery.py"
@@ -35,8 +34,7 @@ mkdir -p \
   "$CODEX_HOME_DIR/archived_sessions/2026/05/01" \
   "$CODEX_HOME_DIR/sessions/ignored" \
   "$APP_DIR" \
-  "$CONFIG_ONLY_DIR" \
-  "$LEGACY_DIR"
+  "$CONFIG_ONLY_DIR"
 
 cat >"$CODEX_HOME_DIR/config.toml" <<EOF
 [projects."$CONFIG_ONLY_DIR"]
@@ -61,7 +59,7 @@ cat >"$CODEX_HOME_DIR/sessions/2026/05/02/rollout-2.jsonl" <<EOF
 EOF
 
 cat >"$CODEX_HOME_DIR/archived_sessions/2026/05/01/rollout-3.jsonl" <<EOF
-{"type":"session_meta","payload":{"current_dir":"$LEGACY_DIR"}}
+{"type":"session_meta","payload":{"current_dir":"$APP_DIR"}}
 EOF
 
 cat >"$CODEX_HOME_DIR/sessions/ignored/rollout-ignored.jsonl" <<'EOF'
@@ -129,26 +127,24 @@ fi
 
 CODEX_HOME="$CODEX_HOME_DIR" bash "$SHELL_INPUT" >"$OUTPUT_JSON"
 
-python3 - "$OUTPUT_JSON" "$APP_DIR" "$CONFIG_ONLY_DIR" "$LEGACY_DIR" "$MISSING_CONFIG_DIR" "$MISSING_SESSION_DIR" <<'PY'
+python3 - "$OUTPUT_JSON" "$APP_DIR" "$CONFIG_ONLY_DIR" "$MISSING_CONFIG_DIR" "$MISSING_SESSION_DIR" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     projects = json.load(handle)
 
-app_dir, config_only_dir, legacy_dir, missing_config_dir, missing_session_dir = sys.argv[2:]
+app_dir, config_only_dir, missing_config_dir, missing_session_dir = sys.argv[2:]
 by_path = {project["path"]: project for project in projects}
 
 assert [project["path"] for project in projects] == [
     app_dir,
     config_only_dir,
-    legacy_dir,
 ], projects
 assert by_path[app_dir]["threadCount"] == 2, projects
 assert by_path[app_dir]["lastSeenAt"] is not None, projects
 assert by_path[config_only_dir]["threadCount"] == 0, projects
 assert by_path[config_only_dir]["lastSeenAt"] is not None, projects
-assert by_path[legacy_dir]["threadCount"] == 1, projects
 assert missing_config_dir not in by_path, projects
 assert missing_session_dir not in by_path, projects
 PY

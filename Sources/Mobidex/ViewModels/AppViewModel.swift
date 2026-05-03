@@ -84,6 +84,10 @@ final class AppViewModel: ObservableObject {
         appServer != nil && activeTurnID != nil
     }
 
+    var isAppServerConnected: Bool {
+        appServer != nil
+    }
+
     func loadCredential(for serverID: UUID) -> SSHCredential {
         (try? credentialStore.loadCredential(serverID: serverID)) ?? SSHCredential()
     }
@@ -363,6 +367,19 @@ final class AppViewModel: ObservableObject {
             selectedThreadID = hydrated.id
             hydrateConversation(from: hydrated)
         }
+    }
+
+    func prepareNewThread() {
+        guard selectedProject != nil else { return }
+        guard isAppServerConnected else {
+            statusMessage = "Connect to the app-server before starting a new thread."
+            return
+        }
+        selectedThreadID = nil
+        selectedThread = nil
+        conversationSections = []
+        pendingApprovals = []
+        statusMessage = "New thread ready."
     }
 
     func sendComposerText(_ text: String) async {

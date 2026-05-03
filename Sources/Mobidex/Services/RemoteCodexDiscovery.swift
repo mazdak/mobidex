@@ -65,7 +65,7 @@ if os.path.exists(config):
     except Exception:
         pass
 
-for root in ("sessions", "archived_sessions"):
+for root in ("sessions",):
     pattern = os.path.join(home, root, "**", "rollout-*.jsonl")
     for filename in glob.iglob(pattern, recursive=True):
         try:

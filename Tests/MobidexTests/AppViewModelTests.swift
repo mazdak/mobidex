@@ -53,6 +53,103 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testPrepareNewThreadRequiresAppServerConnection() async throws {
+        let project = ProjectRecord(path: "/Users/mazdak/Code/mobdex")
+        let server = ServerRecord(
+            displayName: "Mazdak",
+            host: "192.168.1.239",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = SpyCredentialStore()
+        let viewModel = AppViewModel(repository: repository, credentialStore: credentials, sshService: StubSSHService())
+
+        XCTAssertTrue(viewModel.selectServer(server.id))
+        viewModel.selectProject(project.id)
+        viewModel.prepareNewThread()
+
+        XCTAssertEqual(viewModel.statusMessage, "Connect to the app-server before starting a new thread.")
+    }
+
+    @MainActor
+    func testConnectMapsClosedChannelToAppServerMessage() async throws {
+        let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = SpyCredentialStore(values: [server.id: SSHCredential(password: "secret")])
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: StubSSHService(openAppServerError: SSHServiceError.appServerClosed("codex app-server --listen stdio://"))
+        )
+
+        await viewModel.connectSelectedServer()
+
+        XCTAssertEqual(
+            viewModel.statusMessage,
+            "SSH connected, but the server closed the app-server session while starting `codex app-server --listen stdio://`. Check the Codex path and that `codex app-server --listen stdio://` can run on the server."
+        )
+    }
+
+    @MainActor
+    func testPrepareNewThreadClearsExistingSelectedThreadWhenConnected() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = list.nextCursor
+        transport.receive("""
+        {"id":\(list.id),"result":{"data":[
+          {"id":"thread-1","preview":"Existing work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-1",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+        await connectTask.value
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-1")
+
+        viewModel.prepareNewThread()
+
+        XCTAssertNil(viewModel.selectedThreadID)
+        XCTAssertNil(viewModel.selectedThread)
+        XCTAssertTrue(viewModel.conversationSections.isEmpty)
+        XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
+        XCTAssertEqual(viewModel.statusMessage, "New thread ready.")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
     func testDeleteServerRestoresCredentialWhenMetadataRollbackIsNeeded() async throws {
         let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
         let repository = FailingSaveServerRepository(servers: [server], failOnSaveNumber: 1)
@@ -1260,18 +1357,33 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
 
 private final class StubSSHService: SSHService, @unchecked Sendable {
     private let discoveredProjects: [RemoteProject]
+    private let testConnectionError: Error?
+    private let openAppServerError: Error?
 
-    init(discoveredProjects: [RemoteProject] = []) {
+    init(
+        discoveredProjects: [RemoteProject] = [],
+        testConnectionError: Error? = nil,
+        openAppServerError: Error? = nil
+    ) {
         self.discoveredProjects = discoveredProjects
+        self.testConnectionError = testConnectionError
+        self.openAppServerError = openAppServerError
     }
 
-    func testConnection(server: ServerRecord, credential: SSHCredential) async throws {}
+    func testConnection(server: ServerRecord, credential: SSHCredential) async throws {
+        if let testConnectionError {
+            throw testConnectionError
+        }
+    }
 
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] {
         discoveredProjects
     }
 
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {
+        if let openAppServerError {
+            throw openAppServerError
+        }
         throw TestError.unexpectedSSH
     }
 }

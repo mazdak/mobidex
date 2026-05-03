@@ -48,6 +48,13 @@ struct ConversationView: View {
                 .accessibilityLabel("Stop Turn")
                 .accessibilityIdentifier("stopTurnButton")
             }
+            Button {
+                model.prepareNewThread()
+            } label: {
+                Label("New Thread", systemImage: "plus.bubble")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("newThreadButton")
             Label(thread.status.label, systemImage: thread.status.isActive ? "dot.radiowaves.left.and.right" : "circle")
                 .font(.caption)
                 .foregroundStyle(thread.status.isActive ? .green : .secondary)
@@ -67,9 +74,13 @@ struct ConversationView: View {
                     .lineLimit(1)
             }
             Spacer()
-            Label("New Thread", systemImage: "plus.bubble")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Button {
+                model.prepareNewThread()
+            } label: {
+                Label("New Thread", systemImage: "plus.bubble")
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("newThreadButton")
         }
         .padding()
     }

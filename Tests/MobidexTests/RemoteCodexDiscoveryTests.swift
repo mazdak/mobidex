@@ -9,7 +9,7 @@ final class RemoteCodexDiscoveryTests: XCTestCase {
         XCTAssertFalse((RemoteCodexDiscovery.shellCommand + ";exit\n").contains("\nPY;exit"))
         XCTAssertFalse((RemoteCodexDiscovery.shellCommand + ";exit\n").contains("\n;exit"))
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("CODEX_HOME"))
-        XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("archived_sessions"))
+        XCTAssertFalse(RemoteCodexDiscovery.shellCommand.contains("archived_sessions"))
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("os.path.isdir"))
     }
 

@@ -57,6 +57,7 @@ targets:
         INFOPLIST_FILE: Sources/Mobidex/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/Mobidex/Mobidex.entitlements
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: JX3932QCN8
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
 
   MobidexTests:

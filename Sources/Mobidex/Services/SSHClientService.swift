@@ -22,6 +22,11 @@ enum SSHServiceError: LocalizedError {
     case unsupportedPrivateKey(String)
     case invalidDiscoveryOutput
     case transportClosed
+    case authenticationFailed
+    case connectionTimedOut(String, Int)
+    case hostUnreachable(String, Int)
+    case connectionClosed(String)
+    case appServerClosed(String)
 
     var errorDescription: String? {
         switch self {
@@ -35,6 +40,16 @@ enum SSHServiceError: LocalizedError {
             "The server returned invalid Codex discovery data."
         case .transportClosed:
             "The SSH app-server transport is closed."
+        case .authenticationFailed:
+            "SSH authentication failed. Check the username and saved password or private key."
+        case .connectionTimedOut(let host, let port):
+            "Timed out connecting to \(host):\(port). Check that SSH is reachable from this network."
+        case .hostUnreachable(let host, let port):
+            "Could not reach \(host):\(port). Check the host, port, and network connection."
+        case .connectionClosed(let operation):
+            "The SSH server closed the connection while \(operation). Check the server logs and SSH authentication settings."
+        case .appServerClosed(let command):
+            "SSH connected, but the server closed the app-server session while starting `\(command)`. Check the Codex path and that `codex app-server --listen stdio://` can run on the server."
         }
     }
 }
@@ -72,7 +87,7 @@ final class CitadelSSHService: SSHService {
             }
         } catch {
             try? await client.close()
-            throw error
+            throw mapSSHError(error, server: server, operation: .appServer(command: server.appServerCommand))
         }
     }
 
@@ -88,19 +103,23 @@ final class CitadelSSHService: SSHService {
             return result
         } catch {
             try? await client.close()
-            throw error
+            throw mapSSHError(error, server: server, operation: .command)
         }
     }
 
     private func connect(server: ServerRecord, credential: SSHCredential) async throws -> SSHClient {
-        try await SSHClient.connect(
-            host: server.host,
-            port: server.port,
-            authenticationMethod: authenticationMethod(server: server, credential: credential),
-            hostKeyValidator: .acceptAnything(),
-            reconnect: .never,
-            algorithms: .all
-        )
+        do {
+            return try await SSHClient.connect(
+                host: server.host,
+                port: server.port,
+                authenticationMethod: authenticationMethod(server: server, credential: credential),
+                hostKeyValidator: .acceptAnything(),
+                reconnect: .never,
+                algorithms: .all
+            )
+        } catch {
+            throw mapSSHError(error, server: server, operation: .connect)
+        }
     }
 
     private func authenticationMethod(server: ServerRecord, credential: SSHCredential) throws -> SSHAuthenticationMethod {
@@ -133,6 +152,59 @@ final class CitadelSSHService: SSHService {
         }
     }
 
+}
+
+private enum SSHOperationContext {
+    case connect
+    case command
+    case appServer(command: String)
+}
+
+private func mapSSHError(_ error: Error, server: ServerRecord, operation: SSHOperationContext) -> Error {
+    if error is SSHServiceError {
+        return error
+    }
+    if error is AuthenticationFailed {
+        return SSHServiceError.authenticationFailed
+    }
+    if let clientError = error as? SSHClientError {
+        switch clientError {
+        case .allAuthenticationOptionsFailed, .unsupportedPasswordAuthentication, .unsupportedPrivateKeyAuthentication:
+            return SSHServiceError.authenticationFailed
+        case .channelCreationFailed, .unsupportedHostBasedAuthentication:
+            return closedError(for: operation)
+        }
+    }
+    if let channelError = error as? ChannelError {
+        switch channelError {
+        case .connectTimeout:
+            return SSHServiceError.connectionTimedOut(server.host, server.port)
+        case .writeHostUnreachable:
+            return SSHServiceError.hostUnreachable(server.host, server.port)
+        case .inputClosed, .outputClosed, .ioOnClosedChannel, .alreadyClosed, .eof:
+            return closedError(for: operation)
+        case .connectPending, .operationUnsupported, .writeMessageTooLarge, .unknownLocalAddress,
+                .badMulticastGroupAddressFamily, .badInterfaceAddressFamily, .illegalMulticastAddress,
+                .inappropriateOperationForState, .unremovableHandler:
+            break
+        #if !os(WASI)
+        case .multicastNotSupported:
+            break
+        #endif
+        }
+    }
+    return error
+}
+
+private func closedError(for operation: SSHOperationContext) -> SSHServiceError {
+    switch operation {
+    case .connect:
+        .connectionClosed("connecting or authenticating")
+    case .command:
+        .connectionClosed("running a remote command")
+    case .appServer(let command):
+        .appServerClosed(command)
+    }
 }
 
 private final class SSHAppServerProcessTransport: CodexLineTransport, @unchecked Sendable {
