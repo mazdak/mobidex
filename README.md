@@ -54,7 +54,7 @@ xcodegen generate
 
 The normal Xcode scheme is the intended build/test path. After the Mobidex rename and project regeneration, `Scripts/verify-official-scheme.sh` succeeds on this machine and writes `/tmp/mobidex-official-scheme.log`.
 
-For Simulator builds, the generated project disables signing and does not require an Apple Developer account. For physical-device builds, select the `Mobidex` target in Xcode, open Signing & Capabilities, choose your own Team, and let Xcode create a local development profile for `com.mazdak.mobidex`.
+For Simulator builds, the generated project does not pin an Apple Developer team; Xcode can use local simulator signing while still providing the Keychain entitlement needed to save server credentials. For physical-device builds, select the `Mobidex` target in Xcode, open Signing & Capabilities, choose your own Team, and let Xcode create a local development profile for `com.mazdak.mobidex`.
 
 The helper-built `MobidexTests` target produces a hosted simulator `.xctest` bundle under `Mobidex.app/PlugIns`. `Scripts/verify-simulator-tests.sh` runs that hosted bundle with `xcodebuild test-without-building` and a generated `.xctestrun` file, which gives a deterministic simulator XCTest execution gate.
 
