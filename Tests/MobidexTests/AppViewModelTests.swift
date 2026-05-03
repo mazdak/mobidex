@@ -144,6 +144,12 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(project.sessionPaths, ["/srv/app"])
     }
 
+    func testThreadStatusSessionLabelsUseWorkingAndReadyLanguage() throws {
+        XCTAssertEqual(CodexThreadStatus.idle.sessionLabel, "Ready")
+        XCTAssertEqual(CodexThreadStatus.active(flags: []).sessionLabel, "Working")
+        XCTAssertEqual(CodexThreadStatus.active(flags: ["waitingOnApproval"]).sessionLabel, "Working: waitingOnApproval")
+    }
+
     func testProjectSectionsSeparateFavoritesFromActiveDiscoveredProjects() throws {
         let favoriteWithoutChats = ProjectRecord(path: "/srv/favorite", discovered: false, threadCount: 0, isFavorite: true)
         let activeDiscovered = ProjectRecord(path: "/srv/active", discovered: true, threadCount: 2)
@@ -281,6 +287,76 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
         XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
         XCTAssertEqual(viewModel.statusMessage, "New thread created.")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testOpenThreadShowsLoadingUntilReliableReadCompletes() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = list.nextCursor
+        transport.receive("""
+        {"id":\(list.id),"result":{"data":[
+          {"id":"thread-1","preview":"Existing work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let initialRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = initialRead.nextCursor
+        transport.receive("""
+        {"id":\(initialRead.id),"result":{"thread":{
+          "id":"thread-1",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+        await connectTask.value
+        XCTAssertFalse(viewModel.isSelectedThreadLoading)
+
+        let thread = try XCTUnwrap(viewModel.threads.first)
+        let openTask = Task { await viewModel.openThread(thread) }
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        XCTAssertTrue(viewModel.isSelectedThreadLoading)
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-1",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000301,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+        await openTask.value
+
+        XCTAssertFalse(viewModel.isSelectedThreadLoading)
+        XCTAssertEqual(viewModel.selectedThread?.updatedAt, Date(timeIntervalSince1970: 1_770_000_301))
         await viewModel.disconnect()
     }
 

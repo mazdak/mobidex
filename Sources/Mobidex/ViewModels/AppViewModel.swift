@@ -42,6 +42,8 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var selectedThreadID: String?
     @Published private(set) var selectedThread: CodexThread?
     @Published private(set) var conversationSections: [ConversationSection] = []
+    @Published private(set) var isSelectedThreadLoading = false
+    @Published private(set) var conversationRevision = 0
     @Published private(set) var pendingApprovals: [PendingApproval] = []
     @Published private(set) var connectionState: ServerConnectionState = .disconnected
     @Published private(set) var statusMessage: String?
@@ -60,6 +62,7 @@ final class AppViewModel: ObservableObject {
     private var activeTurnRefreshThreadID: String?
     private var connectionGeneration = 0
     private var liveItems: [CodexThreadItem] = []
+    private var selectedThreadLoadingCounts: [String: Int] = [:]
 
     init(
         repository: ServerRepository,
@@ -404,7 +407,11 @@ final class AppViewModel: ObservableObject {
         let scope = currentThreadLoadScope
         selectedThreadID = thread.id
         hydrateConversation(from: thread)
+        beginSelectedThreadLoad(threadID: thread.id)
         await runBusy("Opening thread") {
+            defer {
+                endSelectedThreadLoad(threadID: thread.id, scope: scope)
+            }
             guard let appServer else {
                 return
             }
@@ -489,6 +496,10 @@ final class AppViewModel: ObservableObject {
                     shouldHydrateThreadsAfterSend = false
                 }
                 if turn.status != "inProgress" {
+                    beginSelectedThreadLoad(threadID: thread.id)
+                    defer {
+                        endSelectedThreadLoad(threadID: thread.id, scope: scope)
+                    }
                     let hydrated = try await appServer.readThread(threadID: thread.id)
                     guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
                         return
@@ -644,6 +655,8 @@ final class AppViewModel: ObservableObject {
             selectedThread = nil
             liveItems = []
             conversationSections = []
+            conversationRevision += 1
+            clearSelectedThreadLoads()
             return
         }
 
@@ -652,6 +665,10 @@ final class AppViewModel: ObservableObject {
             hydrateConversation(from: threadToShow)
         }
 
+        beginSelectedThreadLoad(threadID: threadToShow.id)
+        defer {
+            endSelectedThreadLoad(threadID: threadToShow.id, scope: scope)
+        }
         let hydrated = try await appServer.readThread(threadID: threadToShow.id)
         guard currentThreadLoadScope == scope, selectedThreadID == threadToShow.id else {
             return
@@ -803,6 +820,10 @@ final class AppViewModel: ObservableObject {
         guard let selectedThreadID, let appServer else { return }
         let scope = currentThreadLoadScope
         do {
+            beginSelectedThreadLoad(threadID: selectedThreadID)
+            defer {
+                endSelectedThreadLoad(threadID: selectedThreadID, scope: scope)
+            }
             let thread = try await appServer.readThread(threadID: selectedThreadID)
             guard currentThreadLoadScope == scope, self.selectedThreadID == selectedThreadID else {
                 return
@@ -925,6 +946,32 @@ final class AppViewModel: ObservableObject {
 
     private func rebuildConversationFromLiveItems() {
         conversationSections = CodexSessionProjection.sections(from: liveItems)
+        conversationRevision += 1
+    }
+
+    private func beginSelectedThreadLoad(threadID: String) {
+        selectedThreadLoadingCounts[threadID, default: 0] += 1
+        if selectedThreadID == threadID {
+            isSelectedThreadLoading = true
+        }
+    }
+
+    private func endSelectedThreadLoad(threadID: String, scope: ThreadLoadScope) {
+        let nextCount = max((selectedThreadLoadingCounts[threadID] ?? 0) - 1, 0)
+        if nextCount == 0 {
+            selectedThreadLoadingCounts.removeValue(forKey: threadID)
+        } else {
+            selectedThreadLoadingCounts[threadID] = nextCount
+        }
+        guard currentThreadLoadScope == scope, selectedThreadID == threadID else {
+            return
+        }
+        isSelectedThreadLoading = (selectedThreadLoadingCounts[threadID] ?? 0) > 0
+    }
+
+    private func clearSelectedThreadLoads() {
+        selectedThreadLoadingCounts.removeAll()
+        isSelectedThreadLoading = false
     }
 
     private func upsert(turn: CodexTurn, in thread: inout CodexThread) {
@@ -1004,6 +1051,10 @@ final class AppViewModel: ObservableObject {
         }
 
         do {
+            beginSelectedThreadLoad(threadID: threadID)
+            defer {
+                endSelectedThreadLoad(threadID: threadID, scope: scope)
+            }
             let thread = try await appServer.readThread(threadID: threadID)
             guard generation == connectionGeneration,
                   currentThreadLoadScope == scope,
@@ -1222,6 +1273,8 @@ final class AppViewModel: ObservableObject {
         selectedThread = nil
         liveItems = []
         conversationSections = []
+        conversationRevision += 1
+        clearSelectedThreadLoads()
         pendingApprovals = []
     }
 

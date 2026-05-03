@@ -104,6 +104,16 @@ enum CodexThreadStatus: Equatable, Decodable, Sendable {
         case .unknown(let value): value
         }
     }
+
+    var sessionLabel: String {
+        switch self {
+        case .active(let flags): flags.isEmpty ? "Working" : "Working: \(flags.joined(separator: ", "))"
+        case .idle: "Ready"
+        case .notLoaded: "Loading"
+        case .systemError: "Needs Attention"
+        case .unknown(let value): value
+        }
+    }
 }
 
 struct CodexTurn: Identifiable, Decodable, Equatable, Sendable {

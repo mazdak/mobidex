@@ -3,6 +3,7 @@ import SwiftUI
 struct ConversationView: View {
     @EnvironmentObject private var model: AppViewModel
     @State private var composerText = ""
+    private let conversationBottomID = "conversationBottom"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -55,7 +56,7 @@ struct ConversationView: View {
             .buttonStyle(.bordered)
             .disabled(model.isBusy || !model.canSendMessage)
             .accessibilityIdentifier("newThreadButton")
-            Label(thread.status.label, systemImage: thread.status.isActive ? "dot.radiowaves.left.and.right" : "circle")
+            Label(thread.status.sessionLabel, systemImage: thread.status.isActive ? "dot.radiowaves.left.and.right" : "checkmark.circle")
                 .font(.caption)
                 .foregroundStyle(thread.status.isActive ? .green : .secondary)
         }
@@ -88,23 +89,55 @@ struct ConversationView: View {
 
     private var timeline: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(model.pendingApprovals) { approval in
-                        ApprovalCard(approval: approval)
-                            .environmentObject(model)
+            ZStack(alignment: .top) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(model.pendingApprovals) { approval in
+                            ApprovalCard(approval: approval)
+                                .environmentObject(model)
+                        }
+                        ForEach(model.conversationSections) { section in
+                            ConversationSectionView(section: section)
+                                .id(section.id)
+                        }
+                        Color.clear
+                            .frame(height: 1)
+                            .id(conversationBottomID)
                     }
-                    ForEach(model.conversationSections) { section in
-                        ConversationSectionView(section: section)
-                            .id(section.id)
-                    }
+                    .padding()
                 }
-                .padding()
+                if model.isSelectedThreadLoading {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading session")
+                            .font(.subheadline)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 10)
+                    .accessibilityIdentifier("sessionLoadingIndicator")
+                }
             }
-            .onChange(of: model.conversationSections.count) { _, _ in
-                if let last = model.conversationSections.last {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+            .onAppear {
+                scrollToConversationBottom(proxy)
+            }
+            .onChange(of: model.conversationRevision) { _, _ in
+                scrollToConversationBottom(proxy)
+            }
+            .onChange(of: model.isSelectedThreadLoading) { _, loading in
+                if !loading {
+                    scrollToConversationBottom(proxy)
                 }
+            }
+        }
+    }
+
+    private func scrollToConversationBottom(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.18)) {
+                proxy.scrollTo(conversationBottomID, anchor: .bottom)
             }
         }
     }

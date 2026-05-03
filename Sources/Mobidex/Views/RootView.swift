@@ -448,7 +448,7 @@ struct ThreadRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                Text(thread.status.label)
+                Text(thread.status.sessionLabel)
                     .font(.caption2)
                     .foregroundStyle(thread.status.isActive ? .green : .secondary)
             }
