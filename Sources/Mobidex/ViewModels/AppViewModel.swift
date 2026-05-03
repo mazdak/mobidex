@@ -916,14 +916,28 @@ final class AppViewModel: ObservableObject {
         }
 
         var projectPathBySessionPath: [String: String] = [:]
+        var projectPathByCodexWorktreeName: [String: String] = [:]
+        var ambiguousCodexWorktreeNames = Set<String>()
         for (path, record) in projects {
             for sessionPath in ProjectRecord.normalizedSessionPaths(record.sessionPaths, primaryPath: record.path) {
                 projectPathBySessionPath[sessionPath] = path
             }
+            guard !isCodexWorktreePath(record.path) else { continue }
+            let name = URL(fileURLWithPath: record.path).lastPathComponent
+            if projectPathByCodexWorktreeName[name] != nil {
+                ambiguousCodexWorktreeNames.insert(name)
+            } else {
+                projectPathByCodexWorktreeName[name] = path
+            }
+        }
+        for name in ambiguousCodexWorktreeNames {
+            projectPathByCodexWorktreeName.removeValue(forKey: name)
         }
 
         for thread in threads {
-            let projectPath = projectPathBySessionPath[thread.cwd] ?? thread.cwd
+            let projectPath = projectPathBySessionPath[thread.cwd]
+                ?? codexWorktreeMainProjectPath(for: thread.cwd, candidates: projectPathByCodexWorktreeName)
+                ?? thread.cwd
             var record = projects[projectPath] ?? ProjectRecord(path: projectPath, discovered: true)
             record.discovered = true
             record.sessionPaths = ProjectRecord.normalizedSessionPaths(record.sessionPaths + [thread.cwd], primaryPath: record.path)
@@ -931,6 +945,28 @@ final class AppViewModel: ObservableObject {
             record.lastSeenAt = max(record.lastSeenAt ?? .distantPast, thread.updatedAt)
             projects[projectPath] = record
         }
+    }
+
+    private func codexWorktreeMainProjectPath(for cwd: String, candidates: [String: String]) -> String? {
+        guard isCodexWorktreePath(cwd) else { return nil }
+        let name = URL(fileURLWithPath: cwd).lastPathComponent
+        return candidates[name]
+    }
+
+    private func isCodexWorktreePath(_ path: String) -> Bool {
+        let components = (path as NSString).pathComponents
+        guard let codexIndex = components.lastIndex(of: ".codex") else {
+            return false
+        }
+        let worktreesIndex = codexIndex + 1
+        let hashIndex = codexIndex + 2
+        let projectIndex = codexIndex + 3
+        return components.indices.contains(projectIndex)
+            && components.indices.contains(hashIndex)
+            && components.indices.contains(worktreesIndex)
+            && components[worktreesIndex] == "worktrees"
+            && !components[hashIndex].isEmpty
+            && !components[projectIndex].isEmpty
     }
 
     private func hydrateConversation(from thread: CodexThread) {

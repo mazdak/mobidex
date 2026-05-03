@@ -799,6 +799,76 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testConnectedRefreshGroupsCodexWorktreeCountsUnderMainProject() async throws {
+        let project = ProjectRecord(path: "/Users/mazdak/Code/resq/fullstack")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let discovered = [
+            RemoteProject(
+                path: "/Users/mazdak/Code/resq/fullstack",
+                threadCount: 205,
+                lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300)
+            )
+        ]
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(
+                appServer: CodexAppServerClient(transport: transport),
+                discoveredProjectBatches: [discovered]
+            )
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = initialList.nextCursor
+        transport.receive("""
+        {"id":\(initialList.id),"result":{"data":[],"nextCursor":null}}
+        """)
+        await connectTask.value
+
+        cursor = transport.sentLinesSnapshot.count
+        let refreshTask = Task { await viewModel.refreshProjects() }
+        let activeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(activeList.id),"result":{"data":[
+          {"id":"thread-main","preview":"Main","cwd":"/Users/mazdak/Code/resq/fullstack","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-worktree-a","preview":"A","cwd":"/Users/mazdak/.codex/worktrees/b717/fullstack","status":{"type":"idle"},"updatedAt":1770000500,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-worktree-b","preview":"B","cwd":"/Users/mazdak/.codex/worktrees/c402/fullstack","status":{"type":"idle"},"updatedAt":1770000600,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        await refreshTask.value
+
+        let projects = try XCTUnwrap(viewModel.selectedServer?.projects)
+        XCTAssertEqual(projects.map(\.path), ["/Users/mazdak/Code/resq/fullstack"])
+        let refreshedProject = try XCTUnwrap(projects.first)
+        XCTAssertEqual(refreshedProject.threadCount, 3)
+        XCTAssertEqual(
+            refreshedProject.sessionPaths,
+            [
+                "/Users/mazdak/Code/resq/fullstack",
+                "/Users/mazdak/.codex/worktrees/b717/fullstack",
+                "/Users/mazdak/.codex/worktrees/c402/fullstack",
+            ]
+        )
+        XCTAssertEqual(refreshedProject.lastSeenAt, Date(timeIntervalSince1970: 1_770_000_600))
+        await viewModel.disconnect()
+    }
+
+    @MainActor
     func testRefreshProjectsKeepsFavoriteStaleDiscoveredProject() async throws {
         let project = ProjectRecord(
             path: "/srv/app",
