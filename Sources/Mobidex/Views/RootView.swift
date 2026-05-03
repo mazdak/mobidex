@@ -124,6 +124,7 @@ struct ProjectSessionListView: View {
     @State private var selectedMode: ProjectSessionMode = .projects
     @State private var projectSearchText = ""
     @State private var showInactiveDiscoveredProjects = false
+    @State private var autoConnectAttemptedServerIDs = Set<UUID>()
 
     var body: some View {
         Group {
@@ -262,6 +263,9 @@ struct ProjectSessionListView: View {
                 .sheet(isPresented: $showingProjectAdd) {
                     ProjectAddView()
                 }
+                .task(id: model.selectedServerID) {
+                    await autoConnectSelectedServer()
+                }
             } else {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
             }
@@ -282,6 +286,17 @@ struct ProjectSessionListView: View {
             preferredCompactColumn = .detail
             columnVisibility = .detailOnly
         }
+    }
+
+    private func autoConnectSelectedServer() async {
+        guard let serverID = model.selectedServerID,
+              !autoConnectAttemptedServerIDs.contains(serverID),
+              !model.isAppServerConnected
+        else {
+            return
+        }
+        autoConnectAttemptedServerIDs.insert(serverID)
+        await model.connectSelectedServer()
     }
 
     private var trimmedProjectSearch: String {

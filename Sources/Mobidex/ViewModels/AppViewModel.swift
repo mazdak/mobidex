@@ -63,6 +63,7 @@ final class AppViewModel: ObservableObject {
     private var connectionGeneration = 0
     private var liveItems: [CodexThreadItem] = []
     private var selectedThreadLoadingCounts: [String: Int] = [:]
+    private var isConnectingAppServer = false
 
     init(
         repository: ServerRepository,
@@ -358,8 +359,13 @@ final class AppViewModel: ObservableObject {
     }
 
     func connectSelectedServer() async {
+        guard !isConnectingAppServer else { return }
         guard let targetServer = selectedServer else { return }
+        isConnectingAppServer = true
         connectionState = .connecting
+        defer {
+            isConnectingAppServer = false
+        }
         await closeConnection(updateState: false)
         guard selectedServerID == targetServer.id else {
             connectionState = .disconnected
