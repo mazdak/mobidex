@@ -358,7 +358,7 @@ final class AppViewModel: ObservableObject {
         isBusy = false
     }
 
-    func connectSelectedServer() async {
+    func connectSelectedServer(syncActiveThreadCounts: Bool = false) async {
         guard !isConnectingAppServer else { return }
         guard let targetServer = selectedServer else { return }
         isConnectingAppServer = true
@@ -387,7 +387,7 @@ final class AppViewModel: ObservableObject {
             startEventLoop()
             connectionState = .connected
             statusMessage = "App-server connected."
-            try await refreshProjectsUsingCredential(credential, server: targetServer, syncActiveThreadCounts: false)
+            try await refreshProjectsUsingCredential(credential, server: targetServer, syncActiveThreadCounts: syncActiveThreadCounts)
             guard selectedServerID == targetServer.id else {
                 throw AppViewModelError.selectionChanged
             }

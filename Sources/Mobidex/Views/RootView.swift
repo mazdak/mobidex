@@ -152,7 +152,7 @@ struct ProjectSessionListView: View {
                             }
                             .accessibilityIdentifier("testConnectionButton")
                             Button {
-                                Task { await model.connectSelectedServer() }
+                                Task { await model.connectSelectedServer(syncActiveThreadCounts: true) }
                             } label: {
                                 Label(model.isAppServerConnected ? "Reconnect App-Server" : "Connect App-Server", systemImage: "bolt.horizontal")
                             }
@@ -296,7 +296,7 @@ struct ProjectSessionListView: View {
             return
         }
         autoConnectAttemptedServerIDs.insert(serverID)
-        await model.connectSelectedServer()
+        await model.connectSelectedServer(syncActiveThreadCounts: true)
     }
 
     private var trimmedProjectSearch: String {
