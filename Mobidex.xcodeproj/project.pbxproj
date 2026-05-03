@@ -1,0 +1,689 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */; };
+		10BA0070BDE5B83F3721FD57 /* SSHClientService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43AB39944ABF583A29C1AB6A /* SSHClientService.swift */; };
+		3D02EE812C214072E99C6F9A /* MobidexLaunchSmoke.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */; };
+		4FC51DEEB51743B69EBF17AD /* RemoteCodexDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 431D4C7FEFBF04894608659E /* RemoteCodexDiscoveryTests.swift */; };
+		6320B0AF845A3D3BE655ED71 /* CodexModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97220BF00949FD3FFDB61C6D /* CodexModels.swift */; };
+		65C5DA5345A9872184474DEE /* SwiftASN1 in Frameworks */ = {isa = PBXBuildFile; productRef = 423C8140149CB2E555E73D8D /* SwiftASN1 */; };
+		744CCE5CD63E51851C3BCB76 /* MobidexApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F981F0ACBB874D34A9E6765 /* MobidexApp.swift */; };
+		78C852130C951811CFED35BE /* SessionProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */; };
+		79D56F08BA702659D59BEB65 /* CodexAppServerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */; };
+		89A76F324C8541635216B08F /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500E2233796B5934C1591FFC /* AppViewModel.swift */; };
+		A19431CD7B430E2609120733 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3F9F6842C4EC0EECCFCD2D39 /* Security.framework */; };
+		A1ABE1CA9D2BBCCD0EA59523 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = C733F85A7FE974B2F0EF82CE /* Citadel */; };
+		A267EFB96A42F2D26B792C09 /* ServerRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19E8AB7C633795CE38A00D16 /* ServerRepository.swift */; };
+		A40DA9376EE6C87BCB437591 /* RemoteCodexDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 332EB44AD8FA1F95EF1EE867 /* RemoteCodexDiscovery.swift */; };
+		A53F982998526E57E1226CA9 /* AppViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82A0BC0C7137371A8AFAB12B /* AppViewModelTests.swift */; };
+		A72F18C8388039F0E0BD8231 /* ServerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2A70EEBAFA590B84DAC2D48 /* ServerModels.swift */; };
+		AB2852ECB92E7E0129FE1E58 /* CodexSessionProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDF24BB2CB64238D87A6FAD /* CodexSessionProjection.swift */; };
+		AE7CFE95DD2C6CE001853B80 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BB66DF8C4500739CFA7E00D /* ConversationView.swift */; };
+		C6A370E1CD7150B718F41ED0 /* ServerEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B6F945AC3EF7F65796D4359 /* ServerEditorView.swift */; };
+		CF30371B3B835A966C08BE4A /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B962D351C5EDF581C16E298 /* CredentialStore.swift */; };
+		CF6AEAAF87DCBBFABA5FA1DE /* CodexProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */; };
+		D5E96C567472710520ED7A20 /* CredentialStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84B375AFEC4D0FF298D73FE /* CredentialStorageTests.swift */; };
+		D7887CE39E391096767BB07C /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F62709AA1D51EBE375B8A23 /* RootView.swift */; };
+		DE3C8D92D5509847D8F7C24C /* MobidexUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0138BF77FD4B1030601AF47C /* MobidexUITests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		225890C18AF1DF1145E403A0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D59B4B704B027C0C378D9527 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DBF1917B71416F679CE962A4;
+			remoteInfo = Mobidex;
+		};
+		F4670E1351DA11BBCFB6E865 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D59B4B704B027C0C378D9527 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DBF1917B71416F679CE962A4;
+			remoteInfo = Mobidex;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0138BF77FD4B1030601AF47C /* MobidexUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexUITests.swift; sourceTree = "<group>"; };
+		0F981F0ACBB874D34A9E6765 /* MobidexApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexApp.swift; sourceTree = "<group>"; };
+		19E8AB7C633795CE38A00D16 /* ServerRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerRepository.swift; sourceTree = "<group>"; };
+		24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppServerProtocol.swift; sourceTree = "<group>"; };
+		332EB44AD8FA1F95EF1EE867 /* RemoteCodexDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCodexDiscovery.swift; sourceTree = "<group>"; };
+		3A96240FB8B8F67A6538139D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		3CFB3B4C62D3033358ADE4CF /* MobidexTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MobidexTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3F9F6842C4EC0EECCFCD2D39 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		431D4C7FEFBF04894608659E /* RemoteCodexDiscoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCodexDiscoveryTests.swift; sourceTree = "<group>"; };
+		43AB39944ABF583A29C1AB6A /* SSHClientService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHClientService.swift; sourceTree = "<group>"; };
+		4B6F945AC3EF7F65796D4359 /* ServerEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEditorView.swift; sourceTree = "<group>"; };
+		4F62709AA1D51EBE375B8A23 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		500E2233796B5934C1591FFC /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexProtocolTests.swift; sourceTree = "<group>"; };
+		6BEA21E8847877A76117DA3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		7B962D351C5EDF581C16E298 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
+		7BB66DF8C4500739CFA7E00D /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
+		82A0BC0C7137371A8AFAB12B /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
+		8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectAddView.swift; sourceTree = "<group>"; };
+		8FDF24BB2CB64238D87A6FAD /* CodexSessionProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSessionProjection.swift; sourceTree = "<group>"; };
+		943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexLaunchSmoke.swift; sourceTree = "<group>"; };
+		97220BF00949FD3FFDB61C6D /* CodexModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexModels.swift; sourceTree = "<group>"; };
+		B84B375AFEC4D0FF298D73FE /* CredentialStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStorageTests.swift; sourceTree = "<group>"; };
+		BD120FFE204CF33E5F865DD1 /* MobidexUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MobidexUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D89135403B0F71480B09E5A6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		E2A70EEBAFA590B84DAC2D48 /* ServerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModels.swift; sourceTree = "<group>"; };
+		EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectionTests.swift; sourceTree = "<group>"; };
+		F6A214A65C0D1B8E443F51C0 /* Mobidex.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mobidex.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A01481DD80C133D49E736D1F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A19431CD7B430E2609120733 /* Security.framework in Frameworks */,
+				65C5DA5345A9872184474DEE /* SwiftASN1 in Frameworks */,
+				A1ABE1CA9D2BBCCD0EA59523 /* Citadel in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0410CF4EB696CB84A56A7E4E /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				7BB66DF8C4500739CFA7E00D /* ConversationView.swift */,
+				8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */,
+				4F62709AA1D51EBE375B8A23 /* RootView.swift */,
+				4B6F945AC3EF7F65796D4359 /* ServerEditorView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		105B05D66B381983FAC145BF /* Mobidex */ = {
+			isa = PBXGroup;
+			children = (
+				3A96240FB8B8F67A6538139D /* Info.plist */,
+				0F981F0ACBB874D34A9E6765 /* MobidexApp.swift */,
+				CE38CAD2BC369D0C1046F6F8 /* Models */,
+				A04CEC65A977511A04DFF040 /* Services */,
+				BBEBE65544DEE125DDBB0311 /* ViewModels */,
+				0410CF4EB696CB84A56A7E4E /* Views */,
+			);
+			name = Mobidex;
+			path = Sources/Mobidex;
+			sourceTree = "<group>";
+		};
+		178A52C56D7671A42350DF0E /* MobidexTests */ = {
+			isa = PBXGroup;
+			children = (
+				82A0BC0C7137371A8AFAB12B /* AppViewModelTests.swift */,
+				66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */,
+				B84B375AFEC4D0FF298D73FE /* CredentialStorageTests.swift */,
+				6BEA21E8847877A76117DA3A /* Info.plist */,
+				431D4C7FEFBF04894608659E /* RemoteCodexDiscoveryTests.swift */,
+				EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */,
+			);
+			name = MobidexTests;
+			path = Tests/MobidexTests;
+			sourceTree = "<group>";
+		};
+		7860E1C6BB932800192C79B8 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3F9F6842C4EC0EECCFCD2D39 /* Security.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		A04CEC65A977511A04DFF040 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */,
+				8FDF24BB2CB64238D87A6FAD /* CodexSessionProjection.swift */,
+				7B962D351C5EDF581C16E298 /* CredentialStore.swift */,
+				943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */,
+				332EB44AD8FA1F95EF1EE867 /* RemoteCodexDiscovery.swift */,
+				19E8AB7C633795CE38A00D16 /* ServerRepository.swift */,
+				43AB39944ABF583A29C1AB6A /* SSHClientService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		BBEBE65544DEE125DDBB0311 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				500E2233796B5934C1591FFC /* AppViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		C577ADB58F35F1543F29E46A /* MobidexUITests */ = {
+			isa = PBXGroup;
+			children = (
+				D89135403B0F71480B09E5A6 /* Info.plist */,
+				0138BF77FD4B1030601AF47C /* MobidexUITests.swift */,
+			);
+			name = MobidexUITests;
+			path = Tests/MobidexUITests;
+			sourceTree = "<group>";
+		};
+		CE38CAD2BC369D0C1046F6F8 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				97220BF00949FD3FFDB61C6D /* CodexModels.swift */,
+				E2A70EEBAFA590B84DAC2D48 /* ServerModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		D8D2EC26B9AF90A7E13C10EE /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F6A214A65C0D1B8E443F51C0 /* Mobidex.app */,
+				3CFB3B4C62D3033358ADE4CF /* MobidexTests.xctest */,
+				BD120FFE204CF33E5F865DD1 /* MobidexUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		DF57DCBFEA4897BD69592559 = {
+			isa = PBXGroup;
+			children = (
+				105B05D66B381983FAC145BF /* Mobidex */,
+				178A52C56D7671A42350DF0E /* MobidexTests */,
+				C577ADB58F35F1543F29E46A /* MobidexUITests */,
+				7860E1C6BB932800192C79B8 /* Frameworks */,
+				D8D2EC26B9AF90A7E13C10EE /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B956F6907AB943513B3975A7 /* MobidexTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA73B92DCC256184CEC34E33 /* Build configuration list for PBXNativeTarget "MobidexTests" */;
+			buildPhases = (
+				641DAEEE3CEBAC9DFBCD2BF7 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				3F6E0E26E898514199897C21 /* PBXTargetDependency */,
+			);
+			name = MobidexTests;
+			packageProductDependencies = (
+			);
+			productName = MobidexTests;
+			productReference = 3CFB3B4C62D3033358ADE4CF /* MobidexTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		DBF1917B71416F679CE962A4 /* Mobidex */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9D811AC72DB62476EC16DFE5 /* Build configuration list for PBXNativeTarget "Mobidex" */;
+			buildPhases = (
+				381E0DF7E7BC6A6EF8A1D90E /* Sources */,
+				A01481DD80C133D49E736D1F /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Mobidex;
+			packageProductDependencies = (
+				423C8140149CB2E555E73D8D /* SwiftASN1 */,
+				C733F85A7FE974B2F0EF82CE /* Citadel */,
+			);
+			productName = Mobidex;
+			productReference = F6A214A65C0D1B8E443F51C0 /* Mobidex.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E7D6D4C9487286DCD35B98D3 /* MobidexUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 12876D28ED985BBA87888A6D /* Build configuration list for PBXNativeTarget "MobidexUITests" */;
+			buildPhases = (
+				0466D52ECA5E7A918849D8D2 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				90A061B9CF8086B164FE062D /* PBXTargetDependency */,
+			);
+			name = MobidexUITests;
+			packageProductDependencies = (
+			);
+			productName = MobidexUITests;
+			productReference = BD120FFE204CF33E5F865DD1 /* MobidexUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D59B4B704B027C0C378D9527 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					B956F6907AB943513B3975A7 = {
+						DevelopmentTeam = UH66Q8ZAYG;
+					};
+					DBF1917B71416F679CE962A4 = {
+						DevelopmentTeam = UH66Q8ZAYG;
+						ProvisioningStyle = Automatic;
+					};
+					E7D6D4C9487286DCD35B98D3 = {
+						DevelopmentTeam = UH66Q8ZAYG;
+						TestTargetID = DBF1917B71416F679CE962A4;
+					};
+				};
+			};
+			buildConfigurationList = EA5B925CD473973B538E3433 /* Build configuration list for PBXProject "Mobidex" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = DF57DCBFEA4897BD69592559;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1E26BEAE1A24489A5A117DDA /* XCRemoteSwiftPackageReference "Citadel" */,
+				CB8383329A6C1D00209660C5 /* XCRemoteSwiftPackageReference "swift-asn1" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = D8D2EC26B9AF90A7E13C10EE /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				DBF1917B71416F679CE962A4 /* Mobidex */,
+				B956F6907AB943513B3975A7 /* MobidexTests */,
+				E7D6D4C9487286DCD35B98D3 /* MobidexUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0466D52ECA5E7A918849D8D2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DE3C8D92D5509847D8F7C24C /* MobidexUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		381E0DF7E7BC6A6EF8A1D90E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				89A76F324C8541635216B08F /* AppViewModel.swift in Sources */,
+				79D56F08BA702659D59BEB65 /* CodexAppServerProtocol.swift in Sources */,
+				6320B0AF845A3D3BE655ED71 /* CodexModels.swift in Sources */,
+				AB2852ECB92E7E0129FE1E58 /* CodexSessionProjection.swift in Sources */,
+				AE7CFE95DD2C6CE001853B80 /* ConversationView.swift in Sources */,
+				CF30371B3B835A966C08BE4A /* CredentialStore.swift in Sources */,
+				744CCE5CD63E51851C3BCB76 /* MobidexApp.swift in Sources */,
+				3D02EE812C214072E99C6F9A /* MobidexLaunchSmoke.swift in Sources */,
+				06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */,
+				A40DA9376EE6C87BCB437591 /* RemoteCodexDiscovery.swift in Sources */,
+				D7887CE39E391096767BB07C /* RootView.swift in Sources */,
+				10BA0070BDE5B83F3721FD57 /* SSHClientService.swift in Sources */,
+				C6A370E1CD7150B718F41ED0 /* ServerEditorView.swift in Sources */,
+				A72F18C8388039F0E0BD8231 /* ServerModels.swift in Sources */,
+				A267EFB96A42F2D26B792C09 /* ServerRepository.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		641DAEEE3CEBAC9DFBCD2BF7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A53F982998526E57E1226CA9 /* AppViewModelTests.swift in Sources */,
+				CF6AEAAF87DCBBFABA5FA1DE /* CodexProtocolTests.swift in Sources */,
+				D5E96C567472710520ED7A20 /* CredentialStorageTests.swift in Sources */,
+				4FC51DEEB51743B69EBF17AD /* RemoteCodexDiscoveryTests.swift in Sources */,
+				78C852130C951811CFED35BE /* SessionProjectionTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		3F6E0E26E898514199897C21 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DBF1917B71416F679CE962A4 /* Mobidex */;
+			targetProxy = 225890C18AF1DF1145E403A0 /* PBXContainerItemProxy */;
+		};
+		90A061B9CF8086B164FE062D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = DBF1917B71416F679CE962A4 /* Mobidex */;
+			targetProxy = F4670E1351DA11BBCFB6E865 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		266F6E8F18BC0EE879A794C6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Sources/Mobidex/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mazdak.mobidex;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		48E13C2ACF3C342A54764BCA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				INFOPLIST_FILE = Tests/MobidexTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mazdak.mobidex.tests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mobidex.app/Mobidex";
+			};
+			name = Release;
+		};
+		56536756B319062A6F287725 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = UH66Q8ZAYG;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		7278D49DCACC07EB8CEF4A92 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				INFOPLIST_FILE = Tests/MobidexUITests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mazdak.mobidex.uitests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Mobidex;
+			};
+			name = Release;
+		};
+		821157F23ED09A8A52F2C400 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				INFOPLIST_FILE = Tests/MobidexUITests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mazdak.mobidex.uitests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Mobidex;
+			};
+			name = Debug;
+		};
+		A46A486EE7A7E56AD68BB5E4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				INFOPLIST_FILE = Tests/MobidexTests/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mazdak.mobidex.tests;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Mobidex.app/Mobidex";
+			};
+			name = Debug;
+		};
+		D9AF68E3FFBEC9A2C32CC1E2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = UH66Q8ZAYG;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		F5B83D00E16D53AC0A1CBD5A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = Sources/Mobidex/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.mazdak.mobidex;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		12876D28ED985BBA87888A6D /* Build configuration list for PBXNativeTarget "MobidexUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				821157F23ED09A8A52F2C400 /* Debug */,
+				7278D49DCACC07EB8CEF4A92 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9D811AC72DB62476EC16DFE5 /* Build configuration list for PBXNativeTarget "Mobidex" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				266F6E8F18BC0EE879A794C6 /* Debug */,
+				F5B83D00E16D53AC0A1CBD5A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EA5B925CD473973B538E3433 /* Build configuration list for PBXProject "Mobidex" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D9AF68E3FFBEC9A2C32CC1E2 /* Debug */,
+				56536756B319062A6F287725 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		EA73B92DCC256184CEC34E33 /* Build configuration list for PBXNativeTarget "MobidexTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A46A486EE7A7E56AD68BB5E4 /* Debug */,
+				48E13C2ACF3C342A54764BCA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		1E26BEAE1A24489A5A117DDA /* XCRemoteSwiftPackageReference "Citadel" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/orlandos-nl/Citadel.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.12.1;
+			};
+		};
+		CB8383329A6C1D00209660C5 /* XCRemoteSwiftPackageReference "swift-asn1" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-asn1.git";
+			requirement = {
+				kind = exactVersion;
+				version = 1.4.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		423C8140149CB2E555E73D8D /* SwiftASN1 */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = CB8383329A6C1D00209660C5 /* XCRemoteSwiftPackageReference "swift-asn1" */;
+			productName = SwiftASN1;
+		};
+		C733F85A7FE974B2F0EF82CE /* Citadel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 1E26BEAE1A24489A5A117DDA /* XCRemoteSwiftPackageReference "Citadel" */;
+			productName = Citadel;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = D59B4B704B027C0C378D9527 /* Project object */;
+}
