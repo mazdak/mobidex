@@ -31,8 +31,6 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Sources/Mobidex
-        excludes:
-          - Assets.xcassets
     dependencies:
       - sdk: Security.framework
       - package: SwiftASN1

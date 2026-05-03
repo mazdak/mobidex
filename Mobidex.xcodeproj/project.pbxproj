@@ -10,6 +10,7 @@
 		06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */; };
 		10BA0070BDE5B83F3721FD57 /* SSHClientService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43AB39944ABF583A29C1AB6A /* SSHClientService.swift */; };
 		3D02EE812C214072E99C6F9A /* MobidexLaunchSmoke.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */; };
+		47B45AC7436747D4F833D57E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 773861FEB95B5C09BBCC472B /* Assets.xcassets */; };
 		4FC51DEEB51743B69EBF17AD /* RemoteCodexDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 431D4C7FEFBF04894608659E /* RemoteCodexDiscoveryTests.swift */; };
 		6320B0AF845A3D3BE655ED71 /* CodexModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97220BF00949FD3FFDB61C6D /* CodexModels.swift */; };
 		65C5DA5345A9872184474DEE /* SwiftASN1 in Frameworks */ = {isa = PBXBuildFile; productRef = 423C8140149CB2E555E73D8D /* SwiftASN1 */; };
@@ -66,6 +67,7 @@
 		500E2233796B5934C1591FFC /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexProtocolTests.swift; sourceTree = "<group>"; };
 		6BEA21E8847877A76117DA3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		773861FEB95B5C09BBCC472B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7B962D351C5EDF581C16E298 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
 		7BB66DF8C4500739CFA7E00D /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
 		82A0BC0C7137371A8AFAB12B /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
@@ -109,6 +111,7 @@
 		105B05D66B381983FAC145BF /* Mobidex */ = {
 			isa = PBXGroup;
 			children = (
+				773861FEB95B5C09BBCC472B /* Assets.xcassets */,
 				3A96240FB8B8F67A6538139D /* Info.plist */,
 				0F981F0ACBB874D34A9E6765 /* MobidexApp.swift */,
 				CE38CAD2BC369D0C1046F6F8 /* Models */,
@@ -230,6 +233,7 @@
 			buildConfigurationList = 9D811AC72DB62476EC16DFE5 /* Build configuration list for PBXNativeTarget "Mobidex" */;
 			buildPhases = (
 				381E0DF7E7BC6A6EF8A1D90E /* Sources */,
+				FFAA2E46913D67B190ADE723 /* Resources */,
 				A01481DD80C133D49E736D1F /* Frameworks */,
 			);
 			buildRules = (
@@ -304,6 +308,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		FFAA2E46913D67B190ADE723 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				47B45AC7436747D4F833D57E /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		0466D52ECA5E7A918849D8D2 /* Sources */ = {
