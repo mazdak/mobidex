@@ -144,6 +144,72 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(project.sessionPaths, ["/srv/app"])
     }
 
+    func testProjectSectionsSeparateFavoritesFromActiveDiscoveredProjects() throws {
+        let favoriteWithoutChats = ProjectRecord(path: "/srv/favorite", discovered: false, threadCount: 0, isFavorite: true)
+        let activeDiscovered = ProjectRecord(path: "/srv/active", discovered: true, threadCount: 2)
+        let inactiveDiscovered = ProjectRecord(path: "/srv/inactive", discovered: true, threadCount: 0)
+
+        let sections = ProjectSections(
+            projects: [inactiveDiscovered, activeDiscovered, favoriteWithoutChats],
+            searchText: "",
+            showInactiveDiscoveredProjects: false
+        )
+
+        XCTAssertEqual(sections.favorites.map(\.path), ["/srv/favorite"])
+        XCTAssertEqual(sections.discovered.map(\.path), ["/srv/active"])
+        XCTAssertTrue(sections.showFilter)
+        XCTAssertEqual(sections.discoveredTitle, "Discovered Active")
+    }
+
+    func testProjectSectionsCanIncludeInactiveDiscoveredProjects() throws {
+        let activeDiscovered = ProjectRecord(path: "/srv/active", discovered: true, threadCount: 2)
+        let inactiveDiscovered = ProjectRecord(path: "/srv/inactive", discovered: true, threadCount: 0)
+
+        let sections = ProjectSections(
+            projects: [inactiveDiscovered, activeDiscovered],
+            searchText: "",
+            showInactiveDiscoveredProjects: true
+        )
+
+        XCTAssertEqual(sections.discovered.map(\.path), ["/srv/active", "/srv/inactive"])
+        XCTAssertEqual(sections.discoveredTitle, "Discovered")
+    }
+
+    func testProjectSectionsSearchFindsInactiveDiscoveredProjects() throws {
+        let activeDiscovered = ProjectRecord(path: "/srv/active", discovered: true, threadCount: 2)
+        let inactiveDiscovered = ProjectRecord(path: "/srv/inactive-match", displayName: "inactive-match", discovered: true, threadCount: 0)
+
+        let sections = ProjectSections(
+            projects: [activeDiscovered, inactiveDiscovered],
+            searchText: "match",
+            showInactiveDiscoveredProjects: false
+        )
+
+        XCTAssertTrue(sections.favorites.isEmpty)
+        XCTAssertEqual(sections.discovered.map(\.path), ["/srv/inactive-match"])
+        XCTAssertEqual(sections.discoveredTitle, "Discovered")
+    }
+
+    func testProjectSectionsKeepManualProjectsVisibleAndSearchable() throws {
+        let manualProject = ProjectRecord(path: "/srv/manual", discovered: false, threadCount: 0)
+        let activeDiscovered = ProjectRecord(path: "/srv/active", discovered: true, threadCount: 2)
+
+        let defaultSections = ProjectSections(
+            projects: [manualProject, activeDiscovered],
+            searchText: "",
+            showInactiveDiscoveredProjects: false
+        )
+        XCTAssertEqual(defaultSections.added.map(\.path), ["/srv/manual"])
+
+        let searchSections = ProjectSections(
+            projects: [manualProject, activeDiscovered],
+            searchText: "manual",
+            showInactiveDiscoveredProjects: false
+        )
+        XCTAssertEqual(searchSections.added.map(\.path), ["/srv/manual"])
+        XCTAssertTrue(searchSections.discovered.isEmpty)
+    }
+
     @MainActor
     func testStartNewThreadCreatesAndSelectsThreadWhenConnected() async throws {
         let project = ProjectRecord(path: "/srv/app")

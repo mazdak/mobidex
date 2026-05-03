@@ -123,6 +123,7 @@ struct ProjectSessionListView: View {
     @State private var showingProjectAdd = false
     @State private var selectedMode: ProjectSessionMode = .projects
     @State private var projectSearchText = ""
+    @State private var showInactiveDiscoveredProjects = false
 
     var body: some View {
         Group {
@@ -170,44 +171,44 @@ struct ProjectSessionListView: View {
 
                     switch selectedMode {
                     case .projects:
-                        Section("Projects") {
-                            ForEach(visibleProjects(from: server.projects)) { project in
-                                HStack(spacing: 10) {
-                                    Button {
-                                        model.selectProject(project.id)
-                                        promoteDetailIfCompact()
-                                        Task { await model.refreshThreads() }
-                                    } label: {
-                                        ProjectRow(project: project, selected: project.id == model.selectedProjectID)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityIdentifier("projectRow")
+                        let sections = projectSections(from: server.projects)
+                        if sections.showFilter {
+                            Section {
+                                Toggle("Show inactive discovered projects", isOn: $showInactiveDiscoveredProjects)
+                                    .font(.subheadline)
+                            }
+                        }
 
-                                    Button {
-                                        _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
-                                    } label: {
-                                        Image(systemName: project.isFavorite ? "star.fill" : "star")
-                                            .foregroundStyle(project.isFavorite ? .yellow : .secondary)
-                                            .frame(width: 32, height: 32)
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .accessibilityLabel(project.isFavorite ? "Remove Favorite" : "Add Favorite")
-                                    .accessibilityIdentifier("projectFavoriteButton")
+                        if !sections.favorites.isEmpty {
+                            Section("Favorites") {
+                                ForEach(sections.favorites) { project in
+                                    projectRow(project)
                                 }
-                                .swipeActions {
-                                    Button {
-                                        _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
-                                    } label: {
-                                        Label(project.isFavorite ? "Unfavorite" : "Favorite", systemImage: project.isFavorite ? "star.slash" : "star")
-                                    }
-                                    .tint(.yellow)
+                            }
+                        }
 
-                                    Button(role: .destructive) {
-                                        model.removeProject(project)
-                                    } label: {
-                                        Label("Remove", systemImage: "minus.circle")
-                                    }
+                        if !sections.discovered.isEmpty {
+                            Section(sections.discoveredTitle) {
+                                ForEach(sections.discovered) { project in
+                                    projectRow(project)
                                 }
+                            }
+                        }
+
+                        if !sections.added.isEmpty {
+                            Section("Added") {
+                                ForEach(sections.added) { project in
+                                    projectRow(project)
+                                }
+                            }
+                        }
+
+                        if sections.isEmpty {
+                            Section {
+                                ContentUnavailableView(
+                                    trimmedProjectSearch.isEmpty ? "No Projects" : "No Matching Projects",
+                                    systemImage: "folder"
+                                )
                             }
                         }
                     case .sessions:
@@ -276,18 +277,83 @@ struct ProjectSessionListView: View {
         }
     }
 
-    private func visibleProjects(from projects: [ProjectRecord]) -> [ProjectRecord] {
-        let trimmedSearch = projectSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filtered = projects.filter { project in
-            guard !trimmedSearch.isEmpty else {
-                return true
+    private var trimmedProjectSearch: String {
+        projectSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func projectSections(from projects: [ProjectRecord]) -> ProjectSections {
+        ProjectSections(
+            projects: projects,
+            searchText: trimmedProjectSearch,
+            showInactiveDiscoveredProjects: showInactiveDiscoveredProjects
+        )
+    }
+
+    private func projectRow(_ project: ProjectRecord) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                model.selectProject(project.id)
+                promoteDetailIfCompact()
+                Task { await model.refreshThreads() }
+            } label: {
+                ProjectRow(project: project, selected: project.id == model.selectedProjectID)
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("projectRow")
+
+            Button {
+                _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
+            } label: {
+                Image(systemName: project.isFavorite ? "star.fill" : "star")
+                    .foregroundStyle(project.isFavorite ? .yellow : .secondary)
+                    .frame(width: 32, height: 32)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(project.isFavorite ? "Remove Favorite" : "Add Favorite")
+            .accessibilityIdentifier("projectFavoriteButton")
+        }
+        .swipeActions {
+            Button {
+                _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
+            } label: {
+                Label(project.isFavorite ? "Unfavorite" : "Favorite", systemImage: project.isFavorite ? "star.slash" : "star")
+            }
+            .tint(.yellow)
+
+            Button(role: .destructive) {
+                model.removeProject(project)
+            } label: {
+                Label("Remove", systemImage: "minus.circle")
+            }
+        }
+    }
+}
+
+struct ProjectSections: Equatable {
+    var favorites: [ProjectRecord]
+    var discovered: [ProjectRecord]
+    var added: [ProjectRecord]
+    var showFilter: Bool
+    var discoveredTitle: String
+
+    var isEmpty: Bool {
+        favorites.isEmpty && discovered.isEmpty && added.isEmpty
+    }
+
+    init(projects: [ProjectRecord], searchText: String, showInactiveDiscoveredProjects: Bool) {
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let searching = !trimmedSearch.isEmpty
+        let matching = projects.filter { project in
+            guard searching else { return true }
             return project.displayName.localizedCaseInsensitiveContains(trimmedSearch)
                 || project.path.localizedCaseInsensitiveContains(trimmedSearch)
         }
-        return filtered.sorted { lhs, rhs in
+        let sorted = matching.sorted { lhs, rhs in
             if lhs.isFavorite != rhs.isFavorite {
                 return lhs.isFavorite && !rhs.isFavorite
+            }
+            if lhs.threadCount != rhs.threadCount {
+                return lhs.threadCount > rhs.threadCount
             }
             let lhsDate = lhs.lastSeenAt ?? .distantPast
             let rhsDate = rhs.lastSeenAt ?? .distantPast
@@ -296,6 +362,17 @@ struct ProjectSessionListView: View {
             }
             return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
         }
+
+        favorites = sorted.filter(\.isFavorite)
+        discovered = sorted.filter { project in
+            guard project.discovered, !project.isFavorite else { return false }
+            return project.threadCount > 0 || showInactiveDiscoveredProjects || searching
+        }
+        added = sorted.filter { project in
+            !project.discovered && !project.isFavorite
+        }
+        showFilter = projects.contains { $0.discovered && !$0.isFavorite && $0.threadCount == 0 }
+        discoveredTitle = (showInactiveDiscoveredProjects || searching) ? "Discovered" : "Discovered Active"
     }
 }
 
