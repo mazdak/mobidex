@@ -846,7 +846,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refreshThreadListAfterEvent() async {
-        guard let appServer else { return }
+        guard appServer != nil else { return }
         let scope = currentThreadLoadScope
         do {
             let loadedThreads = try await listThreads(matching: scope)
