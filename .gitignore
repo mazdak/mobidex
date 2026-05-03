@@ -1,5 +1,7 @@
 /.derivedData/
 /build/
 .DS_Store
+xcuserdata/
+**/xcuserdata/
 MISSION.md
 NEXT.md
