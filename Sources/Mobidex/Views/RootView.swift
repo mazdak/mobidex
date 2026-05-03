@@ -153,7 +153,7 @@ struct ProjectSessionListView: View {
                             Button {
                                 Task { await model.connectSelectedServer() }
                             } label: {
-                                Label("Connect", systemImage: "bolt.horizontal")
+                                Label(model.isAppServerConnected ? "Reconnect App-Server" : "Connect App-Server", systemImage: "bolt.horizontal")
                             }
                             .accessibilityIdentifier("connectButton")
                         }
