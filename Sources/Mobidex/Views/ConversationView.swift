@@ -110,26 +110,164 @@ struct ConversationView: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message Codex", text: $composerText, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...5)
-                .accessibilityIdentifier("messageComposer")
-            Button {
-                let text = composerText
-                composerText = ""
-                Task { await model.sendComposerText(text) }
-            } label: {
-                Image(systemName: "paperplane.fill")
-                    .frame(width: 32, height: 32)
+        VStack(spacing: 0) {
+            VStack(spacing: 12) {
+                TextField("Ask for follow-up changes", text: $composerText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(2...6)
+                    .font(.body)
+                    .accessibilityIdentifier("messageComposer")
+
+                ViewThatFits(in: .horizontal) {
+                    composerControlRow(showModelReasoning: true, showAccessText: true)
+                    composerControlRow(showModelReasoning: false, showAccessText: true)
+                    compactComposerControlRow
+                    minimalComposerControlRow
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canSendMessage || model.isBusy)
-            .accessibilityLabel("Send")
-            .accessibilityIdentifier("sendButton")
+            .padding(.horizontal, 18)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            }
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    private var sendDisabled: Bool {
+        composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canSendMessage || model.isBusy
+    }
+
+    private var sendButtonBackground: Color {
+        sendDisabled ? Color.secondary.opacity(0.45) : Color.accentColor
+    }
+
+    private func composerControlRow(showModelReasoning: Bool, showAccessText: Bool) -> some View {
+        HStack(spacing: showAccessText ? 14 : 12) {
+            attachmentIcon
+
+            accessLabel(showText: showAccessText)
+
+            Spacer(minLength: 8)
+
+            contextIndicator
+
+            modelLabel(showReasoning: showModelReasoning)
+
+            microphoneIcon
+
+            sendButton
+        }
+    }
+
+    private var compactComposerControlRow: some View {
+        HStack(spacing: 12) {
+            attachmentIcon
+
+            accessLabel(showText: false)
+
+            Spacer(minLength: 6)
+
+            contextIndicator
+            Text("5.5")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.primary)
+                .accessibilityLabel("Model GPT-5.5 Medium")
+
+            microphoneIcon
+
+            sendButton
+        }
+    }
+
+    private var minimalComposerControlRow: some View {
+        HStack(spacing: 12) {
+            attachmentIcon
+
+            Spacer(minLength: 0)
+
+            sendButton
+        }
+    }
+
+    private var attachmentIcon: some View {
+        Image(systemName: "plus")
+            .font(.title3)
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .accessibilityHidden(true)
+    }
+
+    private var microphoneIcon: some View {
+        Image(systemName: "mic")
+            .font(.title3)
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .accessibilityHidden(true)
+    }
+
+    private func accessLabel(showText: Bool) -> some View {
+        Label {
+            if showText {
+                Text("Full access")
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.shield")
+        }
+        .font(.subheadline)
+        .foregroundStyle(.orange)
+        .accessibilityLabel("Full access")
+    }
+
+    private func modelLabel(showReasoning: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text("5.5")
+                .fontWeight(.medium)
+            if showReasoning {
+                Text("Medium")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.subheadline)
+        .foregroundStyle(.primary)
+        .accessibilityLabel("Model GPT-5.5 Medium")
+    }
+
+    private var sendButton: some View {
+        Button {
+            let text = composerText
+            composerText = ""
+            Task { await model.sendComposerText(text) }
+        } label: {
+            Image(systemName: "arrow.up")
+                .font(.title3.weight(.semibold))
+                .frame(width: 42, height: 42)
+                .foregroundStyle(.white)
+                .background(sendButtonBackground, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(sendDisabled)
+        .accessibilityLabel("Send")
+        .accessibilityIdentifier("sendButton")
+    }
+
+    private var contextIndicator: some View {
+        ZStack {
+            Circle()
+                .stroke(Color.secondary.opacity(0.25), lineWidth: 3)
+                .frame(width: 18, height: 18)
+            Circle()
+                .trim(from: 0, to: model.isBusy ? 0.72 : 0.18)
+                .stroke(Color.secondary, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: 18, height: 18)
+        }
+        .accessibilityLabel("Context window")
     }
 }
 
