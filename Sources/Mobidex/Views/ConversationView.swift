@@ -16,7 +16,6 @@ struct ConversationView: View {
                 Divider()
                 ContentUnavailableView("No Sessions", systemImage: "bubble.left.and.bubble.right")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                composer
             } else {
                 ContentUnavailableView("Select a Session", systemImage: "bubble.left.and.bubble.right")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -54,7 +53,7 @@ struct ConversationView: View {
                 Label("New Thread", systemImage: "plus.bubble")
             }
             .buttonStyle(.bordered)
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || !model.canSendMessage)
             .accessibilityIdentifier("newThreadButton")
             Label(thread.status.label, systemImage: thread.status.isActive ? "dot.radiowaves.left.and.right" : "circle")
                 .font(.caption)
@@ -81,7 +80,7 @@ struct ConversationView: View {
                 Label("New Thread", systemImage: "plus.bubble")
             }
             .buttonStyle(.bordered)
-            .disabled(model.isBusy)
+            .disabled(model.isBusy || !model.canSendMessage)
             .accessibilityIdentifier("newThreadButton")
         }
         .padding()
@@ -125,7 +124,7 @@ struct ConversationView: View {
                     .frame(width: 32, height: 32)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canSendMessage)
+            .disabled(composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canSendMessage || model.isBusy)
             .accessibilityLabel("Send")
             .accessibilityIdentifier("sendButton")
         }

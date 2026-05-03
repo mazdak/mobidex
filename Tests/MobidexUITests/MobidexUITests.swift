@@ -25,8 +25,12 @@ final class MobidexUITests: XCTestCase {
         XCTAssertTrue(projectRow.waitForExistence(timeout: timeout), "Seeded project row did not appear.")
         projectRow.tap()
 
+        let newThreadButton = app.buttons["newThreadButton"]
+        XCTAssertTrue(waitForEnabled(newThreadButton, timeout: timeout), "New Thread button did not become enabled after opening the seeded project.")
+        newThreadButton.tap()
+
         let composer = app.descendants(matching: .any)["messageComposer"]
-        XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after opening the seeded project.")
+        XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after starting a new thread.")
         composer.tap()
         composer.typeText(smokeText("PROMPT", defaultValue: "Start control smoke"))
 
@@ -113,5 +117,16 @@ final class MobidexUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.2))
         }
         return !element.exists
+    }
+
+    private func waitForEnabled(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if element.exists && element.isEnabled {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return element.exists && element.isEnabled
     }
 }
