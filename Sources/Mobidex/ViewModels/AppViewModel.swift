@@ -688,11 +688,11 @@ final class AppViewModel: ObservableObject {
     }
 
     private func startEventLoop() {
-        guard let appServer else { return }
+        guard let events = appServer?.events else { return }
         eventTask?.cancel()
         connectionGeneration &+= 1
         let generation = connectionGeneration
-        eventTask = Task { [weak self, events = appServer.events] in
+        eventTask = Task { [weak self, events] in
             for await event in events {
                 await self?.handle(event, generation: generation)
             }
