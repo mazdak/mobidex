@@ -22,6 +22,33 @@ struct ConversationSection: Identifiable, Equatable {
     var body: String
     var detail: String?
     var status: String?
+
+    var isCollapsedByDefault: Bool {
+        switch kind {
+        case .command, .fileChange, .tool, .agent:
+            true
+        case .user, .assistant, .reasoning, .plan, .search, .media, .review, .system:
+            false
+        }
+    }
+
+    var rendersMarkdown: Bool {
+        switch kind {
+        case .assistant, .reasoning, .plan, .review, .system:
+            true
+        case .user, .command, .fileChange, .tool, .agent, .search, .media:
+            false
+        }
+    }
+
+    var usesCompactTypography: Bool {
+        switch kind {
+        case .command, .fileChange, .tool, .agent:
+            true
+        case .user, .assistant, .reasoning, .plan, .search, .media, .review, .system:
+            false
+        }
+    }
 }
 
 enum CodexSessionProjection {

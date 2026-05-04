@@ -97,8 +97,12 @@ cleanup() {
   fi
   if [[ "$KEEP_WORK_DIR" == "1" ]]; then
     echo "Keeping work directory: $WORK_DIR" >&2
+    echo "Keeping smoke CODEX_HOME: ${SMOKE_CODEX_HOME:-}" >&2
   else
     rm -rf "$WORK_DIR"
+    if [[ -n "${SMOKE_CODEX_HOME:-}" ]]; then
+      rm -rf "$SMOKE_CODEX_HOME"
+    fi
   fi
 }
 trap cleanup EXIT
@@ -175,21 +179,35 @@ SSHD_CONFIG="$WORK_DIR/sshd_config"
 PASSWORD_SERVER="$WORK_DIR/password_ssh_server.py"
 FAKE_CODEX_SERVER="$WORK_DIR/fake_codex_app_server.py"
 SMOKE_CWD="$WORK_DIR/project"
+SMOKE_CODEX_HOME="$(mktemp -d /tmp/mobidex-codex-home.XXXXXX)"
 CODEX_PATH="$WORK_DIR/codex-smoke"
 
 mkdir -p "$SMOKE_CWD"
+mkdir -p "$SMOKE_CODEX_HOME"
 if [[ "$SMOKE_MODE" == "control" || "$SMOKE_MODE" == "approval" || "$SMOKE_MODE" == "seed" ]]; then
   cat >"$FAKE_CODEX_SERVER" <<'PY'
+import base64
+import hashlib
 import json
+import os
+import select
+import socket
+import struct
 import sys
 import time
 
 
 CWD = sys.argv[1]
 STEER_TEXT = sys.argv[2]
+MODE = sys.argv[3] if len(sys.argv) > 3 else "stdio"
+SOCKET_PATH = sys.argv[4] if len(sys.argv) > 4 else ""
 THREAD_ID = "thread-control"
 TURN_ID = "turn-control"
 APPROVAL_ID = "approval-control"
+WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+input_stream = sys.stdin.buffer
+output_stream = sys.stdout.buffer
+websocket_mode = False
 
 thread_started = False
 turn_started = False
@@ -201,8 +219,30 @@ approval_resolved = False
 steer_seen = False
 
 
+def write_stdout(data):
+    output_stream.write(data)
+    output_stream.flush()
+
+
+def websocket_frame(opcode, payload):
+    header = bytearray([0x80 | opcode])
+    length = len(payload)
+    if length < 126:
+        header.append(length)
+    elif length <= 0xFFFF:
+        header.extend([126, (length >> 8) & 0xFF, length & 0xFF])
+    else:
+        header.append(127)
+        header.extend(struct.pack(">Q", length))
+    return bytes(header) + payload
+
+
 def send(payload):
-    print(json.dumps(payload, separators=(",", ":")), flush=True)
+    line = json.dumps(payload, separators=(",", ":"))
+    if websocket_mode:
+        write_stdout(websocket_frame(0x1, line.encode("utf-8")))
+    else:
+        print(line, flush=True)
 
 
 def fail(message, request_id=None):
@@ -341,10 +381,12 @@ def handle_request(message):
         send({"id": request_id, "result": {}})
 
 
-for raw_line in sys.stdin:
-    line = raw_line.strip()
+def handle_inbound_text(text):
+    global approval_resolved
+
+    line = text.strip()
     if not line:
-        continue
+        return
     message = json.loads(line)
     if "method" in message:
         if "id" in message:
@@ -356,14 +398,219 @@ for raw_line in sys.stdin:
         require(result.get("decision") == "accept", f"unexpected approval decision: {result!r}")
         approval_resolved = True
         send({"method": "serverRequest/resolved", "params": {"threadId": THREAD_ID, "requestId": APPROVAL_ID}})
+
+
+def read_exact(count):
+    data = input_stream.read(count)
+    if len(data) != count:
+        return None
+    return data
+
+
+def websocket_payload_length(second_byte):
+    length = second_byte & 0x7F
+    if length == 126:
+        extended = read_exact(2)
+        return None if extended is None else struct.unpack(">H", extended)[0]
+    if length == 127:
+        extended = read_exact(8)
+        return None if extended is None else struct.unpack(">Q", extended)[0]
+    return length
+
+
+def read_websocket_text():
+    while True:
+        header = read_exact(2)
+        if header is None:
+            return None
+        first, second = header
+        opcode = first & 0x0F
+        masked = (second & 0x80) != 0
+        if not masked and opcode in (0x1, 0x2, 0x8, 0x9, 0xA):
+            fail("client websocket frame was not masked")
+        length = websocket_payload_length(second)
+        if length is None:
+            return None
+        mask = read_exact(4) if masked else b""
+        if masked and mask is None:
+            return None
+        payload = read_exact(length)
+        if payload is None:
+            return None
+        if masked:
+            payload = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+        if opcode == 0x8:
+            write_stdout(websocket_frame(0x8, b""))
+            return None
+        if opcode == 0x9:
+            write_stdout(websocket_frame(0xA, payload))
+            continue
+        if opcode == 0xA:
+            continue
+        if opcode in (0x1, 0x2):
+            return payload.decode("utf-8")
+
+
+def run_websocket_proxy():
+    global websocket_mode
+
+    previous_websocket_mode = websocket_mode
+    websocket_mode = True
+    request = b""
+    try:
+        while b"\r\n\r\n" not in request:
+            chunk = input_stream.read(1)
+            if not chunk:
+                return
+            request += chunk
+            if len(request) > 65536:
+                fail("websocket upgrade request was too large")
+
+        fields = {}
+        decoded_request = request.decode("utf-8", errors="replace")
+        lines = decoded_request.split("\r\n")
+        request_line = lines[0] if lines else ""
+        key = None
+        for line in lines[1:]:
+            if ":" not in line:
+                continue
+            name, value = line.split(":", 1)
+            fields[name.strip().lower()] = value.strip()
+        key = fields.get("sec-websocket-key")
+        connection_values = [value.strip().lower() for value in fields.get("connection", "").split(",")]
+        if not request_line.startswith("GET "):
+            fail(f"websocket upgrade request used unexpected request line: {request_line!r}")
+        if fields.get("upgrade", "").lower() != "websocket":
+            fail("websocket upgrade request omitted Upgrade: websocket")
+        if "upgrade" not in connection_values:
+            fail("websocket upgrade request omitted Connection: Upgrade")
+        if fields.get("sec-websocket-version") != "13":
+            fail("websocket upgrade request omitted Sec-WebSocket-Version: 13")
+        if not key:
+            fail("websocket upgrade request omitted Sec-WebSocket-Key")
+
+        accept = base64.b64encode(hashlib.sha1((key + WEBSOCKET_GUID).encode("ascii")).digest()).decode("ascii")
+        write_stdout((
+            "HTTP/1.1 101 Switching Protocols\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept}\r\n"
+            "\r\n"
+        ).encode("utf-8"))
+
+        while True:
+            text = read_websocket_text()
+            if text is None:
+                return
+            handle_inbound_text(text)
+    finally:
+        websocket_mode = previous_websocket_mode
+
+
+def run_stdio():
+    for raw_line in sys.stdin:
+        handle_inbound_text(raw_line)
+
+
+def run_socket_proxy():
+    require(SOCKET_PATH, "missing proxy socket path")
+    connection = socket.socket(socket.AF_UNIX)
+    connection.connect(SOCKET_PATH)
+    try:
+        while True:
+            readable, _, _ = select.select([sys.stdin.buffer, connection], [], [])
+            for source in readable:
+                if source is sys.stdin.buffer:
+                    data = os.read(sys.stdin.buffer.fileno(), 8192)
+                    if not data:
+                        return
+                    connection.sendall(data)
+                else:
+                    data = connection.recv(8192)
+                    if not data:
+                        return
+                    write_stdout(data)
+    finally:
+        connection.close()
+
+
+def run_unix_listener():
+    global input_stream, output_stream
+
+    require(SOCKET_PATH, "missing Unix socket path")
+    os.makedirs(os.path.dirname(SOCKET_PATH), exist_ok=True)
+    try:
+        os.unlink(SOCKET_PATH)
+    except FileNotFoundError:
+        pass
+    server = socket.socket(socket.AF_UNIX)
+    server.bind(SOCKET_PATH)
+    server.listen(4)
+    server.settimeout(0.25)
+    deadline = time.time() + 300
+    try:
+        while time.time() < deadline and os.path.exists(SOCKET_PATH):
+            try:
+                connection, _ = server.accept()
+                with connection:
+                    with connection.makefile("rb", buffering=0) as reader:
+                        with connection.makefile("wb", buffering=0) as writer:
+                            previous_input = input_stream
+                            previous_output = output_stream
+                            input_stream = reader
+                            output_stream = writer
+                            try:
+                                run_websocket_proxy()
+                            finally:
+                                input_stream = previous_input
+                                output_stream = previous_output
+            except TimeoutError:
+                continue
+    finally:
+        server.close()
+        try:
+            os.unlink(SOCKET_PATH)
+        except FileNotFoundError:
+            pass
+
+
+if MODE == "listen-unix":
+    run_unix_listener()
+elif MODE == "proxy":
+    run_socket_proxy()
+else:
+    run_stdio()
 PY
   quoted_fake_codex_server="$(printf "%q" "$FAKE_CODEX_SERVER")"
   quoted_smoke_cwd="$(printf "%q" "$SMOKE_CWD")"
   quoted_steer_text="$(printf "%q" "$STEER_TEXT")"
-  cat >"$CODEX_PATH" <<EOF
+cat >"$CODEX_PATH" <<EOF
 #!/bin/bash
 if [[ "\$1" == "app-server" && "\$2" == "--listen" && "\$3" == "stdio://" ]]; then
-  exec python3 $quoted_fake_codex_server $quoted_smoke_cwd $quoted_steer_text
+  exec python3 $quoted_fake_codex_server $quoted_smoke_cwd $quoted_steer_text stdio
+fi
+if [[ "\$1" == "app-server" && "\$2" == "--listen" && "\$3" == unix://* ]]; then
+  socket="\${CODEX_APP_SERVER_SOCK:-\${CODEX_HOME:-\$HOME/.codex}/app-server-control/app-server-control.sock}"
+  if [[ "\$3" == unix:///* ]]; then
+    socket="\${3#unix://}"
+  fi
+  exec python3 $quoted_fake_codex_server $quoted_smoke_cwd $quoted_steer_text listen-unix "\$socket"
+fi
+if [[ "\$1" == "app-server" && "\$2" == "proxy" ]]; then
+  socket=""
+  shift 2
+  while [[ "\$#" -gt 0 ]]; do
+    case "\$1" in
+      --sock)
+        socket="\${2:-}"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  exec python3 $quoted_fake_codex_server $quoted_smoke_cwd $quoted_steer_text proxy "\$socket"
 fi
 echo "unsupported fake codex invocation: \$*" >&2
 exit 64
@@ -527,6 +774,7 @@ PY
   MOBIDEX_PASSWORD_SMOKE_USER="$SMOKE_USER" \
   MOBIDEX_PASSWORD_SMOKE_PASSWORD="$PASSWORD" \
   MOBIDEX_PASSWORD_SMOKE_PORT="$PORT" \
+  CODEX_HOME="$SMOKE_CODEX_HOME" \
   uv run --with asyncssh --with cryptography python "$PASSWORD_SERVER" >"$WORK_DIR/sshd.log" 2>&1 &
   SSHD_PID=$!
 else
@@ -547,6 +795,7 @@ ChallengeResponseAuthentication no
 UsePAM no
 StrictModes no
 LogLevel VERBOSE
+SetEnv CODEX_HOME=$SMOKE_CODEX_HOME
 Subsystem sftp internal-sftp
 EOF
 

@@ -24,14 +24,15 @@ protocol CredentialStore: Sendable {
     func deleteCredential(serverID: UUID) throws
 }
 
-final class KeychainCredentialStore: CredentialStore {
+final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
     private let service = "com.mazdak.mobidex.ssh"
 
     func loadCredential(serverID: UUID) throws -> SSHCredential {
         SSHCredential(
             password: try read(kind: "password", serverID: serverID),
             privateKeyPEM: try read(kind: "private-key", serverID: serverID),
-            privateKeyPassphrase: try read(kind: "private-key-passphrase", serverID: serverID)
+            privateKeyPassphrase: try read(kind: "private-key-passphrase", serverID: serverID),
+            appServerAuthToken: try read(kind: "app-server-auth-token", serverID: serverID)
         )
     }
 
@@ -39,12 +40,14 @@ final class KeychainCredentialStore: CredentialStore {
         try write(credential.password, kind: "password", serverID: serverID)
         try write(credential.privateKeyPEM, kind: "private-key", serverID: serverID)
         try write(credential.privateKeyPassphrase, kind: "private-key-passphrase", serverID: serverID)
+        try write(credential.appServerAuthToken, kind: "app-server-auth-token", serverID: serverID)
     }
 
     func deleteCredential(serverID: UUID) throws {
         try delete(kind: "password", serverID: serverID)
         try delete(kind: "private-key", serverID: serverID)
         try delete(kind: "private-key-passphrase", serverID: serverID)
+        try delete(kind: "app-server-auth-token", serverID: serverID)
     }
 
     private func account(kind: String, serverID: UUID) -> String {

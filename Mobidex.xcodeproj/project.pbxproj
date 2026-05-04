@@ -7,30 +7,38 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		029A0B4EE8B75D7E6463F82C /* CodexSSHWebSocketTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB39406C31D7D2E32AF33332 /* CodexSSHWebSocketTransport.swift */; };
 		06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */; };
 		10BA0070BDE5B83F3721FD57 /* SSHClientService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43AB39944ABF583A29C1AB6A /* SSHClientService.swift */; };
+		2F63409CB4571EFBEC15FFB8 /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B4A95D6997F1824BDB826C9 /* SplashView.swift */; };
 		3D02EE812C214072E99C6F9A /* MobidexLaunchSmoke.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */; };
 		47B45AC7436747D4F833D57E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 773861FEB95B5C09BBCC472B /* Assets.xcassets */; };
 		4FC51DEEB51743B69EBF17AD /* RemoteCodexDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 431D4C7FEFBF04894608659E /* RemoteCodexDiscoveryTests.swift */; };
 		6320B0AF845A3D3BE655ED71 /* CodexModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97220BF00949FD3FFDB61C6D /* CodexModels.swift */; };
 		65C5DA5345A9872184474DEE /* SwiftASN1 in Frameworks */ = {isa = PBXBuildFile; productRef = 423C8140149CB2E555E73D8D /* SwiftASN1 */; };
+		66267092B72124A11BF21F96 /* ProjectCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC85B7BD25F9BCEE1FABB81C /* ProjectCatalog.swift */; };
 		744CCE5CD63E51851C3BCB76 /* MobidexApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F981F0ACBB874D34A9E6765 /* MobidexApp.swift */; };
 		78C852130C951811CFED35BE /* SessionProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */; };
 		79D56F08BA702659D59BEB65 /* CodexAppServerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */; };
+		8488BEF11D93761F61239148 /* ProjectListProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 702B30B78A7F02325F3DA5E8 /* ProjectListProjection.swift */; };
 		89A76F324C8541635216B08F /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500E2233796B5934C1591FFC /* AppViewModel.swift */; };
+		933A43D48B21A23E7AB79142 /* ProjectListProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F82A6CB0A50CC3827261D2 /* ProjectListProjectionTests.swift */; };
 		A19431CD7B430E2609120733 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3F9F6842C4EC0EECCFCD2D39 /* Security.framework */; };
 		A1ABE1CA9D2BBCCD0EA59523 /* Citadel in Frameworks */ = {isa = PBXBuildFile; productRef = C733F85A7FE974B2F0EF82CE /* Citadel */; };
 		A267EFB96A42F2D26B792C09 /* ServerRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19E8AB7C633795CE38A00D16 /* ServerRepository.swift */; };
 		A40DA9376EE6C87BCB437591 /* RemoteCodexDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 332EB44AD8FA1F95EF1EE867 /* RemoteCodexDiscovery.swift */; };
 		A53F982998526E57E1226CA9 /* AppViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82A0BC0C7137371A8AFAB12B /* AppViewModelTests.swift */; };
 		A72F18C8388039F0E0BD8231 /* ServerModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2A70EEBAFA590B84DAC2D48 /* ServerModels.swift */; };
+		A815F1D244C9EE5D261E6825 /* gitdiff in Frameworks */ = {isa = PBXBuildFile; productRef = 9FA701B6A5E8D567C59DC603 /* gitdiff */; };
 		AB2852ECB92E7E0129FE1E58 /* CodexSessionProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FDF24BB2CB64238D87A6FAD /* CodexSessionProjection.swift */; };
 		AE7CFE95DD2C6CE001853B80 /* ConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BB66DF8C4500739CFA7E00D /* ConversationView.swift */; };
 		C6A370E1CD7150B718F41ED0 /* ServerEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B6F945AC3EF7F65796D4359 /* ServerEditorView.swift */; };
+		CB2B5BC4866DDF8D535915DA /* SessionChangesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84FDD3A694257EDC18131C08 /* SessionChangesView.swift */; };
 		CF30371B3B835A966C08BE4A /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B962D351C5EDF581C16E298 /* CredentialStore.swift */; };
 		CF6AEAAF87DCBBFABA5FA1DE /* CodexProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */; };
 		D5E96C567472710520ED7A20 /* CredentialStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84B375AFEC4D0FF298D73FE /* CredentialStorageTests.swift */; };
 		D7887CE39E391096767BB07C /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F62709AA1D51EBE375B8A23 /* RootView.swift */; };
+		D8855DADC663A20F65DE2516 /* DiffModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = E74620F8B5A7744C9E307637 /* DiffModels.swift */; };
 		DE3C8D92D5509847D8F7C24C /* MobidexUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0138BF77FD4B1030601AF47C /* MobidexUITests.swift */; };
 /* End PBXBuildFile section */
 
@@ -56,6 +64,7 @@
 		0F981F0ACBB874D34A9E6765 /* MobidexApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexApp.swift; sourceTree = "<group>"; };
 		19E8AB7C633795CE38A00D16 /* ServerRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerRepository.swift; sourceTree = "<group>"; };
 		24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppServerProtocol.swift; sourceTree = "<group>"; };
+		2B4A95D6997F1824BDB826C9 /* SplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashView.swift; sourceTree = "<group>"; };
 		328B21D87BF12CC17FC14F0C /* Mobidex.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Mobidex.entitlements; sourceTree = "<group>"; };
 		332EB44AD8FA1F95EF1EE867 /* RemoteCodexDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCodexDiscovery.swift; sourceTree = "<group>"; };
 		3A96240FB8B8F67A6538139D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -68,18 +77,24 @@
 		500E2233796B5934C1591FFC /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexProtocolTests.swift; sourceTree = "<group>"; };
 		6BEA21E8847877A76117DA3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		702B30B78A7F02325F3DA5E8 /* ProjectListProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectListProjection.swift; sourceTree = "<group>"; };
 		773861FEB95B5C09BBCC472B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7B962D351C5EDF581C16E298 /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
 		7BB66DF8C4500739CFA7E00D /* ConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationView.swift; sourceTree = "<group>"; };
 		82A0BC0C7137371A8AFAB12B /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
+		84FDD3A694257EDC18131C08 /* SessionChangesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionChangesView.swift; sourceTree = "<group>"; };
 		8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectAddView.swift; sourceTree = "<group>"; };
 		8FDF24BB2CB64238D87A6FAD /* CodexSessionProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSessionProjection.swift; sourceTree = "<group>"; };
 		943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexLaunchSmoke.swift; sourceTree = "<group>"; };
 		97220BF00949FD3FFDB61C6D /* CodexModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexModels.swift; sourceTree = "<group>"; };
+		AB39406C31D7D2E32AF33332 /* CodexSSHWebSocketTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSSHWebSocketTransport.swift; sourceTree = "<group>"; };
+		AC85B7BD25F9BCEE1FABB81C /* ProjectCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCatalog.swift; sourceTree = "<group>"; };
+		B2F82A6CB0A50CC3827261D2 /* ProjectListProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectListProjectionTests.swift; sourceTree = "<group>"; };
 		B84B375AFEC4D0FF298D73FE /* CredentialStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStorageTests.swift; sourceTree = "<group>"; };
 		BD120FFE204CF33E5F865DD1 /* MobidexUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MobidexUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		D89135403B0F71480B09E5A6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E2A70EEBAFA590B84DAC2D48 /* ServerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModels.swift; sourceTree = "<group>"; };
+		E74620F8B5A7744C9E307637 /* DiffModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffModels.swift; sourceTree = "<group>"; };
 		EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectionTests.swift; sourceTree = "<group>"; };
 		F6A214A65C0D1B8E443F51C0 /* Mobidex.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mobidex.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -92,6 +107,7 @@
 				A19431CD7B430E2609120733 /* Security.framework in Frameworks */,
 				65C5DA5345A9872184474DEE /* SwiftASN1 in Frameworks */,
 				A1ABE1CA9D2BBCCD0EA59523 /* Citadel in Frameworks */,
+				A815F1D244C9EE5D261E6825 /* gitdiff in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -105,6 +121,8 @@
 				8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */,
 				4F62709AA1D51EBE375B8A23 /* RootView.swift */,
 				4B6F945AC3EF7F65796D4359 /* ServerEditorView.swift */,
+				84FDD3A694257EDC18131C08 /* SessionChangesView.swift */,
+				2B4A95D6997F1824BDB826C9 /* SplashView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -132,6 +150,7 @@
 				66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */,
 				B84B375AFEC4D0FF298D73FE /* CredentialStorageTests.swift */,
 				6BEA21E8847877A76117DA3A /* Info.plist */,
+				B2F82A6CB0A50CC3827261D2 /* ProjectListProjectionTests.swift */,
 				431D4C7FEFBF04894608659E /* RemoteCodexDiscoveryTests.swift */,
 				EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */,
 			);
@@ -152,8 +171,10 @@
 			children = (
 				24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */,
 				8FDF24BB2CB64238D87A6FAD /* CodexSessionProjection.swift */,
+				AB39406C31D7D2E32AF33332 /* CodexSSHWebSocketTransport.swift */,
 				7B962D351C5EDF581C16E298 /* CredentialStore.swift */,
 				943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */,
+				AC85B7BD25F9BCEE1FABB81C /* ProjectCatalog.swift */,
 				332EB44AD8FA1F95EF1EE867 /* RemoteCodexDiscovery.swift */,
 				19E8AB7C633795CE38A00D16 /* ServerRepository.swift */,
 				43AB39944ABF583A29C1AB6A /* SSHClientService.swift */,
@@ -183,6 +204,8 @@
 			isa = PBXGroup;
 			children = (
 				97220BF00949FD3FFDB61C6D /* CodexModels.swift */,
+				E74620F8B5A7744C9E307637 /* DiffModels.swift */,
+				702B30B78A7F02325F3DA5E8 /* ProjectListProjection.swift */,
 				E2A70EEBAFA590B84DAC2D48 /* ServerModels.swift */,
 			);
 			path = Models;
@@ -246,6 +269,7 @@
 			packageProductDependencies = (
 				423C8140149CB2E555E73D8D /* SwiftASN1 */,
 				C733F85A7FE974B2F0EF82CE /* Citadel */,
+				9FA701B6A5E8D567C59DC603 /* gitdiff */,
 			);
 			productName = Mobidex;
 			productReference = F6A214A65C0D1B8E443F51C0 /* Mobidex.app */;
@@ -299,6 +323,7 @@
 			packageReferences = (
 				1E26BEAE1A24489A5A117DDA /* XCRemoteSwiftPackageReference "Citadel" */,
 				CB8383329A6C1D00209660C5 /* XCRemoteSwiftPackageReference "swift-asn1" */,
+				EB541182C3BBB0DB81E5C005 /* XCRemoteSwiftPackageReference "gitdiff" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = D8D2EC26B9AF90A7E13C10EE /* Products */;
@@ -339,18 +364,24 @@
 				89A76F324C8541635216B08F /* AppViewModel.swift in Sources */,
 				79D56F08BA702659D59BEB65 /* CodexAppServerProtocol.swift in Sources */,
 				6320B0AF845A3D3BE655ED71 /* CodexModels.swift in Sources */,
+				029A0B4EE8B75D7E6463F82C /* CodexSSHWebSocketTransport.swift in Sources */,
 				AB2852ECB92E7E0129FE1E58 /* CodexSessionProjection.swift in Sources */,
 				AE7CFE95DD2C6CE001853B80 /* ConversationView.swift in Sources */,
 				CF30371B3B835A966C08BE4A /* CredentialStore.swift in Sources */,
+				D8855DADC663A20F65DE2516 /* DiffModels.swift in Sources */,
 				744CCE5CD63E51851C3BCB76 /* MobidexApp.swift in Sources */,
 				3D02EE812C214072E99C6F9A /* MobidexLaunchSmoke.swift in Sources */,
 				06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */,
+				66267092B72124A11BF21F96 /* ProjectCatalog.swift in Sources */,
+				8488BEF11D93761F61239148 /* ProjectListProjection.swift in Sources */,
 				A40DA9376EE6C87BCB437591 /* RemoteCodexDiscovery.swift in Sources */,
 				D7887CE39E391096767BB07C /* RootView.swift in Sources */,
 				10BA0070BDE5B83F3721FD57 /* SSHClientService.swift in Sources */,
 				C6A370E1CD7150B718F41ED0 /* ServerEditorView.swift in Sources */,
 				A72F18C8388039F0E0BD8231 /* ServerModels.swift in Sources */,
 				A267EFB96A42F2D26B792C09 /* ServerRepository.swift in Sources */,
+				CB2B5BC4866DDF8D535915DA /* SessionChangesView.swift in Sources */,
+				2F63409CB4571EFBEC15FFB8 /* SplashView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -361,6 +392,7 @@
 				A53F982998526E57E1226CA9 /* AppViewModelTests.swift in Sources */,
 				CF6AEAAF87DCBBFABA5FA1DE /* CodexProtocolTests.swift in Sources */,
 				D5E96C567472710520ED7A20 /* CredentialStorageTests.swift in Sources */,
+				933A43D48B21A23E7AB79142 /* ProjectListProjectionTests.swift in Sources */,
 				4FC51DEEB51743B69EBF17AD /* RemoteCodexDiscoveryTests.swift in Sources */,
 				78C852130C951811CFED35BE /* SessionProjectionTests.swift in Sources */,
 			);
@@ -685,6 +717,14 @@
 				version = 1.4.0;
 			};
 		};
+		EB541182C3BBB0DB81E5C005 /* XCRemoteSwiftPackageReference "gitdiff" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tornikegomareli/gitdiff.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.0.7;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -692,6 +732,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = CB8383329A6C1D00209660C5 /* XCRemoteSwiftPackageReference "swift-asn1" */;
 			productName = SwiftASN1;
+		};
+		9FA701B6A5E8D567C59DC603 /* gitdiff */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = EB541182C3BBB0DB81E5C005 /* XCRemoteSwiftPackageReference "gitdiff" */;
+			productName = gitdiff;
 		};
 		C733F85A7FE974B2F0EF82CE /* Citadel */ = {
 			isa = XCSwiftPackageProductDependency;

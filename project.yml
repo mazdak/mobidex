@@ -22,6 +22,9 @@ packages:
   Citadel:
     url: https://github.com/orlandos-nl/Citadel.git
     exactVersion: "0.12.1"
+  gitdiff:
+    url: https://github.com/tornikegomareli/gitdiff.git
+    exactVersion: "0.0.7"
 
 targets:
   Mobidex:
@@ -36,6 +39,8 @@ targets:
         product: SwiftASN1
       - package: Citadel
         product: Citadel
+      - package: gitdiff
+        product: gitdiff
     info:
       path: Sources/Mobidex/Info.plist
       properties:
@@ -45,7 +50,7 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         UILaunchScreen:
-          UIColorName: ""
+          UIColorName: LaunchBackground
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown

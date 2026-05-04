@@ -7,35 +7,36 @@ struct RemoteProject: Identifiable, Codable, Equatable {
     var id: String { path }
     var path: String
     var sessionPaths: [String]
-    var threadCount: Int
-    var lastSeenAt: Date?
+    var discoveredSessionCount: Int
+    var lastDiscoveredAt: Date?
 
     private enum CodingKeys: String, CodingKey {
         case path
         case sessionPaths
-        case threadCount
-        case lastSeenAt
+        case discoveredSessionCount
+        case lastDiscoveredAt
     }
 
-    init(path: String, sessionPaths: [String]? = nil, threadCount: Int, lastSeenAt: Date?) {
+    init(path: String, sessionPaths: [String]? = nil, discoveredSessionCount: Int, lastDiscoveredAt: Date?) {
         self.path = path
         self.sessionPaths = sessionPaths ?? [path]
-        self.threadCount = threadCount
-        self.lastSeenAt = lastSeenAt
+        self.discoveredSessionCount = discoveredSessionCount
+        self.lastDiscoveredAt = lastDiscoveredAt
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         path = try container.decode(String.self, forKey: .path)
         sessionPaths = try container.decodeIfPresent([String].self, forKey: .sessionPaths) ?? [path]
-        threadCount = try container.decode(Int.self, forKey: .threadCount)
-        lastSeenAt = try container.decodeIfPresent(Date.self, forKey: .lastSeenAt)
+        discoveredSessionCount = try container.decode(Int.self, forKey: .discoveredSessionCount)
+        lastDiscoveredAt = try container.decodeIfPresent(Date.self, forKey: .lastDiscoveredAt)
     }
 }
 
 protocol SSHService: Sendable {
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject]
+    func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String]
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient
 }
 
@@ -43,13 +44,15 @@ enum SSHServiceError: LocalizedError {
     case missingPassword
     case missingPrivateKey
     case unsupportedPrivateKey(String)
-    case invalidDiscoveryOutput
+    case invalidDiscoveryOutput(String?)
     case transportClosed
     case authenticationFailed
     case connectionTimedOut(String, Int)
     case hostUnreachable(String, Int)
     case connectionClosed(String)
-    case appServerClosed(String)
+    case appServerClosed(command: String, details: String?)
+    case invalidAppServerWebSocketURL(String)
+    case localFileNotReadable(String)
 
     var errorDescription: String? {
         switch self {
@@ -59,8 +62,12 @@ enum SSHServiceError: LocalizedError {
             "Paste an OpenSSH private key for this server."
         case .unsupportedPrivateKey(let type):
             "Unsupported private key type: \(type). RSA and Ed25519 OpenSSH keys are supported in this build."
-        case .invalidDiscoveryOutput:
-            "The server returned invalid Codex discovery data."
+        case .invalidDiscoveryOutput(let details):
+            if let details, !details.isEmpty {
+                "The server returned invalid Codex discovery data: \(details)"
+            } else {
+                "The server returned invalid Codex discovery data."
+            }
         case .transportClosed:
             "The SSH app-server transport is closed."
         case .authenticationFailed:
@@ -71,8 +78,16 @@ enum SSHServiceError: LocalizedError {
             "Could not reach \(host):\(port). Check the host, port, and network connection."
         case .connectionClosed(let operation):
             "The SSH server closed the connection while \(operation). Check the server logs and SSH authentication settings."
-        case .appServerClosed(let command):
-            "SSH connected, but the server closed the app-server session while starting `\(command)`. Check the Codex path and that `codex app-server --listen stdio://` can run on the server."
+        case .appServerClosed(let command, let details):
+            if let details, !details.isEmpty {
+                "SSH connected, but the server closed the app-server session while starting `\(command)`: \(details)"
+            } else {
+                "SSH connected, but the server closed the app-server session while starting `\(command)`. Check the Codex path and that Codex app-server can run on the server."
+            }
+        case .invalidAppServerWebSocketURL(let value):
+            "The app-server WebSocket URL is invalid: \(value)"
+        case .localFileNotReadable(let path):
+            "Could not read the local file at \(path)."
         }
     }
 }
@@ -96,10 +111,80 @@ final class CitadelSSHService: SSHService {
         }
     }
 
+    func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] {
+        guard !localPaths.isEmpty else {
+            return []
+        }
+        return try await withClient(server: server, credential: credential) { client in
+            let directoryOutput = try await client.executeCommand(
+                #"mkdir -p "$HOME/.mobidex/uploads" && mktemp -d "$HOME/.mobidex/uploads/mobidex.XXXXXX""#,
+                maxResponseSize: 4_096,
+                mergeStreams: true,
+                inShell: true
+            )
+            let remoteDirectory = String(buffer: directoryOutput).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !remoteDirectory.isEmpty else {
+                throw SSHServiceError.connectionClosed("creating a remote upload directory")
+            }
+
+            let sftp = try await client.openSFTP()
+            do {
+                var remotePaths: [String] = []
+                for localPath in localPaths {
+                    let localURL = URL(fileURLWithPath: localPath)
+                    let data: Data
+                    do {
+                        data = try Data(contentsOf: localURL)
+                    } catch {
+                        throw SSHServiceError.localFileNotReadable(localPath)
+                    }
+                    let remotePath = "\(remoteDirectory)/\(UUID().uuidString)-\(sanitizedFilename(localURL.lastPathComponent))"
+                    try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
+                        var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+                        buffer.writeBytes(data)
+                        try await file.write(buffer)
+                    }
+                    remotePaths.append(remotePath)
+                }
+                try? await sftp.close()
+                return remotePaths
+            } catch {
+                try? await sftp.close()
+                throw error
+            }
+        }
+    }
+
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {
+        if let urlValue = server.appServerWebSocketURL {
+            guard let url = server.appServerWebSocketEndpoint else {
+                throw SSHServiceError.invalidAppServerWebSocketURL(urlValue)
+            }
+            let client = try await connect(server: server, credential: credential)
+            do {
+                let transport = try await CodexSSHWebSocketTransport.open(
+                    client: client,
+                    url: url,
+                    bearerToken: credential.appServerAuthToken
+                )
+                let appServer = CodexAppServerClient(transport: transport)
+                do {
+                    try await appServer.initialize()
+                    return appServer
+                } catch {
+                    await appServer.close()
+                    throw error
+                }
+            } catch {
+                try? await client.close()
+                throw mapSSHError(error, server: server, operation: .appServer(command: urlValue))
+            }
+        }
+
+        let command = server.appServerProxyCommand
         let client = try await connect(server: server, credential: credential)
         do {
-            let transport = try await SSHAppServerProcessTransport.open(client: client, command: server.appServerCommand)
+            let transport = try await CodexSSHAppServerProxyTransport.open(client: client, command: command)
             let appServer = CodexAppServerClient(transport: transport)
             do {
                 try await appServer.initialize()
@@ -110,7 +195,7 @@ final class CitadelSSHService: SSHService {
             }
         } catch {
             try? await client.close()
-            throw mapSSHError(error, server: server, operation: .appServer(command: server.appServerCommand))
+            throw mapSSHError(error, server: server, operation: .appServer(command: command))
         }
     }
 
@@ -177,6 +262,15 @@ final class CitadelSSHService: SSHService {
 
 }
 
+private func sanitizedFilename(_ value: String) -> String {
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+    let scalars = value.unicodeScalars.map { scalar in
+        allowed.contains(scalar) ? Character(scalar) : "_"
+    }
+    let sanitized = String(scalars).trimmingCharacters(in: CharacterSet(charactersIn: "._-"))
+    return sanitized.isEmpty ? "attachment" : sanitized
+}
+
 private enum SSHOperationContext {
     case connect
     case command
@@ -226,7 +320,7 @@ private func closedError(for operation: SSHOperationContext) -> SSHServiceError 
     case .command:
         .connectionClosed("running a remote command")
     case .appServer(let command):
-        .appServerClosed(command)
+        .appServerClosed(command: command, details: nil)
     }
 }
 
@@ -234,14 +328,16 @@ private final class SSHAppServerProcessTransport: CodexLineTransport, @unchecked
     let inboundLines: AsyncThrowingStream<String, Error>
 
     private let client: SSHClient
+    private let command: String
     private let inboundContinuation: AsyncThrowingStream<String, Error>.Continuation
     private let outboundLines: AsyncStream<String>
     private let outboundContinuation: AsyncStream<String>.Continuation
     private let ready = ReadySignal()
     private var task: Task<Void, Never>?
 
-    private init(client: SSHClient) {
+    private init(client: SSHClient, command: String) {
         self.client = client
+        self.command = command
         let inbound = AsyncThrowingStream<String, Error>.makeStream()
         inboundLines = inbound.stream
         inboundContinuation = inbound.continuation
@@ -252,12 +348,29 @@ private final class SSHAppServerProcessTransport: CodexLineTransport, @unchecked
     }
 
     static func open(client: SSHClient, command: String) async throws -> SSHAppServerProcessTransport {
-        let transport = SSHAppServerProcessTransport(client: client)
+        let transport = SSHAppServerProcessTransport(client: client, command: command)
         let ready = transport.ready
+        let command = transport.command
         let outboundLines = transport.outboundLines
         let outboundContinuation = transport.outboundContinuation
         let inboundContinuation = transport.inboundContinuation
         transport.task = Task {
+            var stderrTail = ""
+            func rememberStderr(_ buffer: ByteBuffer) {
+                stderrTail.append(String(buffer: buffer))
+                if stderrTail.count > 4_000 {
+                    stderrTail = String(stderrTail.suffix(4_000))
+                }
+            }
+
+            func appServerExitError(fallback: Error? = nil) -> Error {
+                let details = stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !details.isEmpty {
+                    return SSHServiceError.appServerClosed(command: command, details: details)
+                }
+                return fallback ?? SSHServiceError.appServerClosed(command: command, details: nil)
+            }
+
             do {
                 try await client.withExec(command) { inbound, outbound in
                     await ready.succeed()
@@ -283,20 +396,21 @@ private final class SSHAppServerProcessTransport: CodexLineTransport, @unchecked
                             for line in parts.dropLast() where !line.isEmpty {
                                 inboundContinuation.yield(String(line))
                             }
-                        case .stderr:
-                            continue
+                        case .stderr(let buffer):
+                            rememberStderr(buffer)
                         }
                     }
                     if !pending.isEmpty {
                         inboundContinuation.yield(pending)
                     }
                     outboundContinuation.finish()
-                    inboundContinuation.finish()
+                    inboundContinuation.finish(throwing: appServerExitError())
                 }
             } catch {
-                await ready.fail(error)
+                let exitError = appServerExitError(fallback: error)
+                await ready.fail(exitError)
                 outboundContinuation.finish()
-                inboundContinuation.finish(throwing: error)
+                inboundContinuation.finish(throwing: exitError)
             }
             try? await client.close()
         }

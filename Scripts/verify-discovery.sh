@@ -4,19 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SWIFT_SOURCE="$ROOT_DIR/Sources/Mobidex/Services/RemoteCodexDiscovery.swift"
 WORK_DIR="$(mktemp -d)"
-CODEX_HOME_DIR="$WORK_DIR/codex-home"
-APP_DIR="$WORK_DIR/projects/app"
-WORKTREE_DIR="$WORK_DIR/worktrees/app-linked"
-WORKTREE_ONLY_MAIN_DIR="$WORK_DIR/projects/worktree-only-main"
-WORKTREE_ONLY_DIR="$WORK_DIR/worktrees/worktree-only-linked"
-CONFIG_ONLY_DIR="$WORK_DIR/projects/config-only"
-MISSING_CONFIG_DIR="$WORK_DIR/projects/missing-config"
-MISSING_SESSION_DIR="$WORK_DIR/projects/missing-session"
 PYTHON_SOURCE="$WORK_DIR/discovery.py"
 SHELL_COMMAND="$WORK_DIR/discovery-command.sh"
 SHELL_INPUT="$WORK_DIR/discovery-shell-input.sh"
 EXIT_CHECK="$WORK_DIR/discovery-exit-check.sh"
-OUTPUT_JSON="$WORK_DIR/projects.json"
 
 cleanup() {
   rm -rf "$WORK_DIR"
@@ -31,80 +22,6 @@ if ! grep -Fxq "$EXPECTED_SWIFT_LINE" "$SWIFT_SOURCE"; then
   echo "RemoteCodexDiscovery.shellCommand does not preserve the heredoc terminator before Citadel's ;exit suffix." >&2
   exit 1
 fi
-
-mkdir -p \
-  "$CODEX_HOME_DIR/sessions/2026/05/02" \
-  "$CODEX_HOME_DIR/archived_sessions/2026/05/01" \
-  "$CODEX_HOME_DIR/sessions/ignored" \
-  "$APP_DIR" \
-  "$WORKTREE_ONLY_MAIN_DIR" \
-  "$CONFIG_ONLY_DIR" \
-  "$(dirname "$WORKTREE_DIR")"
-
-git -C "$APP_DIR" init -q
-git -C "$APP_DIR" config user.email "mobidex@example.com"
-git -C "$APP_DIR" config user.name "Mobidex"
-touch "$APP_DIR/README.md"
-git -C "$APP_DIR" add README.md
-git -C "$APP_DIR" commit -q -m init
-git -C "$APP_DIR" worktree add -q "$WORKTREE_DIR"
-
-git -C "$WORKTREE_ONLY_MAIN_DIR" init -q
-git -C "$WORKTREE_ONLY_MAIN_DIR" config user.email "mobidex@example.com"
-git -C "$WORKTREE_ONLY_MAIN_DIR" config user.name "Mobidex"
-touch "$WORKTREE_ONLY_MAIN_DIR/README.md"
-git -C "$WORKTREE_ONLY_MAIN_DIR" add README.md
-git -C "$WORKTREE_ONLY_MAIN_DIR" commit -q -m init
-git -C "$WORKTREE_ONLY_MAIN_DIR" worktree add -q "$WORKTREE_ONLY_DIR"
-
-cat >"$CODEX_HOME_DIR/config.toml" <<EOF
-[projects."$CONFIG_ONLY_DIR"]
-trusted = true
-
-[projects."$APP_DIR"]
-trusted = true
-
-[projects."$MISSING_CONFIG_DIR"]
-trusted = true
-EOF
-
-cat >"$CODEX_HOME_DIR/sessions/2026/05/02/rollout-1.jsonl" <<EOF
-{"type":"session_meta","payload":{"cwd":"$APP_DIR"}}
-{"type":"turn","payload":{"message":"hello"}}
-EOF
-
-cat >"$CODEX_HOME_DIR/sessions/2026/05/02/rollout-2.jsonl" <<EOF
-{"type":"noise"}
-{"type":"session_meta","payload":{"cwd":
-{"type":"session_meta","payload":{"nested":{"cwd":"$APP_DIR"}}}
-EOF
-
-cat >"$CODEX_HOME_DIR/sessions/2026/05/02/rollout-worktree.jsonl" <<EOF
-{"type":"session_meta","payload":{"cwd":"$WORKTREE_DIR"}}
-EOF
-
-cat >"$CODEX_HOME_DIR/sessions/2026/05/02/rollout-worktree-only.jsonl" <<EOF
-{"type":"session_meta","payload":{"cwd":"$WORKTREE_ONLY_DIR"}}
-EOF
-
-cat >"$CODEX_HOME_DIR/archived_sessions/2026/05/01/rollout-3.jsonl" <<EOF
-{"type":"session_meta","payload":{"current_dir":"$APP_DIR"}}
-EOF
-
-cat >"$CODEX_HOME_DIR/sessions/ignored/rollout-ignored.jsonl" <<'EOF'
-{"type":"session_meta","payload":{"message":"missing cwd"}}
-EOF
-
-cat >"$CODEX_HOME_DIR/sessions/ignored/rollout-missing.jsonl" <<EOF
-{"type":"session_meta","payload":{"cwd":"$MISSING_SESSION_DIR"}}
-EOF
-
-touch -t 202605020101 "$CODEX_HOME_DIR/config.toml"
-touch -t 202605020202 "$CODEX_HOME_DIR/sessions/2026/05/02/rollout-1.jsonl"
-touch -t 202605020303 "$CODEX_HOME_DIR/sessions/2026/05/02/rollout-2.jsonl"
-touch -t 202605020404 "$CODEX_HOME_DIR/sessions/2026/05/02/rollout-worktree-only.jsonl"
-touch -t 202605020505 "$CODEX_HOME_DIR/sessions/2026/05/02/rollout-worktree.jsonl"
-touch -t 202605010404 "$CODEX_HOME_DIR/archived_sessions/2026/05/01/rollout-3.jsonl"
 
 {
   printf "python3 - <<'PY'\n"
@@ -156,9 +73,88 @@ if command -v zsh >/dev/null 2>&1; then
   fi
 fi
 
+make_git_worktree() {
+  local main_dir="$1"
+  local worktree_dir="$2"
+  mkdir -p "$main_dir" "$(dirname "$worktree_dir")"
+  git -C "$main_dir" init -q
+  git -C "$main_dir" config user.email "mobidex@example.com"
+  git -C "$main_dir" config user.name "Mobidex"
+  touch "$main_dir/README.md"
+  git -C "$main_dir" add README.md
+  git -C "$main_dir" commit -q -m init
+  local branch_name
+  branch_name="mobidex-${worktree_dir##*/}-$(basename "$(dirname "$worktree_dir")")"
+  git -C "$main_dir" worktree add -q -b "$branch_name" "$worktree_dir"
+}
+
+CODEX_HOME_DIR="$WORK_DIR/codex-home"
+APP_DIR="$WORK_DIR/projects/app"
+WORKTREE_DIR="$WORK_DIR/.codex/worktrees/a1b2/app"
+WORKTREE_ONLY_MAIN_DIR="$WORK_DIR/projects/worktree-only-main"
+WORKTREE_ONLY_DIR="$WORK_DIR/.codex/worktrees/c3d4/worktree-only-main"
+REMOTE_PROJECT_DIR="$WORK_DIR/projects/remote-project"
+ZERO_SESSION_DIR="$WORK_DIR/projects/zero-session"
+NOISY_CONFIG_DIR="$WORK_DIR/projects/noisy-config"
+MISSING_DIR="$WORK_DIR/projects/missing"
+HIDDEN_VERIFY_DIR="$WORK_DIR/.mobdex-live-verify"
+OUTPUT_JSON="$WORK_DIR/projects.json"
+
+make_git_worktree "$APP_DIR" "$WORKTREE_DIR"
+make_git_worktree "$WORKTREE_ONLY_MAIN_DIR" "$WORKTREE_ONLY_DIR"
+mkdir -p "$CODEX_HOME_DIR" "$REMOTE_PROJECT_DIR" "$ZERO_SESSION_DIR" "$NOISY_CONFIG_DIR" "$HIDDEN_VERIFY_DIR"
+
+cat >"$CODEX_HOME_DIR/config.toml" <<EOF
+[projects."$NOISY_CONFIG_DIR"]
+trusted = true
+EOF
+
+python3 - "$CODEX_HOME_DIR" "$APP_DIR" "$WORKTREE_DIR" "$WORKTREE_ONLY_MAIN_DIR" "$WORKTREE_ONLY_DIR" "$REMOTE_PROJECT_DIR" "$ZERO_SESSION_DIR" "$MISSING_DIR" "$HIDDEN_VERIFY_DIR" <<'PY'
+import json
+import os
+import sqlite3
+import sys
+
+codex_home, app_dir, worktree_dir, worktree_main, worktree_dir_only, remote_dir, zero_dir, missing_dir, hidden_dir = sys.argv[1:]
+state = {
+    "project-order": [app_dir, "437fb22f-f9ce-4f74-964e-907cb8084df8", zero_dir, missing_dir],
+    "electron-saved-workspace-roots": [app_dir, zero_dir],
+    "active-workspace-roots": [app_dir],
+    "remote-projects": [
+        {
+            "id": "437fb22f-f9ce-4f74-964e-907cb8084df8",
+            "remotePath": remote_dir,
+            "label": "remote-project",
+        }
+    ],
+    "thread-workspace-root-hints": {
+        "thread-app-main": missing_dir,
+        "thread-worktree-only": worktree_main,
+    },
+}
+with open(os.path.join(codex_home, ".codex-global-state.json"), "w", encoding="utf-8") as handle:
+    json.dump(state, handle)
+
+connection = sqlite3.connect(os.path.join(codex_home, "state_5.sqlite"))
+connection.execute(
+    "create table threads (id text, cwd text, title text, updated_at integer, source text, archived integer)"
+)
+rows = [
+    ("thread-app-main", app_dir, "main", 1770000300, "cli", 0),
+    ("thread-app-worktree", worktree_dir, "worktree", 1770000400, "vscode", 0),
+    ("thread-remote", remote_dir, "remote project", 1770000350, "cli", 0),
+    ("thread-app-archived", app_dir, "archived", 1770000500, "cli", 1),
+    ("thread-app-review", app_dir, "review", 1770000600, '{"subagent":"review"}', 0),
+    ("thread-worktree-only", worktree_dir_only, "worktree only", 1770000200, "vscode", 0),
+    ("thread-hidden", hidden_dir, "hidden smoke", 1770000700, "cli", 0),
+]
+connection.executemany("insert into threads values (?, ?, ?, ?, ?, ?)", rows)
+connection.commit()
+PY
+
 CODEX_HOME="$CODEX_HOME_DIR" bash "$SHELL_INPUT" >"$OUTPUT_JSON"
 
-python3 - "$OUTPUT_JSON" "$APP_DIR" "$WORKTREE_DIR" "$WORKTREE_ONLY_MAIN_DIR" "$WORKTREE_ONLY_DIR" "$CONFIG_ONLY_DIR" "$MISSING_CONFIG_DIR" "$MISSING_SESSION_DIR" <<'PY'
+python3 - "$OUTPUT_JSON" "$APP_DIR" "$WORKTREE_DIR" "$WORKTREE_ONLY_MAIN_DIR" "$WORKTREE_ONLY_DIR" "$REMOTE_PROJECT_DIR" "$ZERO_SESSION_DIR" "$NOISY_CONFIG_DIR" "$MISSING_DIR" "$HIDDEN_VERIFY_DIR" <<'PY'
 import json
 import os
 import sys
@@ -166,26 +162,102 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     projects = json.load(handle)
 
-app_dir, worktree_dir, worktree_only_main_dir, worktree_only_dir, config_only_dir, missing_config_dir, missing_session_dir = [
+app_dir, worktree_dir, worktree_main, worktree_dir_only, remote_dir, zero_dir, noisy_config_dir, missing_dir, hidden_dir = [
     os.path.realpath(path) for path in sys.argv[2:]
 ]
 by_path = {project["path"]: project for project in projects}
 
-assert [project["path"] for project in projects] == [
-    app_dir,
-    worktree_only_main_dir,
-    config_only_dir,
+assert [project["path"] for project in projects] == [app_dir, remote_dir, zero_dir], projects
+assert by_path[app_dir]["discoveredSessionCount"] == 2, projects
+assert set(by_path[app_dir]["sessionPaths"]) == {app_dir, worktree_dir}, projects
+assert by_path[app_dir]["lastDiscoveredAt"] == 1770000400, projects
+assert by_path[remote_dir]["discoveredSessionCount"] == 1, projects
+assert by_path[remote_dir]["sessionPaths"] == [remote_dir], projects
+assert by_path[remote_dir]["lastDiscoveredAt"] == 1770000350, projects
+assert by_path[zero_dir]["discoveredSessionCount"] == 0, projects
+assert by_path[zero_dir]["sessionPaths"] == [zero_dir], projects
+assert by_path[zero_dir]["lastDiscoveredAt"] is None, projects
+assert worktree_main not in by_path, projects
+assert noisy_config_dir not in by_path, projects
+assert missing_dir not in by_path, projects
+assert hidden_dir not in by_path, projects
+PY
+
+FALLBACK_HOME="$WORK_DIR/fallback-codex-home"
+FALLBACK_MAIN="$WORK_DIR/fallback/main"
+FALLBACK_WORKTREE="$WORK_DIR/fallback/.codex/worktrees/f5g6/fallback-main"
+FALLBACK_HIDDEN="$WORK_DIR/fallback/.hidden"
+FALLBACK_OUTPUT="$WORK_DIR/fallback-projects.json"
+
+make_git_worktree "$FALLBACK_MAIN" "$FALLBACK_WORKTREE"
+mkdir -p "$FALLBACK_HOME" "$FALLBACK_HIDDEN"
+
+python3 - "$FALLBACK_HOME" "$FALLBACK_WORKTREE" "$FALLBACK_HIDDEN" <<'PY'
+import os
+import sqlite3
+import sys
+
+codex_home, worktree_dir, hidden_dir = sys.argv[1:]
+connection = sqlite3.connect(os.path.join(codex_home, "state_5.sqlite"))
+connection.execute(
+    "create table threads (id text, cwd text, title text, updated_at integer, source text, archived integer)"
+)
+connection.executemany(
+    "insert into threads values (?, ?, ?, ?, ?, ?)",
+    [
+        ("thread-fallback", worktree_dir, "fallback", 1770000100, "vscode", 0),
+        ("thread-hidden", hidden_dir, "hidden", 1770000200, "cli", 0),
+    ],
+)
+connection.commit()
+PY
+
+CODEX_HOME="$FALLBACK_HOME" bash "$SHELL_INPUT" >"$FALLBACK_OUTPUT"
+
+python3 - "$FALLBACK_OUTPUT" "$FALLBACK_MAIN" "$FALLBACK_WORKTREE" "$FALLBACK_HIDDEN" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    projects = json.load(handle)
+
+main_dir, worktree_dir, hidden_dir = [os.path.realpath(path) for path in sys.argv[2:]]
+assert [project["path"] for project in projects] == [main_dir], projects
+assert projects[0]["discoveredSessionCount"] == 1, projects
+assert set(projects[0]["sessionPaths"]) == {main_dir, worktree_dir}, projects
+assert hidden_dir not in projects[0]["sessionPaths"], projects
+PY
+
+CONFIG_ONLY_HOME="$WORK_DIR/config-only-codex-home"
+CONFIG_ONLY_DIR="$WORK_DIR/config-only/project"
+CONFIG_ONLY_OUTPUT="$WORK_DIR/config-only-projects.json"
+mkdir -p "$CONFIG_ONLY_HOME" "$CONFIG_ONLY_DIR"
+cat >"$CONFIG_ONLY_HOME/config.toml" <<EOF
+[projects."$CONFIG_ONLY_DIR"]
+trusted = true
+EOF
+
+CODEX_HOME="$CONFIG_ONLY_HOME" bash "$SHELL_INPUT" >"$CONFIG_ONLY_OUTPUT"
+
+python3 - "$CONFIG_ONLY_OUTPUT" "$CONFIG_ONLY_DIR" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    projects = json.load(handle)
+
+config_dir = os.path.realpath(sys.argv[2])
+assert projects == [
+    {
+        "path": config_dir,
+        "sessionPaths": [config_dir],
+        "discoveredSessionCount": 0,
+        "lastDiscoveredAt": projects[0]["lastDiscoveredAt"],
+    }
 ], projects
-assert by_path[app_dir]["threadCount"] == 3, projects
-assert by_path[app_dir]["sessionPaths"] == [app_dir, worktree_dir], projects
-assert by_path[app_dir]["lastSeenAt"] is not None, projects
-assert by_path[worktree_only_main_dir]["threadCount"] == 1, projects
-assert by_path[worktree_only_main_dir]["sessionPaths"] == [worktree_only_main_dir, worktree_only_dir], projects
-assert by_path[config_only_dir]["threadCount"] == 0, projects
-assert by_path[config_only_dir]["sessionPaths"] == [config_only_dir], projects
-assert by_path[config_only_dir]["lastSeenAt"] is not None, projects
-assert missing_config_dir not in by_path, projects
-assert missing_session_dir not in by_path, projects
+assert projects[0]["lastDiscoveredAt"] is not None, projects
 PY
 
 echo "Discovery verification succeeded."

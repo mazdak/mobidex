@@ -10,20 +10,33 @@ final class RemoteCodexDiscoveryTests: XCTestCase {
         XCTAssertFalse((RemoteCodexDiscovery.shellCommand + ";exit\n").contains("\n;exit"))
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("CODEX_HOME"))
         XCTAssertFalse(RemoteCodexDiscovery.shellCommand.contains("archived_sessions"))
+        XCTAssertFalse(RemoteCodexDiscovery.shellCommand.contains("rollout-"))
+        XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("state_5.sqlite"))
+        XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("thread-workspace-root-hints"))
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("os.path.isdir"))
     }
 
     func testDecodeProjectsUsesSecondsSinceEpochDates() throws {
         let projects = try RemoteCodexDiscovery.decodeProjects(from: """
-        [{"path":"/srv/app","threadCount":2,"lastSeenAt":1770000300}]
+        [{"path":"/srv/app","discoveredSessionCount":2,"lastDiscoveredAt":1770000300}]
         """)
 
         XCTAssertEqual(projects, [
             RemoteProject(
                 path: "/srv/app",
-                threadCount: 2,
-                lastSeenAt: Date(timeIntervalSince1970: 1_770_000_300)
+                discoveredSessionCount: 2,
+                lastDiscoveredAt: Date(timeIntervalSince1970: 1_770_000_300)
             )
         ])
+    }
+
+    func testDecodeProjectsFailureIncludesDiscoveryContext() throws {
+        do {
+            _ = try RemoteCodexDiscovery.decodeProjects(from: "python3: command not found")
+            XCTFail("Expected invalid discovery output to throw.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("invalid Codex discovery data"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("Output: python3: command not found"), error.localizedDescription)
+        }
     }
 }

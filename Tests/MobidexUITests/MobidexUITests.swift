@@ -25,12 +25,13 @@ final class MobidexUITests: XCTestCase {
         XCTAssertTrue(projectRow.waitForExistence(timeout: timeout), "Seeded project row did not appear.")
         projectRow.tap()
 
-        let newThreadButton = app.buttons["newThreadButton"]
-        XCTAssertTrue(waitForEnabled(newThreadButton, timeout: timeout), "New Session button did not become enabled after opening the seeded project.")
-        newThreadButton.tap()
+        let newSessionButton = app.buttons["newSessionButton"]
+        XCTAssertTrue(waitForEnabled(newSessionButton, timeout: timeout), "New Session button did not become enabled after opening the seeded project.")
+        newSessionButton.tap()
 
         let composer = app.descendants(matching: .any)["messageComposer"]
         XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after starting a new session.")
+        XCTAssertFalse(newSessionButton.exists, "New Session button should not remain in the header after entering a session.")
         composer.tap()
         composer.typeText(smokeText("PROMPT", defaultValue: "Start control smoke"))
 

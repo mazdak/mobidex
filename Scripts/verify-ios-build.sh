@@ -51,6 +51,7 @@ PACKAGE_NAMES=(
   BigInt
   swift-system
   Citadel
+  gitdiff
 )
 
 include_paths=()

@@ -124,7 +124,6 @@ struct ProjectSessionListView: View {
     @State private var selectedMode: ProjectSessionMode = .projects
     @State private var projectSearchText = ""
     @State private var showInactiveDiscoveredProjects = false
-    @State private var autoConnectAttemptedServerIDs = Set<UUID>()
 
     var body: some View {
         Group {
@@ -152,7 +151,7 @@ struct ProjectSessionListView: View {
                             }
                             .accessibilityIdentifier("testConnectionButton")
                             Button {
-                                Task { await model.connectSelectedServer(syncActiveThreadCounts: true) }
+                                Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
                             } label: {
                                 Label(model.isAppServerConnected ? "Reconnect App-Server" : "Connect App-Server", systemImage: "bolt.horizontal")
                             }
@@ -173,7 +172,7 @@ struct ProjectSessionListView: View {
                     switch selectedMode {
                     case .projects:
                         let sections = projectSections(from: server.projects)
-                        if sections.showFilter {
+                        if sections.showInactiveDiscoveredFilter {
                             Section {
                                 Toggle("Show inactive discovered projects", isOn: $showInactiveDiscoveredProjects)
                                     .font(.subheadline)
@@ -264,7 +263,7 @@ struct ProjectSessionListView: View {
                     ProjectAddView()
                 }
                 .task(id: model.selectedServerID) {
-                    await autoConnectSelectedServer()
+                    await model.ensureSelectedServerConnected()
                 }
             } else {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
@@ -288,23 +287,12 @@ struct ProjectSessionListView: View {
         }
     }
 
-    private func autoConnectSelectedServer() async {
-        guard let serverID = model.selectedServerID,
-              !autoConnectAttemptedServerIDs.contains(serverID),
-              !model.isAppServerConnected
-        else {
-            return
-        }
-        autoConnectAttemptedServerIDs.insert(serverID)
-        await model.connectSelectedServer(syncActiveThreadCounts: true)
-    }
-
     private var trimmedProjectSearch: String {
         projectSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func projectSections(from projects: [ProjectRecord]) -> ProjectSections {
-        ProjectSections(
+    private func projectSections(from projects: [ProjectRecord]) -> ProjectListSections {
+        ProjectListSections(
             projects: projects,
             searchText: trimmedProjectSearch,
             showInactiveDiscoveredProjects: showInactiveDiscoveredProjects
@@ -340,53 +328,6 @@ struct ProjectSessionListView: View {
     }
 }
 
-struct ProjectSections: Equatable {
-    var favorites: [ProjectRecord]
-    var discovered: [ProjectRecord]
-    var added: [ProjectRecord]
-    var showFilter: Bool
-    var discoveredTitle: String
-
-    var isEmpty: Bool {
-        favorites.isEmpty && discovered.isEmpty && added.isEmpty
-    }
-
-    init(projects: [ProjectRecord], searchText: String, showInactiveDiscoveredProjects: Bool) {
-        let trimmedSearch = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let searching = !trimmedSearch.isEmpty
-        let matching = projects.filter { project in
-            guard searching else { return true }
-            return project.displayName.localizedCaseInsensitiveContains(trimmedSearch)
-                || project.path.localizedCaseInsensitiveContains(trimmedSearch)
-        }
-        let sorted = matching.sorted { lhs, rhs in
-            if lhs.isFavorite != rhs.isFavorite {
-                return lhs.isFavorite && !rhs.isFavorite
-            }
-            if lhs.threadCount != rhs.threadCount {
-                return lhs.threadCount > rhs.threadCount
-            }
-            let lhsDate = lhs.lastSeenAt ?? .distantPast
-            let rhsDate = rhs.lastSeenAt ?? .distantPast
-            if lhsDate != rhsDate {
-                return lhsDate > rhsDate
-            }
-            return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
-        }
-
-        favorites = sorted.filter(\.isFavorite)
-        discovered = sorted.filter { project in
-            guard project.discovered, !project.isFavorite else { return false }
-            return project.threadCount > 0 || showInactiveDiscoveredProjects || searching
-        }
-        added = sorted.filter { project in
-            !project.discovered && !project.isFavorite
-        }
-        showFilter = projects.contains { $0.discovered && !$0.isFavorite && $0.threadCount == 0 }
-        discoveredTitle = "Discovered"
-    }
-}
-
 private enum ProjectSessionMode: String, CaseIterable, Identifiable {
     case projects
     case sessions
@@ -418,12 +359,17 @@ struct ProjectRow: View {
                     .lineLimit(1)
                 if project.discovered {
                     Text(
-                        project.threadCount > 0
-                            ? "\(project.threadCount) \(project.threadCount == 1 ? "chat" : "chats")"
-                            : "No chats"
+                        project.discoveredSessionCount > 0
+                            ? "\(project.discoveredSessionCount) active \(project.discoveredSessionCount == 1 ? "session" : "sessions")"
+                            : "No active sessions"
                     )
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    if project.activeChatCount > 0 {
+                        Text("\(project.activeChatCount) loaded in app-server")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     if project.sessionPaths.count > 1 {
                         Text("\(project.sessionPaths.count) worktree paths grouped")
                             .font(.caption2)
@@ -448,7 +394,7 @@ struct ThreadRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Circle()
-                .fill(thread.status.isActive ? Color.green : Color.secondary.opacity(0.4))
+                .fill(statusColor)
                 .frame(width: 9, height: 9)
                 .padding(.top, 5)
             VStack(alignment: .leading, spacing: 4) {
@@ -461,8 +407,19 @@ struct ThreadRow: View {
                     .lineLimit(1)
                 Text(thread.status.sessionLabel)
                     .font(.caption2)
-                    .foregroundStyle(thread.status.isActive ? .green : .secondary)
+                    .foregroundStyle(statusColor)
             }
+        }
+    }
+
+    private var statusColor: Color {
+        switch thread.status.indicator {
+        case .active:
+            return .green
+        case .needsAttention:
+            return .red
+        case .inactive:
+            return .secondary.opacity(0.4)
         }
     }
 }

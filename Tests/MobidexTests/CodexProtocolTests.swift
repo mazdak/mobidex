@@ -1,4 +1,5 @@
 import XCTest
+import NIOCore
 @testable import Mobidex
 
 final class CodexProtocolTests: XCTestCase {
@@ -25,19 +26,14 @@ final class CodexProtocolTests: XCTestCase {
                 "cli",
                 "vscode",
                 "exec",
-                "appServer",
-                "subAgent",
-                "subAgentReview",
-                "subAgentCompact",
-                "subAgentThreadSpawn",
-                "subAgentOther",
-                "unknown"
+                "appServer"
             ]
         )
 
         transport.receive("""
         {"id":\(id),"result":{"data":[
-          {"id":"thread-1","preview":"Build check","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-subagent","preview":"Review worker","cwd":"/srv/app","source":{"subagent":"review"},"status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-1","preview":"Build check","cwd":"/srv/app","source":"appServer","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]},
           {"id":"thread-2","preview":"Other","cwd":"/srv/other","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}
         """)
@@ -65,6 +61,9 @@ final class CodexProtocolTests: XCTestCase {
         XCTAssertEqual(textInput["text"] as? String, "Run tests")
         XCTAssertNotNil(textInput["text_elements"])
         XCTAssertNil(textInput["textElements"])
+        XCTAssertNil(params["effort"])
+        XCTAssertNil(params["approvalPolicy"])
+        XCTAssertNil(params["sandboxPolicy"])
 
         transport.receive("""
         {"id":\(id),"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}
@@ -73,6 +72,278 @@ final class CodexProtocolTests: XCTestCase {
         let turn = try await task.value
         XCTAssertEqual(turn.id, "turn-1")
         await client.close()
+    }
+
+    func testStartTurnEncodesReasoningAndSandboxOptions() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task {
+            try await client.startTurn(
+                threadID: "thread-1",
+                input: [.text("Run tests")],
+                options: CodexTurnOptions(
+                    reasoningEffort: .xhigh,
+                    accessMode: .workspaceWrite,
+                    cwd: "/srv/app"
+                )
+            )
+        }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        let sandboxPolicy = try XCTUnwrap(params["sandboxPolicy"] as? [String: Any])
+
+        XCTAssertEqual(object["method"] as? String, "turn/start")
+        XCTAssertEqual(params["effort"] as? String, "xhigh")
+        XCTAssertEqual(params["approvalPolicy"] as? String, "on-request")
+        XCTAssertEqual(sandboxPolicy["type"] as? String, "workspaceWrite")
+        XCTAssertEqual(sandboxPolicy["writableRoots"] as? [String], ["/srv/app"])
+        XCTAssertEqual(sandboxPolicy["networkAccess"] as? Bool, true)
+
+        transport.receive("""
+        {"id":\(id),"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}
+        """)
+
+        _ = try await task.value
+        await client.close()
+    }
+
+    func testStartTurnEncodesFullAccessOptionsWhenExplicit() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task {
+            try await client.startTurn(
+                threadID: "thread-1",
+                input: [.text("Run tests")],
+                options: CodexTurnOptions(reasoningEffort: .medium, accessMode: .fullAccess)
+            )
+        }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        let sandboxPolicy = try XCTUnwrap(params["sandboxPolicy"] as? [String: Any])
+
+        XCTAssertEqual(params["effort"] as? String, "medium")
+        XCTAssertEqual(params["approvalPolicy"] as? String, "never")
+        XCTAssertEqual(sandboxPolicy["type"] as? String, "dangerFullAccess")
+
+        transport.receive("""
+        {"id":\(id),"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}
+        """)
+
+        _ = try await task.value
+        await client.close()
+    }
+
+    func testStartTurnEncodesReadOnlyOptionsWhenExplicit() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task {
+            try await client.startTurn(
+                threadID: "thread-1",
+                input: [.text("Run tests")],
+                options: CodexTurnOptions(reasoningEffort: .low, accessMode: .readOnly)
+            )
+        }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        let sandboxPolicy = try XCTUnwrap(params["sandboxPolicy"] as? [String: Any])
+
+        XCTAssertEqual(params["effort"] as? String, "low")
+        XCTAssertEqual(params["approvalPolicy"] as? String, "on-request")
+        XCTAssertEqual(sandboxPolicy["type"] as? String, "readOnly")
+        XCTAssertEqual(sandboxPolicy["networkAccess"] as? Bool, false)
+
+        transport.receive("""
+        {"id":\(id),"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}
+        """)
+
+        _ = try await task.value
+        await client.close()
+    }
+
+    func testStartTurnEncodesLocalImageInput() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let imagePath = "/Users/mazdak/Downloads/download-latest-macos-app-badge-2x.png"
+        let task = Task {
+            try await client.startTurn(
+                threadID: "thread-1",
+                input: [.text("Describe this image."), .localImage(path: imagePath)]
+            )
+        }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        let input = try XCTUnwrap(params["input"] as? [[String: Any]])
+
+        XCTAssertEqual(object["method"] as? String, "turn/start")
+        XCTAssertEqual(input.count, 2)
+        XCTAssertEqual(input[0]["type"] as? String, "text")
+        XCTAssertEqual(input[0]["text"] as? String, "Describe this image.")
+        XCTAssertEqual(input[1]["type"] as? String, "localImage")
+        XCTAssertEqual(input[1]["path"] as? String, imagePath)
+
+        transport.receive("""
+        {"id":\(id),"result":{"turn":{"id":"turn-1","status":"inProgress","items":[]}}}
+        """)
+
+        _ = try await task.value
+        await client.close()
+    }
+
+    func testGitDiffToRemoteReturnsChangedFilePaths() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.changedFiles(cwd: "/srv/app") }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+
+        XCTAssertEqual(object["method"] as? String, "gitDiffToRemote")
+        XCTAssertEqual(params["cwd"] as? String, "/srv/app")
+
+        transport.receive("""
+        {"id":\(id),"result":{"sha":"abc123","diff":"diff --git a/Sources/App.swift b/Sources/App.swift\\n--- a/Sources/App.swift\\n+++ b/Sources/App.swift\\n@@\\n-old\\n+new\\ndiff --git a/Old.swift b/New.swift\\nsimilarity index 90%\\nrename from Old.swift\\nrename to New.swift\\n"}}
+        """)
+
+        let files = try await task.value
+        XCTAssertEqual(files, ["Sources/App.swift", "New.swift"])
+        await client.close()
+    }
+
+    func testResumeThreadSendsThreadResumeRequest() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.resumeThread(threadID: "thread-1") }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+
+        XCTAssertEqual(object["method"] as? String, "thread/resume")
+        XCTAssertEqual(params["threadId"] as? String, "thread-1")
+
+        transport.receive("""
+        {"id":\(id),"result":{"thread":{
+          "id":"thread-1",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"active","activeFlags":[]},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+
+        let thread = try await task.value
+        XCTAssertEqual(thread.id, "thread-1")
+        XCTAssertTrue(thread.status.isActive)
+        await client.close()
+    }
+
+    func testReadThreadSummaryOmitsTurns() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.readThreadSummary(threadID: "thread-1") }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+
+        XCTAssertEqual(object["method"] as? String, "thread/read")
+        XCTAssertEqual(params["threadId"] as? String, "thread-1")
+        XCTAssertEqual(params["includeTurns"] as? Bool, false)
+
+        transport.receive("""
+        {"id":\(id),"result":{"thread":{
+          "id":"thread-1",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000300,
+          "createdAt":1770000000
+        }}}
+        """)
+
+        let thread = try await task.value
+        XCTAssertEqual(thread.id, "thread-1")
+        XCTAssertTrue(thread.turns.isEmpty)
+        await client.close()
+    }
+
+    func testGitDiffParserBuildsFileDiffs() {
+        let diff = """
+        diff --git a/Sources/App.swift b/Sources/App.swift
+        --- a/Sources/App.swift
+        +++ b/Sources/App.swift
+        @@
+        -old
+        +new
+        diff --git a/Tests/AppTests.swift b/Tests/AppTests.swift
+        --- a/Tests/AppTests.swift
+        +++ b/Tests/AppTests.swift
+        @@
+        -old
+        +new
+        """
+
+        let files = GitDiffFileParser.files(from: diff)
+        XCTAssertEqual(files.map(\.path), ["Sources/App.swift", "Tests/AppTests.swift"])
+        XCTAssertTrue(files[0].diff.contains("Sources/App.swift"))
+        XCTAssertFalse(files[0].diff.contains("Tests/AppTests.swift"))
+    }
+
+    func testGitDiffParserIncludesDeletedFilesFromOldPath() {
+        let diff = """
+        diff --git a/Removed.swift b/Removed.swift
+        deleted file mode 100644
+        --- a/Removed.swift
+        +++ /dev/null
+        @@
+        -old
+        """
+
+        XCTAssertEqual(GitDiffChangedFileParser.paths(from: diff), ["Removed.swift"])
+    }
+
+    func testGitDiffParserHandlesQuotedPathsWithSpaces() {
+        let diff = """
+        diff --git "a/My File.swift" "b/My File.swift"
+        --- "a/My File.swift"
+        +++ "b/My File.swift"
+        @@
+        -old
+        +new
+        """
+
+        XCTAssertEqual(GitDiffChangedFileParser.paths(from: diff), ["My File.swift"])
+    }
+
+    func testGitDiffParserHandlesUnquotedPathsWithSpaces() {
+        let diff = """
+        diff --git a/My File.swift b/My File.swift
+        --- a/My File.swift
+        +++ b/My File.swift
+        @@
+        -old
+        +new
+        """
+
+        XCTAssertEqual(GitDiffChangedFileParser.paths(from: diff), ["My File.swift"])
     }
 
     func testThreadListFollowsPaginationCursor() async throws {
@@ -108,6 +379,30 @@ final class CodexProtocolTests: XCTestCase {
 
         let threads = try await task.value
         XCTAssertEqual(threads.map(\.id), ["thread-1", "thread-2"])
+        await client.close()
+    }
+
+    func testThreadListDecodeFailureIncludesMethodContext() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.listThreads(limit: 1) }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+
+        transport.receive("""
+        {"id":\(id),"result":{"data":[{"id":"thread-bad"}],"nextCursor":null}}
+        """)
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected malformed thread data to fail decoding.")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("thread/list"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("missing key `cwd`"), error.localizedDescription)
+        }
+
         await client.close()
     }
 
@@ -184,6 +479,35 @@ final class CodexProtocolTests: XCTestCase {
 
         let receivedEvents = await events.value
         XCTAssertEqual(receivedEvents, [.disconnected("The app-server stream ended.")])
+        await client.close()
+    }
+
+    func testTransportChannelErrorUsesReadableDisconnectMessage() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let events = Task { () -> [CodexAppServerEvent] in
+            var received: [CodexAppServerEvent] = []
+            for await event in client.events {
+                received.append(event)
+            }
+            return received
+        }
+        let task = Task { try await client.listThreads(cwd: "/srv/app", limit: 20) }
+
+        _ = try await waitForSentLine(in: transport)
+        transport.finishInbound(throwing: ChannelError.inputClosed)
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected the in-flight request to fail when the transport closes.")
+        } catch let error as CodexAppServerClientError {
+            XCTAssertEqual(error.localizedDescription, "The app-server SSH channel closed.")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        let receivedEvents = await events.value
+        XCTAssertEqual(receivedEvents, [.disconnected("The app-server SSH channel closed.")])
         await client.close()
     }
 

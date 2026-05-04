@@ -8,6 +8,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
     var updatedAt: Date
     var createdAt: Date
     var name: String?
+    var sourceKind: String?
     var turns: [CodexTurn]
 
     enum CodingKeys: String, CodingKey {
@@ -18,6 +19,8 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         case updatedAt
         case createdAt
         case name
+        case sourceKind
+        case source
         case turns
     }
 
@@ -29,6 +32,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         updatedAt: Date,
         createdAt: Date,
         name: String? = nil,
+        sourceKind: String? = nil,
         turns: [CodexTurn] = []
     ) {
         self.id = id
@@ -38,6 +42,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         self.updatedAt = updatedAt
         self.createdAt = createdAt
         self.name = name
+        self.sourceKind = sourceKind
         self.turns = turns
     }
 
@@ -50,7 +55,24 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         updatedAt = Date(timeIntervalSince1970: TimeInterval(try container.decode(Int.self, forKey: .updatedAt)))
         createdAt = Date(timeIntervalSince1970: TimeInterval(try container.decode(Int.self, forKey: .createdAt)))
         name = try container.decodeIfPresent(String.self, forKey: .name)
+        sourceKind = try Self.decodeSourceKind(from: container)
         turns = try container.decodeIfPresent([CodexTurn].self, forKey: .turns) ?? []
+    }
+
+    private static func decodeSourceKind(from container: KeyedDecodingContainer<CodingKeys>) throws -> String? {
+        if let sourceKind = try container.decodeIfPresent(String.self, forKey: .sourceKind) {
+            return sourceKind
+        }
+        guard container.contains(.source) else {
+            return nil
+        }
+        if let source = try? container.decodeIfPresent(String.self, forKey: .source) {
+            return source
+        }
+        if let source = try? container.decodeIfPresent(JSONValue.self, forKey: .source) {
+            return source.normalizedThreadSourceKind
+        }
+        return nil
     }
 
     var title: String {
@@ -59,6 +81,32 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
             ?? URL(fileURLWithPath: cwd).lastPathComponent.nonEmpty
             ?? id
     }
+
+    var isUserFacingSession: Bool {
+        guard let sourceKind else {
+            return true
+        }
+        return !sourceKind.hasPrefix("subAgent")
+    }
+}
+
+private extension JSONValue {
+    var normalizedThreadSourceKind: String? {
+        switch self {
+        case .string(let value):
+            return value
+        case .object(let object):
+            return object["subagent"] == nil ? nil : "subAgent"
+        default:
+            return nil
+        }
+    }
+}
+
+enum CodexThreadStatusIndicator: Equatable, Sendable {
+    case active
+    case inactive
+    case needsAttention
 }
 
 enum CodexThreadStatus: Equatable, Decodable, Sendable {
@@ -95,6 +143,22 @@ enum CodexThreadStatus: Equatable, Decodable, Sendable {
         return false
     }
 
+    var indicator: CodexThreadStatusIndicator {
+        switch self {
+        case .active:
+            return .active
+        case .systemError:
+            return .needsAttention
+        case .unknown(let value):
+            let normalized = value.lowercased()
+            return normalized.contains("error") || normalized.contains("fail")
+                ? .needsAttention
+                : .inactive
+        case .idle, .notLoaded:
+            return .inactive
+        }
+    }
+
     var label: String {
         switch self {
         case .notLoaded: "Not Loaded"
@@ -114,6 +178,27 @@ enum CodexThreadStatus: Equatable, Decodable, Sendable {
         case .unknown(let value): value
         }
     }
+}
+
+struct CodexTokenUsage: Decodable, Equatable, Sendable {
+    var total: CodexTokenUsageBreakdown
+    var last: CodexTokenUsageBreakdown
+    var modelContextWindow: Int?
+
+    var contextFraction: Double? {
+        guard let modelContextWindow, modelContextWindow > 0 else {
+            return nil
+        }
+        return min(max(Double(total.totalTokens) / Double(modelContextWindow), 0), 1)
+    }
+}
+
+struct CodexTokenUsageBreakdown: Decodable, Equatable, Sendable {
+    var totalTokens: Int
+    var inputTokens: Int
+    var cachedInputTokens: Int
+    var outputTokens: Int
+    var reasoningOutputTokens: Int
 }
 
 struct CodexTurn: Identifiable, Decodable, Equatable, Sendable {

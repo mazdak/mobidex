@@ -10,11 +10,15 @@ struct ServerEditorView: View {
     @State private var port: Int
     @State private var username: String
     @State private var codexPath: String
+    @State private var appServerWebSocketURL: String
+    @State private var appServerAuthToken: String
     @State private var authMethod: ServerAuthMethod
     @State private var password: String
     @State private var privateKey: String
     @State private var privateKeyPassphrase: String
     @State private var credentialLoaded: Bool
+    @State private var credentialFieldsWereEdited = false
+    @State private var isHydratingCredential = false
     @State private var isSaving = false
     @State private var validationMessage: String?
 
@@ -25,6 +29,8 @@ struct ServerEditorView: View {
         _port = State(initialValue: server?.port ?? 22)
         _username = State(initialValue: server?.username ?? "")
         _codexPath = State(initialValue: server?.codexPath ?? "codex")
+        _appServerWebSocketURL = State(initialValue: server?.appServerWebSocketURL ?? "")
+        _appServerAuthToken = State(initialValue: "")
         _authMethod = State(initialValue: server?.authMethod ?? .password)
         _password = State(initialValue: "")
         _privateKey = State(initialValue: "")
@@ -46,9 +52,36 @@ struct ServerEditorView: View {
                     TextField("Username", text: $username)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("Codex Path", text: $codexPath)
+                }
+
+                Section {
+                    TextField("Full Path to Codex", text: $codexPath, prompt: Text("~/.bun/bin/codex"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .accessibilityIdentifier("codexPathField")
+                } header: {
+                    Text("Codex Binary Path")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Use the full remote executable path when possible. Mobidex uses this to attach through Codex's official Unix control socket, or to start that socket if needed.")
+                        Text("Examples: ~/.bun/bin/codex, /home/ubuntu/.bun/bin/codex, /usr/local/bin/codex.")
+                    }
+                }
+
+                Section {
+                    TextField("WebSocket URL", text: $appServerWebSocketURL, prompt: Text("ws://host:port"))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .accessibilityIdentifier("appServerWebSocketURLField")
+                    SecureField("Bearer Token", text: $appServerAuthToken)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("appServerAuthTokenField")
+                } header: {
+                    Text("Existing App-Server")
+                } footer: {
+                    Text("Leave blank to use `codex app-server proxy` over SSH. Mobidex attaches to Codex's official Unix socket and starts `codex app-server --listen unix://PATH` at that socket if it is missing. Set a WebSocket URL only for explicit `--listen ws://HOST:PORT` servers; ws://127.0.0.1:PORT is tunneled through this SSH server.")
                 }
 
                 Section("Authentication") {
@@ -94,13 +127,30 @@ struct ServerEditorView: View {
                     credentialLoaded = true
                     return
                 }
-                let credential = model.loadCredential(for: original.id)
+                let credential = await model.loadCredential(for: original.id)
+                guard !Task.isCancelled else { return }
+                guard !credentialFieldsWereEdited else {
+                    credentialLoaded = true
+                    return
+                }
+                isHydratingCredential = true
                 password = credential.password ?? ""
                 privateKey = credential.privateKeyPEM ?? ""
                 privateKeyPassphrase = credential.privateKeyPassphrase ?? ""
+                appServerAuthToken = credential.appServerAuthToken ?? ""
+                isHydratingCredential = false
                 credentialLoaded = true
             }
+            .onChange(of: password) { _, _ in markCredentialEdited() }
+            .onChange(of: privateKey) { _, _ in markCredentialEdited() }
+            .onChange(of: privateKeyPassphrase) { _, _ in markCredentialEdited() }
+            .onChange(of: appServerAuthToken) { _, _ in markCredentialEdited() }
         }
+    }
+
+    private func markCredentialEdited() {
+        guard !isHydratingCredential else { return }
+        credentialFieldsWereEdited = true
     }
 
     private var validationError: String? {
@@ -132,6 +182,9 @@ struct ServerEditorView: View {
 
     @MainActor
     private func save() async {
+        guard !isSaving else {
+            return
+        }
         if let validationError {
             validationMessage = validationError
             return
@@ -149,6 +202,7 @@ struct ServerEditorView: View {
             port: port,
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
             codexPath: codexPath,
+            appServerWebSocketURL: appServerWebSocketURL,
             authMethod: authMethod,
             projects: original?.projects ?? [],
             createdAt: original?.createdAt ?? .now,
@@ -157,9 +211,10 @@ struct ServerEditorView: View {
         let credential = SSHCredential(
             password: authMethod == .password ? password : nil,
             privateKeyPEM: authMethod == .privateKey ? privateKey : nil,
-            privateKeyPassphrase: authMethod == .privateKey ? privateKeyPassphrase : nil
+            privateKeyPassphrase: authMethod == .privateKey ? privateKeyPassphrase : nil,
+            appServerAuthToken: appServerAuthToken
         )
-        if await model.saveServer(server, credential: credential) {
+        if await model.saveServer(server, credential: credential, connectAfterSave: original == nil) {
             dismiss()
         } else {
             validationMessage = model.statusMessage ?? "Mobidex could not save this server."

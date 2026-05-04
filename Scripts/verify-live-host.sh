@@ -14,7 +14,11 @@ LIVE_CREATE_TURN="${MOBIDEX_LIVE_CREATE_TURN:-0}"
 LIVE_TURN_PROMPT="${MOBIDEX_LIVE_TURN_PROMPT:-Reply exactly: mobidex live verification.}"
 LIVE_TURN_TIMEOUT="${MOBIDEX_LIVE_TURN_TIMEOUT:-180}"
 LIVE_CWD="${MOBIDEX_LIVE_CWD:-}"
+LIVE_EXERCISE_LIFECYCLE="${MOBIDEX_LIVE_EXERCISE_LIFECYCLE:-0}"
+LIVE_IMAGE_LOCAL_PATH="${MOBIDEX_LIVE_IMAGE_LOCAL_PATH:-$HOME/Downloads/download-latest-macos-app-badge-2x.png}"
+LIVE_IMAGE_REMOTE_PATH=""
 REMOTE_LIVE_CWD_CREATED=0
+REMOTE_PATH_BOOTSTRAP='export PATH="$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"; '
 
 fail() {
   echo "Live host verification failed: $*" >&2
@@ -117,13 +121,54 @@ ssh "${ssh_args[@]}" "$remote" 'printf mobidex-ready' | grep -Fxq mobidex-ready
 
 echo "Checking remote requirements..."
 quoted_codex_path="$(quote_remote_executable "$CODEX_PATH")"
-ssh "${ssh_args[@]}" "$remote" "python3 --version >/dev/null && $quoted_codex_path --version >/dev/null"
+ssh "${ssh_args[@]}" "$remote" "${REMOTE_PATH_BOOTSTRAP}python3 --version >/dev/null && $quoted_codex_path --version >/dev/null"
 
-if [[ -z "$LIVE_CWD" && ( "$LIVE_CREATE_THREAD" == "1" || "$LIVE_CREATE_TURN" == "1" ) ]]; then
+if [[ -z "$LIVE_CWD" && ( "$LIVE_CREATE_THREAD" == "1" || "$LIVE_CREATE_TURN" == "1" || "$LIVE_EXERCISE_LIFECYCLE" == "1" ) ]]; then
   LIVE_CWD="$(
     ssh "${ssh_args[@]}" "$remote" 'mktemp -d "$HOME/.mobidex-live-verify.XXXXXX"'
   )"
   REMOTE_LIVE_CWD_CREATED=1
+fi
+
+if [[ "$LIVE_EXERCISE_LIFECYCLE" == "1" ]]; then
+  [[ -n "$LIVE_CWD" ]] || fail "MOBIDEX_LIVE_EXERCISE_LIFECYCLE=1 requires MOBIDEX_LIVE_CWD or a resolvable remote HOME."
+  [[ -f "$LIVE_IMAGE_LOCAL_PATH" ]] || fail "image fixture not found at $LIVE_IMAGE_LOCAL_PATH. Set MOBIDEX_LIVE_IMAGE_LOCAL_PATH to an existing local image."
+
+  quoted_live_cwd="$(quote_remote_executable "$LIVE_CWD")"
+  ssh "${ssh_args[@]}" "$remote" "LIVE_CWD=$quoted_live_cwd python3 - <<'PY'
+import os
+import subprocess
+from pathlib import Path
+
+cwd = Path(os.environ['LIVE_CWD'])
+cwd.mkdir(parents=True, exist_ok=True)
+(cwd / 'README.md').write_text('Mobidex disposable live verification repo.\n', encoding='utf-8')
+(cwd / 'mobidex-live-action.txt').write_text('pending\n', encoding='utf-8')
+subprocess.run(['git', '-C', str(cwd), 'init', '-q'], check=True)
+subprocess.run(['git', '-C', str(cwd), 'add', 'README.md', 'mobidex-live-action.txt'], check=True)
+subprocess.run([
+    'git',
+    '-C',
+    str(cwd),
+    '-c',
+    'user.name=Mobidex Live Verify',
+    '-c',
+    'user.email=mobidex@example.invalid',
+    'commit',
+    '-q',
+    '-m',
+    'seed live verification repo',
+], check=True)
+origin = cwd / '.git' / 'mobidex-origin.git'
+subprocess.run(['git', 'init', '--bare', '-q', str(origin)], check=True)
+subprocess.run(['git', '-C', str(cwd), 'remote', 'add', 'origin', str(origin)], check=True)
+branch = subprocess.check_output(['git', '-C', str(cwd), 'branch', '--show-current'], text=True).strip() or 'master'
+subprocess.run(['git', '-C', str(cwd), 'push', '-q', '-u', 'origin', branch], check=True)
+PY"
+
+  LIVE_IMAGE_REMOTE_PATH="$LIVE_CWD/mobidex-live-image.png"
+  quoted_image_path="$(quote_remote_executable "$LIVE_IMAGE_REMOTE_PATH")"
+  ssh "${ssh_args[@]}" "$remote" "cat > $quoted_image_path" <"$LIVE_IMAGE_LOCAL_PATH"
 fi
 
 echo "Running remote Codex project discovery..."
@@ -151,8 +196,8 @@ for project in projects:
 print(f"Discovery returned {len(projects)} project(s).")
 PY
 
-echo "Checking Codex app-server stdio thread list and optional read..."
-python3 - "$HOST" "$USER" "$PORT" "$IDENTITY_FILE" "$CODEX_PATH" "$CODEX_HOME_VALUE" "$discovery_json" "$LIVE_CREATE_THREAD" "$LIVE_CREATE_TURN" "$LIVE_TURN_PROMPT" "$LIVE_TURN_TIMEOUT" "$LIVE_CWD" <<'PY'
+echo "Checking Codex app-server stdio thread list and optional lifecycle probes..."
+python3 - "$HOST" "$USER" "$PORT" "$IDENTITY_FILE" "$CODEX_PATH" "$CODEX_HOME_VALUE" "$discovery_json" "$LIVE_CREATE_THREAD" "$LIVE_CREATE_TURN" "$LIVE_TURN_PROMPT" "$LIVE_TURN_TIMEOUT" "$LIVE_CWD" "$LIVE_EXERCISE_LIFECYCLE" "$LIVE_IMAGE_REMOTE_PATH" <<'PY'
 import json
 import os
 import selectors
@@ -161,7 +206,7 @@ import subprocess
 import sys
 import time
 
-host, user, port, identity_file, codex_path, codex_home, discovery_json, live_create_thread, live_create_turn, live_turn_prompt, live_turn_timeout, live_cwd = sys.argv[1:13]
+host, user, port, identity_file, codex_path, codex_home, discovery_json, live_create_thread, live_create_turn, live_turn_prompt, live_turn_timeout, live_cwd, live_exercise_lifecycle, live_image_remote_path = sys.argv[1:15]
 live_turn_timeout = int(live_turn_timeout)
 
 def quote_remote_executable(value):
@@ -175,6 +220,9 @@ def quote_remote_env_assignment(name, value):
     if not value:
         return ""
     return f"{name}={quote_remote_executable(value)} "
+
+def remote_path_bootstrap():
+    return 'export PATH="$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"; '
 
 cmd = [
     "ssh",
@@ -191,7 +239,7 @@ if identity_file:
     cmd.extend(["-i", identity_file, "-o", "IdentitiesOnly=yes"])
 cmd.extend([
     f"{user}@{host}",
-    f"{quote_remote_env_assignment('CODEX_HOME', codex_home)}{quote_remote_executable(codex_path)} app-server --listen stdio://",
+    f"{quote_remote_env_assignment('CODEX_HOME', codex_home)}{remote_path_bootstrap()}{quote_remote_executable(codex_path)} app-server --listen stdio://",
 ])
 
 process = subprocess.Popen(
@@ -205,7 +253,9 @@ process = subprocess.Popen(
 
 next_id = 1
 notifications = []
+server_requests = []
 created_thread_id = None
+created_thread_ids = []
 active_turn_id = None
 active_turn_thread_id = None
 
@@ -244,10 +294,8 @@ def request(method, params=None, timeout=30):
         if response is None:
             break
         if response.get("method") and response.get("id") is not None:
-            raise SystemExit(
-                "app-server requested "
-                f"{response.get('method')!r} during live verification; this verifier cannot answer server requests"
-            )
+            server_requests.append(response)
+            continue
         if response.get("method"):
             notifications.append(response)
             continue
@@ -270,10 +318,8 @@ def wait_notification(method, thread_id=None, timeout=60):
         if message is None:
             continue
         if message.get("method") and message.get("id") is not None:
-            raise SystemExit(
-                "app-server requested "
-                f"{message.get('method')!r} during live verification; this verifier cannot answer server requests"
-            )
+            server_requests.append(message)
+            continue
         if message.get("method"):
             notifications.append(message)
     raise SystemExit(f"timed out waiting for {method} notification")
@@ -287,6 +333,34 @@ def pop_notification(method, thread_id=None):
             continue
         return notifications.pop(index)
     return None
+
+def wait_server_request(timeout=60, required=True):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if server_requests:
+            return server_requests.pop(0)
+        message = read_message(max(0.1, deadline - time.monotonic()))
+        if message is None:
+            continue
+        if message.get("method") and message.get("id") is not None:
+            return message
+        if message.get("method"):
+            notifications.append(message)
+    if required:
+        raise SystemExit("timed out waiting for app-server approval request")
+    return None
+
+def approve_server_request(message):
+    assert process.stdin is not None
+    method = message.get("method")
+    if method in ("item/commandExecution/requestApproval", "item/fileChange/requestApproval"):
+        result = {"decision": "accept"}
+    elif method in ("execCommandApproval", "applyPatchApproval"):
+        result = {"decision": "approved"}
+    else:
+        raise SystemExit(f"cannot approve unexpected app-server request {method!r}")
+    process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}) + "\n")
+    process.stdin.flush()
 
 def wait_completed_turn(thread_id, started_turn, timeout=60):
     if started_turn.get("status") == "completed":
@@ -330,10 +404,8 @@ def wait_completed_turn(thread_id, started_turn, timeout=60):
         if message is None:
             continue
         if message.get("method") and message.get("id") is not None:
-            raise SystemExit(
-                "app-server requested "
-                f"{message.get('method')!r} during live verification; this verifier cannot answer server requests"
-            )
+            server_requests.append(message)
+            continue
         if message.get("method"):
             notifications.append(message)
 
@@ -351,12 +423,6 @@ def list_threads(cwd):
             "vscode",
             "exec",
             "appServer",
-            "subAgent",
-            "subAgentReview",
-            "subAgentCompact",
-            "subAgentThreadSpawn",
-            "subAgentOther",
-            "unknown",
         ],
     }
     if cwd:
@@ -370,6 +436,67 @@ def list_threads(cwd):
         if mismatched:
             raise SystemExit(f"thread/list returned thread outside cwd {cwd!r}: {mismatched[0]!r}")
     return threads
+
+def start_thread(cwd, service_name, sandbox="read-only", approval_policy="never", ephemeral=False):
+    result = request(
+        "thread/start",
+        {
+            "cwd": cwd,
+            "serviceName": service_name,
+            "ephemeral": ephemeral,
+            "sandbox": sandbox,
+            "approvalPolicy": approval_policy,
+        },
+        timeout=45,
+    )
+    thread = result.get("thread")
+    if not isinstance(thread, dict):
+        raise SystemExit(f"thread/start returned invalid thread for {service_name}: {result!r}")
+    thread_id = thread.get("id")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise SystemExit(f"thread/start returned invalid thread id for {service_name}: {thread!r}")
+    if not ephemeral:
+        created_thread_ids.append(thread_id)
+    return thread
+
+def start_turn(thread_id, input_items, timeout=45):
+    result = request(
+        "turn/start",
+        {
+            "threadId": thread_id,
+            "input": input_items,
+            "effort": "low",
+        },
+        timeout=timeout,
+    )
+    turn = result.get("turn")
+    if not isinstance(turn, dict) or not isinstance(turn.get("id"), str):
+        raise SystemExit(f"turn/start returned invalid turn: {result!r}")
+    return turn
+
+def text_input(text):
+    return {"type": "text", "text": text, "text_elements": []}
+
+def ensure_completed_turn(thread_id, turn, label):
+    completed_turn = wait_completed_turn(thread_id, turn, timeout=live_turn_timeout)
+    completed_status = completed_turn.get("status")
+    if completed_status != "completed":
+        error_detail = completed_turn.get("error")
+        raise SystemExit(
+            f"{label} reported non-completed status "
+            f"{completed_status!r} for {thread_id}: {json.dumps(error_detail, sort_keys=True)}"
+        )
+    return completed_turn
+
+def archive_thread(thread_id):
+    try:
+        request("thread/archive", {"threadId": thread_id}, timeout=15)
+    except SystemExit as error:
+        print(f"Warning: could not archive temporary thread {thread_id}: {error}", flush=True)
+        return False
+    if thread_id in created_thread_ids:
+        created_thread_ids.remove(thread_id)
+    return True
 
 try:
     initialize_result = request(
@@ -391,7 +518,7 @@ try:
 
     candidates = []
     seen = set()
-    for project in sorted(projects, key=lambda item: item.get("threadCount") or 0, reverse=True):
+    for project in sorted(projects, key=lambda item: item.get("discoveredSessionCount") or 0, reverse=True):
         path = project.get("path")
         if isinstance(path, str) and path and path not in seen:
             candidates.append(path)
@@ -477,6 +604,7 @@ try:
                         "text_elements": [],
                     }
                 ],
+                "effort": "low",
             },
             timeout=45,
         )
@@ -510,6 +638,122 @@ try:
         print(f"Archived temporary materialized thread {created_thread_id}.")
         created_thread_id = None
 
+    if live_exercise_lifecycle == "1":
+        if not live_cwd:
+            raise SystemExit("MOBIDEX_LIVE_EXERCISE_LIFECYCLE=1 requires MOBIDEX_LIVE_CWD or a resolvable remote HOME")
+
+        summary_thread = start_thread(live_cwd, "mobidex-live-summary", sandbox="read-only")
+        summary_thread_id = summary_thread["id"]
+        summary_turn = start_turn(
+            summary_thread_id,
+            [text_input("Summarize this disposable codebase in one short sentence.")],
+        )
+        ensure_completed_turn(summary_thread_id, summary_turn, "summary lifecycle turn")
+        archive_thread(summary_thread_id)
+        print("Lifecycle probe completed a summary turn.")
+
+        if live_image_remote_path:
+            image_thread = start_thread(live_cwd, "mobidex-live-image", sandbox="read-only")
+            image_thread_id = image_thread["id"]
+            image_turn = start_turn(
+                image_thread_id,
+                [
+                    text_input("Describe this image in one short sentence."),
+                    {"type": "localImage", "path": live_image_remote_path},
+                ],
+            )
+            ensure_completed_turn(image_thread_id, image_turn, "image lifecycle turn")
+            archive_thread(image_thread_id)
+            print(f"Lifecycle probe completed an image turn using {live_image_remote_path}.")
+
+        action_thread = start_thread(live_cwd, "mobidex-live-action", sandbox="workspace-write")
+        action_thread_id = action_thread["id"]
+        action_turn = start_turn(
+            action_thread_id,
+            [
+                text_input(
+                    "Modify only mobidex-live-action.txt. Replace its entire contents with exactly "
+                    "`mobidex live action completed\\n`. Do not change any other file."
+                )
+            ],
+        )
+        ensure_completed_turn(action_thread_id, action_turn, "action lifecycle turn")
+        diff_result = request("gitDiffToRemote", {"cwd": live_cwd}, timeout=45)
+        diff = diff_result.get("diff")
+        if not isinstance(diff, str):
+            raise SystemExit(f"gitDiffToRemote returned invalid diff: {diff_result!r}")
+        if "mobidex-live-action.txt" not in diff:
+            raise SystemExit(f"gitDiffToRemote did not include the action file: {diff!r}")
+        archive_thread(action_thread_id)
+        print("Lifecycle probe completed an action turn and gitDiffToRemote reported changed files.")
+
+        steer_thread = start_thread(
+            live_cwd,
+            "mobidex-live-steer",
+            sandbox="workspace-write",
+            approval_policy="on-request",
+        )
+        steer_thread_id = steer_thread["id"]
+        steer_turn = start_turn(
+            steer_thread_id,
+            [
+                text_input(
+                    "Run the shell command `sleep 120`, then report that the steering probe finished."
+                )
+            ],
+        )
+        if steer_turn.get("status") != "inProgress":
+            raise SystemExit(f"steer lifecycle turn completed before steering could be tested: {steer_turn!r}")
+        active_turn_id = steer_turn["id"]
+        active_turn_thread_id = steer_thread_id
+        approval = wait_server_request(timeout=5, required=False)
+        request(
+            "turn/steer",
+            {
+                "threadId": steer_thread_id,
+                "expectedTurnId": steer_turn["id"],
+                "input": [text_input("Steering check: include the exact phrase mobidex steer acknowledged.")],
+            },
+            timeout=45,
+        )
+        if approval is None and server_requests:
+            approval = server_requests.pop(0)
+        if approval is not None:
+            approve_server_request(approval)
+        time.sleep(1)
+        request(
+            "turn/interrupt",
+            {"threadId": steer_thread_id, "turnId": steer_turn["id"]},
+            timeout=45,
+        )
+        active_turn_id = None
+        active_turn_thread_id = None
+        request("thread/read", {"threadId": steer_thread_id, "includeTurns": True}, timeout=45)
+        archive_thread(steer_thread_id)
+        print("Lifecycle probe accepted turn/steer while a turn was active and interrupted it.")
+
+        interrupt_thread = start_thread(live_cwd, "mobidex-live-interrupt", sandbox="workspace-write")
+        interrupt_thread_id = interrupt_thread["id"]
+        interrupt_turn = start_turn(
+            interrupt_thread_id,
+            [text_input("Run the shell command `sleep 120`, then report that it finished.")],
+        )
+        if interrupt_turn.get("status") != "inProgress":
+            raise SystemExit(f"interrupt lifecycle turn completed before interrupt could be tested: {interrupt_turn!r}")
+        active_turn_id = interrupt_turn["id"]
+        active_turn_thread_id = interrupt_thread_id
+        time.sleep(2)
+        request(
+            "turn/interrupt",
+            {"threadId": interrupt_thread_id, "turnId": interrupt_turn["id"]},
+            timeout=45,
+        )
+        active_turn_id = None
+        active_turn_thread_id = None
+        request("thread/read", {"threadId": interrupt_thread_id, "includeTurns": True}, timeout=45)
+        archive_thread(interrupt_thread_id)
+        print("Lifecycle probe interrupted an active turn.")
+
     if threads:
         thread_id = threads[0].get("id")
         if not isinstance(thread_id, str) or not thread_id:
@@ -537,6 +781,11 @@ finally:
     if created_thread_id:
         try:
             request("thread/archive", {"threadId": created_thread_id}, timeout=10)
+        except BaseException:
+            pass
+    for thread_id in list(reversed(created_thread_ids)):
+        try:
+            request("thread/archive", {"threadId": thread_id}, timeout=10)
         except BaseException:
             pass
     process.terminate()

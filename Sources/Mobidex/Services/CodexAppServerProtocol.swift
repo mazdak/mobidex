@@ -1,4 +1,5 @@
 import Foundation
+import NIOCore
 
 enum JSONValue: Codable, Equatable, Sendable {
     case null
@@ -66,15 +67,134 @@ enum JSONValue: Codable, Equatable, Sendable {
     }
 }
 
-extension JSONValue {
-    static func textInput(_ text: String) -> JSONValue {
-        .array([
+enum CodexInputItem: Equatable, Sendable {
+    case text(String)
+    case imageURL(String)
+    case localImage(path: String)
+    case skill(name: String, path: String)
+    case mention(name: String, path: String)
+
+    var jsonValue: JSONValue {
+        switch self {
+        case .text(let text):
             .object([
                 "type": .string("text"),
                 "text": .string(text),
                 "text_elements": .array([])
             ])
-        ])
+        case .imageURL(let url):
+            .object([
+                "type": .string("image"),
+                "url": .string(url)
+            ])
+        case .localImage(let path):
+            .object([
+                "type": .string("localImage"),
+                "path": .string(path)
+            ])
+        case .skill(let name, let path):
+            .object([
+                "type": .string("skill"),
+                "name": .string(name),
+                "path": .string(path)
+            ])
+        case .mention(let name, let path):
+            .object([
+                "type": .string("mention"),
+                "name": .string(name),
+                "path": .string(path)
+            ])
+        }
+    }
+}
+
+enum CodexReasoningEffortOption: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case low
+    case medium
+    case high
+    case xhigh
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .low: "Low"
+        case .medium: "Medium"
+        case .high: "High"
+        case .xhigh: "Extra High"
+        }
+    }
+}
+
+enum CodexAccessMode: String, CaseIterable, Identifiable, Equatable, Sendable {
+    case fullAccess
+    case workspaceWrite
+    case readOnly
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .fullAccess: "Full access"
+        case .workspaceWrite: "Workspace"
+        case .readOnly: "Read only"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .fullAccess: "exclamationmark.shield"
+        case .workspaceWrite: "folder.badge.gearshape"
+        case .readOnly: "lock.shield"
+        }
+    }
+}
+
+struct CodexTurnOptions: Equatable, Sendable {
+    var reasoningEffort: CodexReasoningEffortOption?
+    var accessMode: CodexAccessMode?
+    var cwd: String?
+
+    static let `default` = CodexTurnOptions(reasoningEffort: nil, accessMode: nil, cwd: nil)
+
+    var jsonFields: [String: JSONValue] {
+        var fields: [String: JSONValue] = [:]
+        if let reasoningEffort {
+            fields["effort"] = .string(reasoningEffort.rawValue)
+        }
+        switch accessMode {
+        case .fullAccess:
+            fields["approvalPolicy"] = .string("never")
+            fields["sandboxPolicy"] = .object(["type": .string("dangerFullAccess")])
+        case .workspaceWrite:
+            fields["approvalPolicy"] = .string("on-request")
+            fields["sandboxPolicy"] = .object([
+                "type": .string("workspaceWrite"),
+                "writableRoots": .array(cwd.map { [.string($0)] } ?? []),
+                "networkAccess": .bool(true),
+                "excludeTmpdirEnvVar": .bool(false),
+                "excludeSlashTmp": .bool(false)
+            ])
+        case .readOnly:
+            fields["approvalPolicy"] = .string("on-request")
+            fields["sandboxPolicy"] = .object([
+                "type": .string("readOnly"),
+                "networkAccess": .bool(false)
+            ])
+        case nil:
+            break
+        }
+        return fields
+    }
+}
+
+extension JSONValue {
+    static func textInput(_ text: String) -> JSONValue {
+        inputItems([.text(text)])
+    }
+
+    static func inputItems(_ items: [CodexInputItem]) -> JSONValue {
+        .array(items.map(\.jsonValue))
     }
 }
 
@@ -102,6 +222,16 @@ struct CodexRPCErrorInfo: Decodable, Error, Equatable, Sendable {
     var message: String
 }
 
+extension CodexRPCErrorInfo {
+    var canIgnoreForLoadedThreadSummary: Bool {
+        let normalizedMessage = message.lowercased()
+        return normalizedMessage.contains("not found")
+            || normalizedMessage.contains("not loaded")
+            || normalizedMessage.contains("unknown thread")
+            || normalizedMessage.contains("no such thread")
+    }
+}
+
 struct CodexRPCInboundEnvelope: Decodable, Sendable {
     var id: JSONValue?
     var method: String?
@@ -126,6 +256,9 @@ enum CodexAppServerClientError: LocalizedError, Sendable {
     case invalidResponse
     case appServer(CodexRPCErrorInfo)
     case disconnected
+    case transportClosed(String)
+    case messageDecodeFailed(String)
+    case responseDecodeFailed(method: String, details: String)
 
     var errorDescription: String? {
         switch self {
@@ -135,24 +268,227 @@ enum CodexAppServerClientError: LocalizedError, Sendable {
             error.message
         case .disconnected:
             "The app-server connection closed."
+        case .transportClosed(let message):
+            message
+        case .messageDecodeFailed(let details):
+            "Could not decode an app-server message: \(details)"
+        case .responseDecodeFailed(let method, let details):
+            "Could not decode the app-server `\(method)` response: \(details)"
         }
+    }
+}
+
+enum DecodeFailureFormatter {
+    static func describe(_ error: Error) -> String {
+        switch error {
+        case DecodingError.keyNotFound(let key, let context):
+            return "missing key `\(key.stringValue)` at \(codingPath(context.codingPath)); \(context.debugDescription)"
+        case DecodingError.typeMismatch(let type, let context):
+            return "expected \(type) at \(codingPath(context.codingPath)); \(context.debugDescription)"
+        case DecodingError.valueNotFound(let type, let context):
+            return "missing \(type) value at \(codingPath(context.codingPath)); \(context.debugDescription)"
+        case DecodingError.dataCorrupted(let context):
+            return "data corrupted at \(codingPath(context.codingPath)); \(context.debugDescription)"
+        default:
+            return error.localizedDescription
+        }
+    }
+
+    static func preview(_ value: String, limit: Int = 320) -> String {
+        let trimmed = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        guard trimmed.count > limit else {
+            return trimmed
+        }
+        return "\(trimmed.prefix(limit))..."
+    }
+
+    private static func codingPath(_ path: [CodingKey]) -> String {
+        guard !path.isEmpty else {
+            return "root"
+        }
+        return path.map(\.stringValue).joined(separator: ".")
+    }
+}
+
+struct GitDiffToRemoteResponse: Decodable, Equatable, Sendable {
+    var sha: String
+    var diff: String
+}
+
+enum GitDiffChangedFileParser {
+    static func paths(from diff: String) -> [String] {
+        var paths: [String] = []
+        var seen = Set<String>()
+        var pendingOldPath: String?
+
+        func append(_ path: String?) {
+            guard let path,
+                  !path.isEmpty,
+                  path != "/dev/null",
+                  seen.insert(path).inserted
+            else {
+                return
+            }
+            paths.append(path)
+        }
+
+        for line in diff.split(separator: "\n", omittingEmptySubsequences: false).map(String.init) {
+            if line.hasPrefix("diff --git ") {
+                append(diffGitDestinationPath(from: line))
+                pendingOldPath = nil
+            } else if line.hasPrefix("--- ") {
+                pendingOldPath = normalizedDiffPath(String(line.dropFirst(4)))
+            } else if line.hasPrefix("+++ ") {
+                let nextPath = normalizedDiffPath(String(line.dropFirst(4)))
+                append(nextPath == nil ? pendingOldPath : nextPath)
+                pendingOldPath = nil
+            } else if line.hasPrefix("rename to ") {
+                append(String(line.dropFirst("rename to ".count)))
+            }
+        }
+
+        return paths
+    }
+
+    private static func diffGitDestinationPath(from line: String) -> String? {
+        let payload = String(line.dropFirst("diff --git ".count))
+        if let unquotedPath = unquotedDiffGitDestinationPath(from: payload) {
+            return unquotedPath
+        }
+        let pathTokens = parseDiffPathTokens(payload)
+        guard pathTokens.count >= 2 else {
+            return nil
+        }
+        return normalizedDiffPath(pathTokens[1])
+    }
+
+    private static func unquotedDiffGitDestinationPath(from value: String) -> String? {
+        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("\""),
+              let separator = value.range(of: " b/", options: .backwards)
+        else {
+            return nil
+        }
+        let destinationStart = value.index(after: separator.lowerBound)
+        return normalizedDiffPath(String(value[destinationStart...]))
+    }
+
+    private static func parseDiffPathTokens(_ value: String) -> [String] {
+        var tokens: [String] = []
+        var index = value.startIndex
+
+        func advancePastWhitespace() {
+            while index < value.endIndex, value[index].isWhitespace {
+                index = value.index(after: index)
+            }
+        }
+
+        while index < value.endIndex {
+            advancePastWhitespace()
+            guard index < value.endIndex else {
+                break
+            }
+
+            if value[index] == "\"" {
+                index = value.index(after: index)
+                var token = ""
+                var isEscaped = false
+                while index < value.endIndex {
+                    let character = value[index]
+                    index = value.index(after: index)
+                    if isEscaped {
+                        token.append(unescapedGitQuotedCharacter(character))
+                        isEscaped = false
+                    } else if character == "\\" {
+                        isEscaped = true
+                    } else if character == "\"" {
+                        break
+                    } else {
+                        token.append(character)
+                    }
+                }
+                tokens.append(token)
+            } else {
+                let start = index
+                while index < value.endIndex, !value[index].isWhitespace {
+                    index = value.index(after: index)
+                }
+                tokens.append(String(value[start..<index]))
+            }
+        }
+
+        return tokens
+    }
+
+    private static func normalizedDiffPath(_ path: String) -> String? {
+        let trimmed = unquotedGitPath(path).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != "/dev/null" else {
+            return nil
+        }
+        if trimmed.hasPrefix("a/") || trimmed.hasPrefix("b/") {
+            return String(trimmed.dropFirst(2))
+        }
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func unquotedGitPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("\""), trimmed.hasSuffix("\"") else {
+            return trimmed
+        }
+        return parseDiffPathTokens(trimmed).first ?? trimmed
+    }
+
+    private static func unescapedGitQuotedCharacter(_ character: Character) -> Character {
+        switch character {
+        case "n": "\n"
+        case "t": "\t"
+        case "r": "\r"
+        default: character
+        }
+    }
+}
+
+enum GitDiffFileParser {
+    static func files(from diff: String) -> [ChangedFileDiff] {
+        let lines = diff.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard lines.contains(where: { $0.hasPrefix("diff --git ") }) else {
+            let trimmed = diff.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? [] : [ChangedFileDiff(path: "Working Tree", diff: diff)]
+        }
+
+        var files: [ChangedFileDiff] = []
+        var currentLines: [String] = []
+
+        func flush() {
+            guard !currentLines.isEmpty else { return }
+            let fileDiff = currentLines.joined(separator: "\n")
+            let path = GitDiffChangedFileParser.paths(from: fileDiff).first ?? "Changed File"
+            files.append(ChangedFileDiff(path: path, diff: fileDiff))
+            currentLines.removeAll(keepingCapacity: true)
+        }
+
+        for line in lines {
+            if line.hasPrefix("diff --git ") {
+                flush()
+            }
+            currentLines.append(line)
+        }
+        flush()
+
+        return files
     }
 }
 
 actor CodexAppServerClient {
     nonisolated let events: AsyncStream<CodexAppServerEvent>
 
-    private static let allThreadSourceKinds: JSONValue = .array([
+    private static let userFacingThreadSourceKinds: JSONValue = .array([
         .string("cli"),
         .string("vscode"),
         .string("exec"),
-        .string("appServer"),
-        .string("subAgent"),
-        .string("subAgentReview"),
-        .string("subAgentCompact"),
-        .string("subAgentThreadSpawn"),
-        .string("subAgentOther"),
-        .string("unknown")
+        .string("appServer")
     ])
 
     private let transport: CodexLineTransport
@@ -201,7 +537,7 @@ actor CodexAppServerClient {
                 "sortKey": .string("updated_at"),
                 "sortDirection": .string("desc"),
                 "archived": .bool(false),
-                "sourceKinds": Self.allThreadSourceKinds
+                "sourceKinds": Self.userFacingThreadSourceKinds
             ]
             if let cwd, !cwd.isEmpty {
                 params["cwd"] = .string(cwd)
@@ -210,7 +546,7 @@ actor CodexAppServerClient {
                 params["cursor"] = .string(cursor)
             }
             let response = try await requestDecoded(ThreadListResponse.self, method: "thread/list", params: .object(params))
-            threads.append(contentsOf: response.data)
+            threads.append(contentsOf: response.data.filter(\.isUserFacingSession))
             cursor = response.nextCursor
         } while cursor != nil
 
@@ -229,12 +565,20 @@ actor CodexAppServerClient {
     }
 
     func readThread(threadID: String) async throws -> CodexThread {
+        try await readThread(threadID: threadID, includeTurns: true)
+    }
+
+    func readThreadSummary(threadID: String) async throws -> CodexThread {
+        try await readThread(threadID: threadID, includeTurns: false)
+    }
+
+    private func readThread(threadID: String, includeTurns: Bool) async throws -> CodexThread {
         let response = try await requestDecoded(
             ThreadReadResponse.self,
             method: "thread/read",
             params: .object([
                 "threadId": .string(threadID),
-                "includeTurns": .bool(true)
+                "includeTurns": .bool(includeTurns)
             ])
         )
         return response.thread
@@ -256,13 +600,21 @@ actor CodexAppServerClient {
     }
 
     func startTurn(threadID: String, text: String) async throws -> CodexTurn {
+        try await startTurn(threadID: threadID, input: [.text(text)])
+    }
+
+    func startTurn(
+        threadID: String,
+        input: [CodexInputItem],
+        options: CodexTurnOptions = .default
+    ) async throws -> CodexTurn {
+        var params = options.jsonFields
+        params["threadId"] = .string(threadID)
+        params["input"] = .inputItems(input)
         let response = try await requestDecoded(
             TurnStartResponse.self,
             method: "turn/start",
-            params: .object([
-                "threadId": .string(threadID),
-                "input": .textInput(text)
-            ])
+            params: .object(params)
         )
         return response.turn
     }
@@ -278,13 +630,39 @@ actor CodexAppServerClient {
     }
 
     func steer(threadID: String, expectedTurnID: String, text: String) async throws {
+        try await steer(threadID: threadID, expectedTurnID: expectedTurnID, input: [.text(text)])
+    }
+
+    func steer(threadID: String, expectedTurnID: String, input: [CodexInputItem]) async throws {
         _ = try await request(
             method: "turn/steer",
             params: .object([
                 "threadId": .string(threadID),
                 "expectedTurnId": .string(expectedTurnID),
-                "input": .textInput(text)
+                "input": .inputItems(input)
             ])
+        )
+    }
+
+    func gitDiffToRemote(cwd: String) async throws -> GitDiffToRemoteResponse {
+        try await requestDecoded(
+            GitDiffToRemoteResponse.self,
+            method: "gitDiffToRemote",
+            params: .object(["cwd": .string(cwd)])
+        )
+    }
+
+    func changedFiles(cwd: String) async throws -> [String] {
+        let response = try await gitDiffToRemote(cwd: cwd)
+        return GitDiffChangedFileParser.paths(from: response.diff)
+    }
+
+    func diffSnapshot(cwd: String) async throws -> GitDiffSnapshot {
+        let response = try await gitDiffToRemote(cwd: cwd)
+        return GitDiffSnapshot(
+            sha: response.sha,
+            diff: response.diff,
+            files: GitDiffFileParser.files(from: response.diff)
         )
     }
 
@@ -294,8 +672,9 @@ actor CodexAppServerClient {
         do {
             try await transport.sendLine(encodeLine(response))
         } catch {
-            await disconnect(error: error, message: error.localizedDescription, notify: true)
-            throw error
+            let clientError = clientFacingError(error)
+            await disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
+            throw clientError
         }
     }
 
@@ -314,7 +693,14 @@ actor CodexAppServerClient {
     private func requestDecoded<T: Decodable>(_ type: T.Type, method: String, params: JSONValue?) async throws -> T {
         let result = try await request(method: method, params: params)
         let data = try encoder.encode(result)
-        return try decoder.decode(T.self, from: data)
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw CodexAppServerClientError.responseDecodeFailed(
+                method: method,
+                details: DecodeFailureFormatter.describe(error)
+            )
+        }
     }
 
     private func request(method: String, params: JSONValue?) async throws -> JSONValue {
@@ -330,8 +716,9 @@ actor CodexAppServerClient {
                 do {
                     try await transport.sendLine(line)
                 } catch {
-                    self.resolve(id: id, result: .failure(error))
-                    await self.disconnect(error: error, message: error.localizedDescription, notify: true)
+                    let clientError = clientFacingError(error)
+                    self.resolve(id: id, result: .failure(clientError))
+                    await self.disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
                 }
             }
         }
@@ -342,8 +729,9 @@ actor CodexAppServerClient {
         do {
             try await transport.sendLine(encodeLine(CodexRPCNotification(method: method, params: params)))
         } catch {
-            await disconnect(error: error, message: error.localizedDescription, notify: true)
-            throw error
+            let clientError = clientFacingError(error)
+            await disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
+            throw clientError
         }
     }
 
@@ -369,7 +757,14 @@ actor CodexAppServerClient {
                 guard let data = line.data(using: .utf8), !data.isEmpty else {
                     continue
                 }
-                let envelope = try decoder.decode(CodexRPCInboundEnvelope.self, from: data)
+                let envelope: CodexRPCInboundEnvelope
+                do {
+                    envelope = try decoder.decode(CodexRPCInboundEnvelope.self, from: data)
+                } catch {
+                    throw CodexAppServerClientError.messageDecodeFailed(
+                        "\(DecodeFailureFormatter.describe(error)). Line: \(DecodeFailureFormatter.preview(line))"
+                    )
+                }
                 if let id = envelope.id?.intValue, let error = envelope.error {
                     resolve(id: id, result: .failure(CodexAppServerClientError.appServer(error)))
                 } else if let id = envelope.id?.intValue, let result = envelope.result {
@@ -382,7 +777,8 @@ actor CodexAppServerClient {
             }
             await disconnect(error: CodexAppServerClientError.disconnected, message: "The app-server stream ended.", notify: true)
         } catch {
-            await disconnect(error: error, message: error.localizedDescription, notify: true)
+            let clientError = clientFacingError(error)
+            await disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
         }
     }
 
@@ -421,6 +817,29 @@ actor CodexAppServerClient {
             throw CodexAppServerClientError.invalidResponse
         }
         return line
+    }
+}
+
+private func clientFacingError(_ error: Error) -> Error {
+    if error is CodexAppServerClientError {
+        return error
+    }
+    if let channelError = error as? ChannelError {
+        return CodexAppServerClientError.transportClosed(clientFacingChannelErrorMessage(channelError))
+    }
+    return error
+}
+
+private func clientFacingChannelErrorMessage(_ error: ChannelError) -> String {
+    switch error {
+    case .connectTimeout:
+        "Timed out waiting for the app-server SSH channel."
+    case .writeHostUnreachable:
+        "Could not reach the app-server SSH channel."
+    case .inputClosed, .outputClosed, .ioOnClosedChannel, .alreadyClosed, .eof:
+        "The app-server SSH channel closed."
+    default:
+        "The app-server SSH channel failed: \(error.description)."
     }
 }
 

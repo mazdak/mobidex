@@ -1,8 +1,16 @@
+import Foundation
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ConversationView: View {
     @EnvironmentObject private var model: AppViewModel
     @State private var composerText = ""
+    @State private var selectedDetail: SessionDetailMode = .chat
+    @State private var attachmentPaths: [String] = []
+    @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var isFileImporterPresented = false
+    @FocusState private var isComposerFocused: Bool
     private let conversationBottomID = "conversationBottom"
 
     var body: some View {
@@ -10,8 +18,15 @@ struct ConversationView: View {
             if let thread = model.selectedThread {
                 header(thread)
                 Divider()
-                timeline
-                composer
+                detailPicker
+                Divider()
+                switch selectedDetail {
+                case .chat:
+                    timeline
+                    composer
+                case .changes:
+                    SessionChangesView(cwd: thread.cwd)
+                }
             } else if let project = model.selectedProject {
                 projectHeader(project)
                 Divider()
@@ -27,6 +42,20 @@ struct ConversationView: View {
         }
         .navigationTitle(model.selectedThread?.title ?? model.selectedProject?.displayName ?? "Conversation")
         .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: model.selectedThreadID) { _, _ in
+                selectedDetail = .chat
+                attachmentPaths = []
+            }
+            .onChange(of: selectedPhotoItems) { _, items in
+                Task { await persistPhotoItems(items) }
+            }
+            .fileImporter(
+                isPresented: $isFileImporterPresented,
+                allowedContentTypes: [.item],
+                allowsMultipleSelection: true
+            ) { result in
+                handleImportedFiles(result)
+            }
     }
 
     private func header(_ thread: CodexThread) -> some View {
@@ -51,20 +80,13 @@ struct ConversationView: View {
                 .accessibilityLabel("Stop Turn")
                 .accessibilityIdentifier("stopTurnButton")
             }
-            Button {
-                Task { await model.startNewThread() }
-            } label: {
-                Label("New Session", systemImage: "plus.bubble")
+            if thread.status.isActive {
+                Label(model.selectedActivityLabel ?? thread.status.sessionLabel, systemImage: "dot.radiowaves.left.and.right")
+                    .font(.caption)
+                    .foregroundStyle(.green)
             }
-            .buttonStyle(.bordered)
-            .disabled(model.isBusy || !model.canSendMessage)
-            .accessibilityHint(model.canSendMessage ? "Creates a Codex session for this project." : "Connect to the server before creating a session.")
-            .accessibilityIdentifier("newThreadButton")
-            Label(thread.status.sessionLabel, systemImage: thread.status.isActive ? "dot.radiowaves.left.and.right" : "checkmark.circle")
-                .font(.caption)
-                .foregroundStyle(thread.status.isActive ? .green : .secondary)
             if !model.canSendMessage {
-                Label("Connect to create sessions", systemImage: "wifi.slash")
+                Label("Connect to continue", systemImage: "wifi.slash")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -85,16 +107,28 @@ struct ConversationView: View {
             }
             Spacer()
             Button {
-                Task { await model.startNewThread() }
+                Task { await model.startNewSession() }
             } label: {
                 Label("New Session", systemImage: "plus.bubble")
             }
             .buttonStyle(.bordered)
-            .disabled(model.isBusy || !model.canSendMessage)
+            .disabled(!model.canCreateSession)
             .accessibilityHint(model.canSendMessage ? "Creates a Codex session for this project." : "Connect to the server before creating a session.")
-            .accessibilityIdentifier("newThreadButton")
+            .accessibilityIdentifier("newSessionButton")
         }
         .padding()
+    }
+
+    private var detailPicker: some View {
+        Picker("Session Detail", selection: $selectedDetail) {
+            ForEach(SessionDetailMode.allCases) { mode in
+                Label(mode.label, systemImage: mode.systemImage).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal)
+        .padding(.vertical, 10)
+        .accessibilityIdentifier("sessionDetailPicker")
     }
 
     private var timeline: some View {
@@ -116,6 +150,10 @@ struct ConversationView: View {
                     }
                     .padding()
                 }
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(TapGesture().onEnded {
+                    isComposerFocused = false
+                })
                 if model.isSelectedThreadLoading {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -159,7 +197,12 @@ struct ConversationView: View {
                     .textFieldStyle(.plain)
                     .lineLimit(2...6)
                     .font(.body)
+                    .focused($isComposerFocused)
                     .accessibilityIdentifier("messageComposer")
+
+                if !attachmentPaths.isEmpty {
+                    attachmentStrip
+                }
 
                 ViewThatFits(in: .horizontal) {
                     composerControlRow(showModelReasoning: true, showAccessText: true)
@@ -183,7 +226,8 @@ struct ConversationView: View {
     }
 
     private var sendDisabled: Bool {
-        composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.canSendMessage || model.isBusy
+        (composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachmentPaths.isEmpty)
+            || !model.canSendMessage
     }
 
     private var sendButtonBackground: Color {
@@ -202,8 +246,6 @@ struct ConversationView: View {
 
             modelLabel(showReasoning: showModelReasoning)
 
-            microphoneIcon
-
             sendButton
         }
     }
@@ -217,12 +259,7 @@ struct ConversationView: View {
             Spacer(minLength: 6)
 
             contextIndicator
-            Text("5.5")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.primary)
-                .accessibilityLabel("Model GPT-5.5 Medium")
-
-            microphoneIcon
+            modelLabel(showReasoning: false)
 
             sendButton
         }
@@ -239,53 +276,94 @@ struct ConversationView: View {
     }
 
     private var attachmentIcon: some View {
-        Image(systemName: "plus")
-            .font(.title3)
-            .foregroundStyle(.secondary)
-            .frame(width: 24, height: 24)
-            .accessibilityHidden(true)
-    }
-
-    private var microphoneIcon: some View {
-        Image(systemName: "mic")
-            .font(.title3)
-            .foregroundStyle(.secondary)
-            .frame(width: 24, height: 24)
-            .accessibilityHidden(true)
+        Menu {
+            PhotosPicker(selection: $selectedPhotoItems, matching: .images) {
+                Label("Photos", systemImage: "photo")
+            }
+            Button {
+                isFileImporterPresented = true
+            } label: {
+                Label("Files", systemImage: "doc")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+        }
+        .accessibilityLabel("Attach")
     }
 
     private func accessLabel(showText: Bool) -> some View {
-        Label {
-            if showText {
-                Text("Full access")
+        Menu {
+            ForEach(CodexAccessMode.allCases) { mode in
+                Button {
+                    model.selectedAccessMode = mode
+                } label: {
+                    Label("Next turn: \(mode.label)", systemImage: mode.systemImage)
+                }
             }
-        } icon: {
-            Image(systemName: "exclamationmark.shield")
+        } label: {
+            Label {
+                if showText {
+                    Text(model.selectedAccessMode.label)
+                }
+            } icon: {
+                Image(systemName: model.selectedAccessMode.systemImage)
+            }
         }
         .font(.subheadline)
         .foregroundStyle(.orange)
-        .accessibilityLabel("Full access")
+        .disabled(model.selectedThread?.status.isActive == true)
+        .accessibilityLabel("Next turn access mode \(model.selectedAccessMode.label)")
     }
 
     private func modelLabel(showReasoning: Bool) -> some View {
-        HStack(spacing: 6) {
-            Text("5.5")
-                .fontWeight(.medium)
-            if showReasoning {
-                Text("Medium")
+        Menu {
+            ForEach(CodexReasoningEffortOption.allCases) { effort in
+                Button {
+                    model.selectedReasoningEffort = effort
+                } label: {
+                    Text("Next turn: \(effort.label)")
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text("5.5")
+                    .fontWeight(.medium)
+                if showReasoning {
+                    Text(model.selectedReasoningEffort.label)
+                        .foregroundStyle(.secondary)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
         }
         .font(.subheadline)
         .foregroundStyle(.primary)
-        .accessibilityLabel("Model GPT-5.5 Medium")
+        .disabled(model.selectedThread?.status.isActive == true)
+        .accessibilityLabel("Model GPT-5.5 next turn reasoning \(model.selectedReasoningEffort.label)")
     }
 
     private var sendButton: some View {
         Button {
             let text = composerText
-            composerText = ""
-            Task { await model.sendComposerText(text) }
+            let attachments = attachmentPaths
+            isComposerFocused = false
+            Task {
+                let sent = await model.sendComposerInput(
+                    text: text,
+                    localAttachmentPaths: attachments,
+                    queueWhenActive: false
+                )
+                guard sent else { return }
+                if composerText == text, attachmentPaths == attachments {
+                    composerText = ""
+                    attachmentPaths = []
+                    selectedPhotoItems = []
+                }
+            }
         } label: {
             Image(systemName: "arrow.up")
                 .font(.title3.weight(.semibold))
@@ -300,17 +378,112 @@ struct ConversationView: View {
     }
 
     private var contextIndicator: some View {
-        ZStack {
+        let fraction = model.contextUsageFraction
+        return ZStack {
             Circle()
                 .stroke(Color.secondary.opacity(0.25), lineWidth: 3)
                 .frame(width: 18, height: 18)
-            Circle()
-                .trim(from: 0, to: model.isBusy ? 0.72 : 0.18)
-                .stroke(Color.secondary, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-                .frame(width: 18, height: 18)
+            if let fraction {
+                Circle()
+                    .trim(from: 0, to: fraction)
+                    .stroke(Color.secondary, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 18, height: 18)
+            }
         }
-        .accessibilityLabel("Context window")
+        .accessibilityLabel(fraction.map { "Context window \(Int($0 * 100)) percent used" } ?? "Context window")
+    }
+
+    private var attachmentStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(attachmentPaths, id: \.self) { path in
+                    HStack(spacing: 5) {
+                        Image(systemName: "paperclip")
+                        Text(URL(fileURLWithPath: path).lastPathComponent)
+                            .lineLimit(1)
+                        Button {
+                            attachmentPaths.removeAll { $0 == path }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.secondary.opacity(0.10), in: Capsule())
+                }
+            }
+        }
+    }
+
+    private func persistPhotoItems(_ items: [PhotosPickerItem]) async {
+        var savedPaths: [String] = []
+        for item in items {
+            guard let data = try? await item.loadTransferable(type: Data.self) else {
+                continue
+            }
+            let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mobidex-photo-\(UUID().uuidString)")
+                .appendingPathExtension(ext)
+            do {
+                try data.write(to: url, options: .atomic)
+                savedPaths.append(url.path)
+            } catch {
+                continue
+            }
+        }
+        if !savedPaths.isEmpty {
+            attachmentPaths.append(contentsOf: savedPaths)
+        }
+    }
+
+    private func handleImportedFiles(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else {
+            return
+        }
+        for url in urls {
+            let didStart = url.startAccessingSecurityScopedResource()
+            defer {
+                if didStart {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mobidex-file-\(UUID().uuidString)", isDirectory: true)
+            let destination = directory.appendingPathComponent(url.lastPathComponent)
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: url, to: destination)
+                attachmentPaths.append(destination.path)
+            } catch {
+                continue
+            }
+        }
+    }
+}
+
+private enum SessionDetailMode: String, CaseIterable, Identifiable {
+    case chat
+    case changes
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .chat: "Chat"
+        case .changes: "Changes"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .chat: "bubble.left.and.bubble.right"
+        case .changes: "doc.text.magnifyingglass"
+        }
     }
 }
 
@@ -356,40 +529,14 @@ struct ApprovalCard: View {
 
 struct ConversationSectionView: View {
     let section: ConversationSection
+    @State private var isExpanded = false
 
     var body: some View {
         HStack {
             if section.kind == .user {
                 Spacer(minLength: 36)
             }
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 6) {
-                    Image(systemName: iconName)
-                        .foregroundStyle(accent)
-                    Text(section.title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    if let status = section.status, !status.isEmpty {
-                        Text(status)
-                            .font(.caption2)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(accent.opacity(0.14), in: Capsule())
-                    }
-                }
-                if !section.body.isEmpty {
-                    Text(section.body)
-                        .font(bodyFont)
-                        .textSelection(.enabled)
-                }
-                if let detail = section.detail, !detail.isEmpty {
-                    Text(detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-            }
+            sectionCard
             .padding(10)
             .frame(maxWidth: 680, alignment: .leading)
             .background(background, in: RoundedRectangle(cornerRadius: 8))
@@ -399,13 +546,105 @@ struct ConversationSectionView: View {
         }
     }
 
+    private var sectionCard: some View {
+        VStack(alignment: .leading, spacing: sectionSpacing) {
+            if section.isCollapsedByDefault {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        isExpanded.toggle()
+                    }
+                } label: {
+                    headerRow(showDisclosure: true)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isExpanded ? "Collapse \(section.title)" : "Expand \(section.title)")
+            } else {
+                headerRow(showDisclosure: false)
+            }
+
+            if !section.isCollapsedByDefault || isExpanded {
+                expandedContent
+            }
+        }
+    }
+
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if !section.body.isEmpty {
+                bodyText
+                    .font(bodyFont)
+                    .textSelection(.enabled)
+            }
+            if let detail = section.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(detailFont)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func headerRow(showDisclosure: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: iconName)
+                .foregroundStyle(accent)
+                .font(headerIconFont)
+            Text(section.title)
+                .font(headerFont)
+                .foregroundStyle(.secondary)
+                .lineLimit(section.isCollapsedByDefault ? 2 : 1)
+            if let status = section.status, !status.isEmpty {
+                Text(status)
+                    .font(.caption2)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(accent.opacity(0.14), in: Capsule())
+            }
+            if showDisclosure {
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var bodyText: some View {
+        if section.rendersMarkdown {
+            MarkdownText(section.body)
+        } else {
+            Text(section.body)
+        }
+    }
+
+    private var sectionSpacing: CGFloat {
+        section.isCollapsedByDefault && !isExpanded ? 0 : 7
+    }
+
+    private var headerIconFont: Font {
+        section.usesCompactTypography ? .caption : .body
+    }
+
+    private var headerFont: Font {
+        section.usesCompactTypography ? .caption2.weight(.semibold) : .caption.weight(.semibold)
+    }
+
     private var bodyFont: Font {
         switch section.kind {
         case .command, .fileChange:
-            .system(.footnote, design: .monospaced)
+            .system(.caption, design: .monospaced)
+        case .tool, .agent:
+            .caption
         default:
             .body
         }
+    }
+
+    private var detailFont: Font {
+        section.usesCompactTypography ? .caption2 : .caption
     }
 
     private var iconName: String {
@@ -446,6 +685,22 @@ struct ConversationSectionView: View {
             .green.opacity(0.10)
         default:
             Color(uiColor: .secondarySystemGroupedBackground)
+        }
+    }
+}
+
+private struct MarkdownText: View {
+    private let markdown: String
+
+    init(_ markdown: String) {
+        self.markdown = markdown
+    }
+
+    var body: some View {
+        if let attributed = try? AttributedString(markdown: markdown) {
+            Text(attributed)
+        } else {
+            Text(markdown)
         }
     }
 }

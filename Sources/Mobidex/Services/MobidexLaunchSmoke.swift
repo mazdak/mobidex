@@ -42,7 +42,7 @@ enum MobidexLaunchSmoke {
                     message: "In-app SSH seed smoke ready.",
                     mode: config.mode,
                     authMethod: config.authMethod.rawValue,
-                    threadCount: model.threads.count,
+                    sessionCount: model.threads.count,
                     conversationSectionCount: model.conversationSections.count,
                     assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
                     expectedTextFound: false
@@ -61,7 +61,7 @@ enum MobidexLaunchSmoke {
                     message: "In-app SSH connection smoke succeeded.",
                     mode: config.mode,
                     authMethod: config.authMethod.rawValue,
-                    threadCount: model.threads.count,
+                    sessionCount: model.threads.count,
                     conversationSectionCount: model.conversationSections.count,
                     assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
                     expectedTextFound: false
@@ -99,7 +99,7 @@ enum MobidexLaunchSmoke {
 
                 currentStage = "steering"
                 try writeResult(.running(stage: "steering", message: nil))
-                await model.sendComposerText(config.steerText)
+                await model.steerComposerText(config.steerText)
 
                 currentStage = "waiting-for-steer-text"
                 try writeResult(.running(stage: "waiting-for-steer-text", message: nil))
@@ -122,7 +122,7 @@ enum MobidexLaunchSmoke {
                     message: "In-app SSH control smoke succeeded.",
                     mode: config.mode,
                     authMethod: config.authMethod.rawValue,
-                    threadCount: model.threads.count,
+                    sessionCount: model.threads.count,
                     conversationSectionCount: model.conversationSections.count,
                     assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
                     expectedTextFound: steerTextFound,
@@ -153,7 +153,7 @@ enum MobidexLaunchSmoke {
                     message: "In-app SSH approval UI smoke reached pending approval state.",
                     mode: config.mode,
                     authMethod: config.authMethod.rawValue,
-                    threadCount: model.threads.count,
+                    sessionCount: model.threads.count,
                     conversationSectionCount: model.conversationSections.count,
                     assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
                     expectedTextFound: false,
@@ -181,7 +181,7 @@ enum MobidexLaunchSmoke {
                 message: "In-app SSH smoke succeeded.",
                 mode: config.mode,
                 authMethod: config.authMethod.rawValue,
-                threadCount: model.threads.count,
+                sessionCount: model.threads.count,
                 conversationSectionCount: model.conversationSections.count,
                 assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
                 expectedTextFound: expectedTextFound
@@ -328,7 +328,7 @@ private struct SmokeResult: Encodable {
     var message: String
     var mode: String?
     var authMethod: String?
-    var threadCount: Int?
+    var sessionCount: Int?
     var conversationSectionCount: Int?
     var assistantSectionCount: Int?
     var expectedTextFound: Bool?
@@ -346,7 +346,7 @@ private struct SmokeResult: Encodable {
             message: message ?? stage,
             mode: nil,
             authMethod: nil,
-            threadCount: nil,
+            sessionCount: nil,
             conversationSectionCount: nil,
             assistantSectionCount: nil,
             expectedTextFound: nil,
@@ -363,7 +363,7 @@ private struct SmokeResult: Encodable {
         message: String,
         mode: String,
         authMethod: String,
-        threadCount: Int,
+        sessionCount: Int,
         conversationSectionCount: Int,
         assistantSectionCount: Int,
         expectedTextFound: Bool,
@@ -379,7 +379,7 @@ private struct SmokeResult: Encodable {
             message: message,
             mode: mode,
             authMethod: authMethod,
-            threadCount: threadCount,
+            sessionCount: sessionCount,
             conversationSectionCount: conversationSectionCount,
             assistantSectionCount: assistantSectionCount,
             expectedTextFound: expectedTextFound,
@@ -399,7 +399,7 @@ private struct SmokeResult: Encodable {
             message: message,
             mode: nil,
             authMethod: nil,
-            threadCount: nil,
+            sessionCount: nil,
             conversationSectionCount: nil,
             assistantSectionCount: nil,
             expectedTextFound: nil,

@@ -7,7 +7,7 @@ protocol ServerRepository: Sendable {
 
 final class UserDefaultsServerRepository: ServerRepository, @unchecked Sendable {
     private let defaults: UserDefaults
-    private let key = "mobidex.servers.v3"
+    private let key = "mobidex.servers.v4"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults

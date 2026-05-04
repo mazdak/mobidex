@@ -21,6 +21,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     var port: Int
     var username: String
     var codexPath: String
+    var appServerWebSocketURL: String?
     var authMethod: ServerAuthMethod
     var projects: [ProjectRecord]
     var createdAt: Date
@@ -33,6 +34,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         port: Int = 22,
         username: String,
         codexPath: String = "codex",
+        appServerWebSocketURL: String? = nil,
         authMethod: ServerAuthMethod,
         projects: [ProjectRecord] = [],
         createdAt: Date = .now,
@@ -44,6 +46,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         self.port = port
         self.username = username
         self.codexPath = codexPath.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "codex"
+        self.appServerWebSocketURL = appServerWebSocketURL?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
         self.authMethod = authMethod
         self.projects = projects
         self.createdAt = createdAt
@@ -55,7 +58,101 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     }
 
     var appServerCommand: String {
-        "\(codexPath.shellQuotedExecutablePath) app-server --listen stdio://"
+        if codexPath == "codex" {
+            return Self.defaultCodexAppServerCommand
+        }
+        return "\(Self.remotePathBootstrapCommand); \(codexPath.shellQuotedExecutablePath) app-server --listen stdio://"
+    }
+
+    var appServerProxyCommand: String {
+        if codexPath == "codex" {
+            return Self.defaultCodexAppServerProxyCommand
+        }
+        return Self.appServerProxyCommand(codexExecutable: codexPath.shellQuotedExecutablePath)
+    }
+
+    var appServerWebSocketEndpoint: URL? {
+        guard let appServerWebSocketURL,
+              let url = URL(string: appServerWebSocketURL),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "ws",
+              url.host != nil
+        else {
+            return nil
+        }
+        return url
+    }
+
+    private static var defaultCodexAppServerCommand: String {
+        let candidates = [
+            "$HOME/.bun/bin/codex",
+            "$HOME/.local/bin/codex",
+            "$HOME/.npm-global/bin/codex",
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex",
+            "/usr/bin/codex"
+        ]
+        let candidateList = candidates.map { "\"\($0)\"" }.joined(separator: " ")
+        return [
+            remotePathBootstrapCommand,
+            "if command -v codex >/dev/null 2>&1; then exec codex app-server --listen stdio://; fi",
+            "for candidate in \(candidateList); do if [ -x \"$candidate\" ]; then exec \"$candidate\" app-server --listen stdio://; fi; done",
+            "for shell in zsh bash; do if command -v \"$shell\" >/dev/null 2>&1; then resolved=\"$(\"$shell\" -lc 'command -v codex' 2>/dev/null || true)\"; if [ -n \"$resolved\" ] && [ -x \"$resolved\" ]; then exec \"$resolved\" app-server --listen stdio://; fi; fi; done",
+            "echo 'codex executable not found. Set Codex Binary Path to the full remote codex executable, for example ~/.bun/bin/codex.' >&2",
+            "exit 127"
+        ].joined(separator: "; ")
+    }
+
+    private static var defaultCodexAppServerProxyCommand: String {
+        [
+            remotePathBootstrapCommand,
+            codexResolutionCommand,
+            appServerProxyScript(codexExecutable: "\"$codex_bin\"")
+        ].joined(separator: "; ")
+    }
+
+    private static func appServerProxyCommand(codexExecutable: String) -> String {
+        [
+            remotePathBootstrapCommand,
+            "codex_bin=\(codexExecutable)",
+            appServerProxyScript(codexExecutable: "\"$codex_bin\"")
+        ].joined(separator: "; ")
+    }
+
+    private static var codexResolutionCommand: String {
+        let candidates = [
+            "$HOME/.bun/bin/codex",
+            "$HOME/.local/bin/codex",
+            "$HOME/.npm-global/bin/codex",
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex",
+            "/usr/bin/codex"
+        ]
+        let candidateList = candidates.map { "\"\($0)\"" }.joined(separator: " ")
+        return [
+            "codex_bin=\"\"",
+            "if command -v codex >/dev/null 2>&1; then codex_bin=\"$(command -v codex)\"; fi",
+            "if [ -z \"$codex_bin\" ]; then for candidate in \(candidateList); do if [ -x \"$candidate\" ]; then codex_bin=\"$candidate\"; break; fi; done; fi",
+            "if [ -z \"$codex_bin\" ]; then for shell in zsh bash; do if command -v \"$shell\" >/dev/null 2>&1; then resolved=\"$(\"$shell\" -lc 'command -v codex' 2>/dev/null || true)\"; if [ -n \"$resolved\" ] && [ -x \"$resolved\" ]; then codex_bin=\"$resolved\"; break; fi; fi; done; fi",
+            "if [ -z \"$codex_bin\" ]; then echo 'codex executable not found. Set Codex Binary Path to the full remote codex executable, for example ~/.bun/bin/codex.' >&2; exit 127; fi"
+        ].joined(separator: "; ")
+    }
+
+    private static func appServerProxyScript(codexExecutable: String) -> String {
+        [
+            "socket_root=\"${CODEX_HOME:-$HOME/.codex}\"",
+            "socket=\"${CODEX_APP_SERVER_SOCK:-$socket_root/app-server-control/app-server-control.sock}\"",
+            "socket_dir=\"$(dirname \"$socket\")\"",
+            "mkdir -p \"$socket_dir\"",
+            "if [ -S \"$socket\" ]; then socket_probe_attempted=0; socket_probe_status=0; if command -v python3 >/dev/null 2>&1; then socket_probe_attempted=1; python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.settimeout(0.5); s.connect(sys.argv[1]); s.close()' \"$socket\" 2>/dev/null; socket_probe_status=$?; elif command -v python >/dev/null 2>&1; then socket_probe_attempted=1; python -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.settimeout(0.5); s.connect(sys.argv[1]); s.close()' \"$socket\" 2>/dev/null; socket_probe_status=$?; elif command -v ruby >/dev/null 2>&1; then socket_probe_attempted=1; ruby -rsocket -e 'UNIXSocket.open(ARGV[0]).close' \"$socket\" 2>/dev/null; socket_probe_status=$?; elif command -v perl >/dev/null 2>&1; then socket_probe_attempted=1; perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Peer => shift) or exit 1' \"$socket\" 2>/dev/null; socket_probe_status=$?; fi; if [ \"$socket_probe_attempted\" -eq 1 ] && [ \"$socket_probe_status\" -ne 0 ]; then rm -f \"$socket\"; fi; fi",
+            "if [ ! -S \"$socket\" ]; then nohup \(codexExecutable) app-server --listen \"unix://$socket\" >>\"$socket_dir/app-server.log\" 2>&1 < /dev/null & i=0; while [ \"$i\" -lt 50 ] && [ ! -S \"$socket\" ]; do i=$((i + 1)); sleep 0.1; done; fi",
+            "if [ ! -S \"$socket\" ]; then echo \"codex app-server control socket was not created at $socket\" >&2; exit 127; fi",
+            "exec \(codexExecutable) app-server proxy --sock \"$socket\""
+        ].joined(separator: "; ")
+    }
+
+    private static var remotePathBootstrapCommand: String {
+        "export PATH=\"$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\""
     }
 }
 
@@ -65,8 +162,10 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
     var sessionPaths: [String]
     var displayName: String
     var discovered: Bool
-    var threadCount: Int
-    var lastSeenAt: Date?
+    var discoveredSessionCount: Int
+    var activeChatCount: Int
+    var lastDiscoveredAt: Date?
+    var lastActiveChatAt: Date?
     var isFavorite: Bool
 
     private enum CodingKeys: String, CodingKey {
@@ -75,8 +174,10 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         case sessionPaths
         case displayName
         case discovered
-        case threadCount
-        case lastSeenAt
+        case discoveredSessionCount
+        case activeChatCount
+        case lastDiscoveredAt
+        case lastActiveChatAt
         case isFavorite
     }
 
@@ -86,8 +187,10 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         sessionPaths: [String]? = nil,
         displayName: String? = nil,
         discovered: Bool = false,
-        threadCount: Int = 0,
-        lastSeenAt: Date? = nil,
+        discoveredSessionCount: Int = 0,
+        activeChatCount: Int = 0,
+        lastDiscoveredAt: Date? = nil,
+        lastActiveChatAt: Date? = nil,
         isFavorite: Bool = false
     ) {
         self.id = id
@@ -95,8 +198,10 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         self.sessionPaths = ProjectRecord.normalizedSessionPaths(sessionPaths ?? [path], primaryPath: path)
         self.displayName = displayName ?? URL(fileURLWithPath: path).lastPathComponent.nonEmpty ?? path
         self.discovered = discovered
-        self.threadCount = threadCount
-        self.lastSeenAt = lastSeenAt
+        self.discoveredSessionCount = discoveredSessionCount
+        self.activeChatCount = activeChatCount
+        self.lastDiscoveredAt = lastDiscoveredAt
+        self.lastActiveChatAt = lastActiveChatAt
         self.isFavorite = isFavorite
     }
 
@@ -110,8 +215,10 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         )
         displayName = try container.decode(String.self, forKey: .displayName)
         discovered = try container.decode(Bool.self, forKey: .discovered)
-        threadCount = try container.decode(Int.self, forKey: .threadCount)
-        lastSeenAt = try container.decodeIfPresent(Date.self, forKey: .lastSeenAt)
+        discoveredSessionCount = try container.decode(Int.self, forKey: .discoveredSessionCount)
+        activeChatCount = try container.decode(Int.self, forKey: .activeChatCount)
+        lastDiscoveredAt = try container.decodeIfPresent(Date.self, forKey: .lastDiscoveredAt)
+        lastActiveChatAt = try container.decodeIfPresent(Date.self, forKey: .lastActiveChatAt)
         isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
     }
 
@@ -131,6 +238,7 @@ struct SSHCredential: Equatable {
     var password: String?
     var privateKeyPEM: String?
     var privateKeyPassphrase: String?
+    var appServerAuthToken: String?
 }
 
 enum ServerConnectionState: Equatable {

@@ -1,5 +1,5 @@
 {
-  "originHash" : "553dab09e0eb1fa81536e27187fba5cc11ba16dc8cbc945489669c6096f349c5",
+  "originHash" : "364ca18856b8ef01a50932ac05620681f70268d0f2a88c47aeb7278a44396901",
   "pins" : [
     {
       "identity" : "bigint",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "ae8562f895de06ccb86fdb1cbb65fd99c8976e12",
         "version" : "0.12.1"
+      }
+    },
+    {
+      "identity" : "gitdiff",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tornikegomareli/gitdiff.git",
+      "state" : {
+        "revision" : "d773f17cc2b28f035fcb5ee2ce7cdfe50d89943c",
+        "version" : "0.0.7"
       }
     },
     {
