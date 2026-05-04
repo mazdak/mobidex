@@ -29,4 +29,5 @@ fi
   -p "$ROOT_DIR" \
   :shared-core:jvmTest \
   :shared-core:compileDebugKotlinAndroid \
+  :shared-core:compileKotlinIosArm64 \
   :shared-core:compileKotlinIosSimulatorArm64
