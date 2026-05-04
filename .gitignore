@@ -5,3 +5,6 @@ xcuserdata/
 **/xcuserdata/
 MISSION.md
 NEXT.md
+
+.gradle/
+shared-core/build/
