@@ -11,6 +11,7 @@
 		06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */; };
 		10BA0070BDE5B83F3721FD57 /* SSHClientService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43AB39944ABF583A29C1AB6A /* SSHClientService.swift */; };
 		2F63409CB4571EFBEC15FFB8 /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B4A95D6997F1824BDB826C9 /* SplashView.swift */; };
+		351C04401089759BC2A130AE /* CodexProtocolCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53A923E362D4A585D7FD1EE5 /* CodexProtocolCore.swift */; };
 		3D02EE812C214072E99C6F9A /* MobidexLaunchSmoke.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */; };
 		47B45AC7436747D4F833D57E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 773861FEB95B5C09BBCC472B /* Assets.xcassets */; };
 		4FC51DEEB51743B69EBF17AD /* RemoteCodexDiscoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 431D4C7FEFBF04894608659E /* RemoteCodexDiscoveryTests.swift */; };
@@ -77,6 +78,7 @@
 		4B6F945AC3EF7F65796D4359 /* ServerEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEditorView.swift; sourceTree = "<group>"; };
 		4F62709AA1D51EBE375B8A23 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		500E2233796B5934C1591FFC /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		53A923E362D4A585D7FD1EE5 /* CodexProtocolCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexProtocolCore.swift; sourceTree = "<group>"; };
 		55BCBB84C98AA5E8F2995DED /* CodexSessionProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSessionProjection.swift; sourceTree = "<group>"; };
 		66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexProtocolTests.swift; sourceTree = "<group>"; };
 		6BEA21E8847877A76117DA3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -164,6 +166,7 @@
 		448C1758B95962BE33BFBF02 /* SharedCore */ = {
 			isa = PBXGroup;
 			children = (
+				53A923E362D4A585D7FD1EE5 /* CodexProtocolCore.swift */,
 				55BCBB84C98AA5E8F2995DED /* CodexSessionProjection.swift */,
 				7FFEE6E89AB7883BE87D5EAA /* DiffModels.swift */,
 				CD0F20BD6482ACD9456BFFC9 /* GitDiffParsing.swift */,
@@ -375,6 +378,7 @@
 				89A76F324C8541635216B08F /* AppViewModel.swift in Sources */,
 				79D56F08BA702659D59BEB65 /* CodexAppServerProtocol.swift in Sources */,
 				6320B0AF845A3D3BE655ED71 /* CodexModels.swift in Sources */,
+				351C04401089759BC2A130AE /* CodexProtocolCore.swift in Sources */,
 				029A0B4EE8B75D7E6463F82C /* CodexSSHWebSocketTransport.swift in Sources */,
 				E1757AEB23E37E2300CB6932 /* CodexSessionProjection.swift in Sources */,
 				AE7CFE95DD2C6CE001853B80 /* ConversationView.swift in Sources */,
