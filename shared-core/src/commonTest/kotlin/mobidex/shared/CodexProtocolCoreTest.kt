@@ -92,6 +92,34 @@ class CodexProtocolWireEncodingTest {
     }
 
     @Test
+    fun lifecycleAndThreadRequestsEncodeCurrentWireShape() {
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"mobidex\",\"title\":\"Mobidex\",\"version\":\"0.1.0\"},\"capabilities\":{\"experimentalApi\":true}}}",
+            CodexRpcRequests.initialize(id = 1, name = "mobidex", title = "Mobidex", version = "0.1.0").encodeJsonLine(),
+        )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}",
+            CodexRpcNotifications.initialized().encodeJsonLine(),
+        )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"thread/loaded/list\",\"params\":{\"limit\":200}}",
+            CodexRpcRequests.loadedThreadList(id = 2).encodeJsonLine(),
+        )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"thread/read\",\"params\":{\"threadId\":\"thread-1\",\"includeTurns\":true}}",
+            CodexRpcRequests.readThread(id = 3, threadId = "thread-1", includeTurns = true).encodeJsonLine(),
+        )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"thread/resume\",\"params\":{\"threadId\":\"thread-1\"}}",
+            CodexRpcRequests.resumeThread(id = 4, threadId = "thread-1").encodeJsonLine(),
+        )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"thread/start\",\"params\":{\"cwd\":\"/srv/app\"}}",
+            CodexRpcRequests.startThread(id = 5, cwd = "/srv/app").encodeJsonLine(),
+        )
+    }
+
+    @Test
     fun startTurnRequestEncodesCurrentWireShape() {
         val line = CodexRpcRequests.startTurn(
             id = 2,
@@ -125,7 +153,29 @@ class CodexProtocolWireEncodingTest {
     }
 
     @Test
+    fun turnControlRequestsEncodeCurrentWireShape() {
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"turn/interrupt\",\"params\":{\"threadId\":\"thread-1\",\"turnId\":\"turn-1\"}}",
+            CodexRpcRequests.interruptTurn(id = 1, threadId = "thread-1", turnId = "turn-1").encodeJsonLine(),
+        )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"turn/steer\",\"params\":{\"threadId\":\"thread-1\",\"expectedTurnId\":\"turn-1\",\"input\":[{\"type\":\"text\",\"text\":\"Keep going\",\"text_elements\":[]}]}}",
+            CodexRpcRequests.steerTurn(
+                id = 2,
+                threadId = "thread-1",
+                expectedTurnId = "turn-1",
+                input = listOf(CodexInputItem.Text("Keep going")),
+            ).encodeJsonLine(),
+        )
+    }
+
+    @Test
     fun jsonEncodingEscapesStrings() {
         assertEquals("\"line\\nquote\\\"slash\\\\\"", JsonValueCodec.encode(jsonString("line\nquote\"slash\\")))
+    }
+
+    @Test
+    fun jsonEncodingKeepsLargeIntegers() {
+        assertEquals("2147483648", JsonValueCodec.encode(jsonInt(2_147_483_648L)))
     }
 }

@@ -446,6 +446,18 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testResponseEncodingKeepsLargeIntegerIDs() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        try await client.respondToServerRequest(id: .int(Int(Int32.max) + 1), result: .object([:]))
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        XCTAssertEqual(object["id"] as? Int, Int(Int32.max) + 1)
+        XCTAssertEqual(object["jsonrpc"] as? String, "2.0")
+        await client.close()
+    }
+
     func testTransportEOFClosesClientAndFailsLaterRequests() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport)

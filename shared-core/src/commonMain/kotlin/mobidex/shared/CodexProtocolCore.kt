@@ -3,13 +3,13 @@ package mobidex.shared
 sealed interface JsonValue {
     data object Null : JsonValue
     data class BoolValue(val value: Boolean) : JsonValue
-    data class IntValue(val value: Int) : JsonValue
+    data class IntValue(val value: Long) : JsonValue
     data class DoubleValue(val value: Double) : JsonValue
     data class StringValue(val value: String) : JsonValue
     data class ArrayValue(val value: List<JsonValue>) : JsonValue
     data class ObjectValue(val value: Map<String, JsonValue>) : JsonValue
 
-    val intValue: Int?
+    val intValue: Long?
         get() = (this as? IntValue)?.value
 
     val stringValue: String?
@@ -20,7 +20,7 @@ sealed interface JsonValue {
 
 fun jsonNull(): JsonValue = JsonValue.Null
 fun jsonBool(value: Boolean): JsonValue = JsonValue.BoolValue(value)
-fun jsonInt(value: Int): JsonValue = JsonValue.IntValue(value)
+fun jsonInt(value: Long): JsonValue = JsonValue.IntValue(value)
 fun jsonDouble(value: Double): JsonValue = JsonValue.DoubleValue(value)
 fun jsonString(value: String): JsonValue = JsonValue.StringValue(value)
 fun jsonArray(value: List<JsonValue>): JsonValue = JsonValue.ArrayValue(value)
@@ -93,10 +93,10 @@ enum class CodexReasoningEffortOption(val label: String) {
         }
 }
 
-enum class CodexAccessMode(val label: String, val systemImage: String) {
-    FullAccess("Full access", "exclamationmark.shield"),
-    WorkspaceWrite("Workspace", "folder.badge.gearshape"),
-    ReadOnly("Read only", "lock.shield"),
+enum class CodexAccessMode(val label: String) {
+    FullAccess("Full access"),
+    WorkspaceWrite("Workspace"),
+    ReadOnly("Read only"),
 }
 
 data class CodexTurnOptions(
@@ -148,7 +148,7 @@ fun textInput(text: String): JsonValue = inputItems(listOf(CodexInputItem.Text(t
 fun inputItems(items: List<CodexInputItem>): JsonValue = jsonArray(items.map { it.jsonValue })
 
 data class CodexRpcRequest(
-    val id: Int,
+    val id: Long,
     val method: String,
     val params: JsonValue? = null,
     val jsonrpc: String = "2.0",
@@ -233,9 +233,9 @@ object CodexRpcRequests {
         listOf("cli", "vscode", "exec", "appServer").map(::jsonString)
     )
 
-    fun threadList(id: Int, cwd: String? = null, limit: Int = 80, cursor: String? = null): CodexRpcRequest {
+    fun threadList(id: Long, cwd: String? = null, limit: Int = 80, cursor: String? = null): CodexRpcRequest {
         val params = linkedMapOf<String, JsonValue>(
-            "limit" to jsonInt(limit),
+            "limit" to jsonInt(limit.toLong()),
             "sortKey" to jsonString("updated_at"),
             "sortDirection" to jsonString("desc"),
             "archived" to jsonBool(false),
@@ -246,8 +246,56 @@ object CodexRpcRequests {
         return CodexRpcRequest(id = id, method = "thread/list", params = jsonObject(params))
     }
 
+    fun initialize(id: Long, name: String, title: String, version: String): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "initialize",
+        params = jsonObject(
+            linkedMapOf(
+                "clientInfo" to jsonObject(
+                    linkedMapOf(
+                        "name" to jsonString(name),
+                        "title" to jsonString(title),
+                        "version" to jsonString(version),
+                    )
+                ),
+                "capabilities" to jsonObject(
+                    linkedMapOf("experimentalApi" to jsonBool(true))
+                ),
+            )
+        ),
+    )
+
+    fun loadedThreadList(id: Long, limit: Int = 200): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "thread/loaded/list",
+        params = jsonObject(linkedMapOf("limit" to jsonInt(limit.toLong()))),
+    )
+
+    fun readThread(id: Long, threadId: String, includeTurns: Boolean): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "thread/read",
+        params = jsonObject(
+            linkedMapOf(
+                "threadId" to jsonString(threadId),
+                "includeTurns" to jsonBool(includeTurns),
+            )
+        ),
+    )
+
+    fun resumeThread(id: Long, threadId: String): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "thread/resume",
+        params = jsonObject(linkedMapOf("threadId" to jsonString(threadId))),
+    )
+
+    fun startThread(id: Long, cwd: String? = null): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "thread/start",
+        params = jsonObject(cwd?.let { linkedMapOf("cwd" to jsonString(it)) } ?: linkedMapOf()),
+    )
+
     fun startTurn(
-        id: Int,
+        id: Long,
         threadId: String,
         input: List<CodexInputItem>,
         options: CodexTurnOptions = CodexTurnOptions.Default,
@@ -259,11 +307,43 @@ object CodexRpcRequests {
         return CodexRpcRequest(id = id, method = "turn/start", params = jsonObject(params))
     }
 
-    fun gitDiffToRemote(id: Int, cwd: String): CodexRpcRequest = CodexRpcRequest(
+    fun gitDiffToRemote(id: Long, cwd: String): CodexRpcRequest = CodexRpcRequest(
         id = id,
         method = "gitDiffToRemote",
         params = jsonObject(mapOf("cwd" to jsonString(cwd))),
     )
+
+    fun interruptTurn(id: Long, threadId: String, turnId: String): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "turn/interrupt",
+        params = jsonObject(
+            linkedMapOf(
+                "threadId" to jsonString(threadId),
+                "turnId" to jsonString(turnId),
+            )
+        ),
+    )
+
+    fun steerTurn(
+        id: Long,
+        threadId: String,
+        expectedTurnId: String,
+        input: List<CodexInputItem>,
+    ): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "turn/steer",
+        params = jsonObject(
+            linkedMapOf(
+                "threadId" to jsonString(threadId),
+                "expectedTurnId" to jsonString(expectedTurnId),
+                "input" to inputItems(input),
+            )
+        ),
+    )
+}
+
+object CodexRpcNotifications {
+    fun initialized(): CodexRpcNotification = CodexRpcNotification(method = "initialized")
 }
 
 object JsonValueCodec {

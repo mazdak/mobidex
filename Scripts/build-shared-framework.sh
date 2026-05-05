@@ -7,6 +7,12 @@ GRADLE_VERSION="${GRADLE_VERSION:-8.13}"
 GRADLE_HOME="${ROOT_DIR}/build/gradle-${GRADLE_VERSION}"
 GRADLE_ZIP="${ROOT_DIR}/build/gradle-${GRADLE_VERSION}-bin.zip"
 GRADLE_URL="https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"
+CONFIGURATION_NAME="${CONFIGURATION:-Debug}"
+CONFIGURATION_LOWER="$(printf '%s' "$CONFIGURATION_NAME" | tr '[:upper:]' '[:lower:]')"
+XCFRAMEWORK_NAME="MobidexShared.xcframework"
+SOURCE_XCFRAMEWORK="${ROOT_DIR}/shared-core/build/XCFrameworks/${CONFIGURATION_LOWER}/${XCFRAMEWORK_NAME}"
+TARGET_DIR="${ROOT_DIR}/build/shared-core"
+TARGET_XCFRAMEWORK="${TARGET_DIR}/${XCFRAMEWORK_NAME}"
 
 export JAVA_HOME="${JAVA_HOME:-$ANDROID_STUDIO_JBR}"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
@@ -27,9 +33,8 @@ fi
   --no-daemon \
   --console=plain \
   -p "$ROOT_DIR" \
-  :shared-core:jvmTest \
-  :shared-core:compileDebugKotlinAndroid \
-  :shared-core:compileKotlinIosArm64 \
-  :shared-core:compileKotlinIosSimulatorArm64 \
-  :shared-core:compileKotlinIosX64 \
-  :shared-core:assembleMobidexSharedDebugXCFramework
+  ":shared-core:assembleMobidexShared${CONFIGURATION_NAME}XCFramework"
+
+rm -rf "$TARGET_XCFRAMEWORK"
+mkdir -p "$TARGET_DIR"
+cp -R "$SOURCE_XCFRAMEWORK" "$TARGET_XCFRAMEWORK"

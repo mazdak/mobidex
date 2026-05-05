@@ -223,14 +223,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
     }
 
     static func normalizedSessionPaths(_ paths: [String], primaryPath: String) -> [String] {
-        var seen = Set<String>()
-        return ([primaryPath] + paths).filter { path in
-            guard !path.isEmpty, !seen.contains(path) else {
-                return false
-            }
-            seen.insert(path)
-            return true
-        }
+        SharedKMPBridge.normalizedSessionPaths(paths, primaryPath: primaryPath)
     }
 }
 

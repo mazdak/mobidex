@@ -40,8 +40,10 @@
 		D7887CE39E391096767BB07C /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F62709AA1D51EBE375B8A23 /* RootView.swift */; };
 		DE3C8D92D5509847D8F7C24C /* MobidexUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0138BF77FD4B1030601AF47C /* MobidexUITests.swift */; };
 		E1757AEB23E37E2300CB6932 /* CodexSessionProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55BCBB84C98AA5E8F2995DED /* CodexSessionProjection.swift */; };
+		E8613A97F994AFF88722315D /* MobidexShared.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 036A6139F3DF3BF1127395AD /* MobidexShared.xcframework */; };
 		EA630B6ECD0E0A9C99137981 /* DiffModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FFEE6E89AB7883BE87D5EAA /* DiffModels.swift */; };
 		F4A7A3770E87E4147A6663BD /* GitDiffParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0F20BD6482ACD9456BFFC9 /* GitDiffParsing.swift */; };
+		F7EC2022662CBC70F41991CA /* SharedKMPBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B866DBC1E7520AE0FE2229 /* SharedKMPBridge.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -63,12 +65,14 @@
 
 /* Begin PBXFileReference section */
 		0138BF77FD4B1030601AF47C /* MobidexUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexUITests.swift; sourceTree = "<group>"; };
+		036A6139F3DF3BF1127395AD /* MobidexShared.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = MobidexShared.xcframework; path = "build/shared-core/MobidexShared.xcframework"; sourceTree = "<group>"; };
 		0F981F0ACBB874D34A9E6765 /* MobidexApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexApp.swift; sourceTree = "<group>"; };
 		19E8AB7C633795CE38A00D16 /* ServerRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerRepository.swift; sourceTree = "<group>"; };
 		24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexAppServerProtocol.swift; sourceTree = "<group>"; };
 		2B4A95D6997F1824BDB826C9 /* SplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashView.swift; sourceTree = "<group>"; };
 		328B21D87BF12CC17FC14F0C /* Mobidex.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Mobidex.entitlements; sourceTree = "<group>"; };
 		332EB44AD8FA1F95EF1EE867 /* RemoteCodexDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCodexDiscovery.swift; sourceTree = "<group>"; };
+		35B866DBC1E7520AE0FE2229 /* SharedKMPBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedKMPBridge.swift; sourceTree = "<group>"; };
 		3A96240FB8B8F67A6538139D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		3CFB3B4C62D3033358ADE4CF /* MobidexTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MobidexTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3F9F6842C4EC0EECCFCD2D39 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
@@ -108,6 +112,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E8613A97F994AFF88722315D /* MobidexShared.xcframework in Frameworks */,
 				A19431CD7B430E2609120733 /* Security.framework in Frameworks */,
 				65C5DA5345A9872184474DEE /* SwiftASN1 in Frameworks */,
 				A1ABE1CA9D2BBCCD0EA59523 /* Citadel in Frameworks */,
@@ -172,6 +177,7 @@
 				CD0F20BD6482ACD9456BFFC9 /* GitDiffParsing.swift */,
 				FD173BE099A8B5B43F253561 /* ProjectCatalog.swift */,
 				44BED278D1B41DAB45E1B55D /* ProjectListProjection.swift */,
+				35B866DBC1E7520AE0FE2229 /* SharedKMPBridge.swift */,
 			);
 			path = SharedCore;
 			sourceTree = "<group>";
@@ -179,6 +185,7 @@
 		7860E1C6BB932800192C79B8 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				036A6139F3DF3BF1127395AD /* MobidexShared.xcframework */,
 				3F9F6842C4EC0EECCFCD2D39 /* Security.framework */,
 			);
 			name = Frameworks;
@@ -271,6 +278,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 9D811AC72DB62476EC16DFE5 /* Build configuration list for PBXNativeTarget "Mobidex" */;
 			buildPhases = (
+				7CFDCDD960EB55E2A2339548 /* Build Shared KMP Framework */,
 				381E0DF7E7BC6A6EF8A1D90E /* Sources */,
 				FFAA2E46913D67B190ADE723 /* Resources */,
 				A01481DD80C133D49E736D1F /* Frameworks */,
@@ -362,6 +370,28 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		7CFDCDD960EB55E2A2339548 /* Build Shared KMP Framework */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Shared KMP Framework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "Scripts/build-shared-framework.sh";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0466D52ECA5E7A918849D8D2 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -397,6 +427,7 @@
 				A72F18C8388039F0E0BD8231 /* ServerModels.swift in Sources */,
 				A267EFB96A42F2D26B792C09 /* ServerRepository.swift in Sources */,
 				CB2B5BC4866DDF8D535915DA /* SessionChangesView.swift in Sources */,
+				F7EC2022662CBC70F41991CA /* SharedKMPBridge.swift in Sources */,
 				2F63409CB4571EFBEC15FFB8 /* SplashView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -438,6 +469,10 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = JX3932QCN8;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"build/shared-core\"",
+				);
 				INFOPLIST_FILE = Sources/Mobidex/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -662,6 +697,10 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = JX3932QCN8;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"build/shared-core\"",
+				);
 				INFOPLIST_FILE = Sources/Mobidex/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (

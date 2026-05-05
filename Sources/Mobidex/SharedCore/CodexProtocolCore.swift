@@ -74,36 +74,7 @@ enum CodexInputItem: Equatable, Sendable {
     case mention(name: String, path: String)
 
     var jsonValue: JSONValue {
-        switch self {
-        case .text(let text):
-            .object([
-                "type": .string("text"),
-                "text": .string(text),
-                "text_elements": .array([])
-            ])
-        case .imageURL(let url):
-            .object([
-                "type": .string("image"),
-                "url": .string(url)
-            ])
-        case .localImage(let path):
-            .object([
-                "type": .string("localImage"),
-                "path": .string(path)
-            ])
-        case .skill(let name, let path):
-            .object([
-                "type": .string("skill"),
-                "name": .string(name),
-                "path": .string(path)
-            ])
-        case .mention(let name, let path):
-            .object([
-                "type": .string("mention"),
-                "name": .string(name),
-                "path": .string(path)
-            ])
-        }
+        SharedKMPBridge.jsonValue(from: self)
     }
 }
 
@@ -157,33 +128,7 @@ struct CodexTurnOptions: Equatable, Sendable {
     static let `default` = CodexTurnOptions(reasoningEffort: nil, accessMode: nil, cwd: nil)
 
     var jsonFields: [String: JSONValue] {
-        var fields: [String: JSONValue] = [:]
-        if let reasoningEffort {
-            fields["effort"] = .string(reasoningEffort.rawValue)
-        }
-        switch accessMode {
-        case .fullAccess:
-            fields["approvalPolicy"] = .string("never")
-            fields["sandboxPolicy"] = .object(["type": .string("dangerFullAccess")])
-        case .workspaceWrite:
-            fields["approvalPolicy"] = .string("on-request")
-            fields["sandboxPolicy"] = .object([
-                "type": .string("workspaceWrite"),
-                "writableRoots": .array(cwd.map { [.string($0)] } ?? []),
-                "networkAccess": .bool(true),
-                "excludeTmpdirEnvVar": .bool(false),
-                "excludeSlashTmp": .bool(false)
-            ])
-        case .readOnly:
-            fields["approvalPolicy"] = .string("on-request")
-            fields["sandboxPolicy"] = .object([
-                "type": .string("readOnly"),
-                "networkAccess": .bool(false)
-            ])
-        case nil:
-            break
-        }
-        return fields
+        SharedKMPBridge.jsonFields(from: self)
     }
 }
 
@@ -193,7 +138,7 @@ extension JSONValue {
     }
 
     static func inputItems(_ items: [CodexInputItem]) -> JSONValue {
-        .array(items.map(\.jsonValue))
+        SharedKMPBridge.inputItems(items)
     }
 }
 
@@ -223,11 +168,7 @@ struct CodexRPCErrorInfo: Decodable, Error, Equatable, Sendable {
 
 extension CodexRPCErrorInfo {
     var canIgnoreForLoadedThreadSummary: Bool {
-        let normalizedMessage = message.lowercased()
-        return normalizedMessage.contains("not found")
-            || normalizedMessage.contains("not loaded")
-            || normalizedMessage.contains("unknown thread")
-            || normalizedMessage.contains("no such thread")
+        SharedKMPBridge.canIgnoreForLoadedThreadSummary(self)
     }
 }
 

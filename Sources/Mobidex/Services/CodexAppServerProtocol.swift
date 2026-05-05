@@ -71,13 +71,6 @@ enum DecodeFailureFormatter {
 actor CodexAppServerClient {
     nonisolated let events: AsyncStream<CodexAppServerEvent>
 
-    private static let userFacingThreadSourceKinds: JSONValue = .array([
-        .string("cli"),
-        .string("vscode"),
-        .string("exec"),
-        .string("appServer")
-    ])
-
     private let transport: CodexLineTransport
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -101,16 +94,7 @@ actor CodexAppServerClient {
     func initialize() async throws {
         _ = try await request(
             method: "initialize",
-            params: .object([
-                "clientInfo": .object([
-                    "name": .string("mobidex"),
-                    "title": .string("Mobidex"),
-                    "version": .string("0.1.0")
-                ]),
-                "capabilities": .object([
-                    "experimentalApi": .bool(true)
-                ])
-            ])
+            params: SharedKMPBridge.initializeParams()
         )
         try await sendNotification(method: "initialized", params: nil)
     }
@@ -119,20 +103,11 @@ actor CodexAppServerClient {
         var cursor: String?
         var threads: [CodexThread] = []
         repeat {
-            var params: [String: JSONValue] = [
-                "limit": .int(limit),
-                "sortKey": .string("updated_at"),
-                "sortDirection": .string("desc"),
-                "archived": .bool(false),
-                "sourceKinds": Self.userFacingThreadSourceKinds
-            ]
-            if let cwd, !cwd.isEmpty {
-                params["cwd"] = .string(cwd)
-            }
-            if let cursor {
-                params["cursor"] = .string(cursor)
-            }
-            let response = try await requestDecoded(ThreadListResponse.self, method: "thread/list", params: .object(params))
+            let response = try await requestDecoded(
+                ThreadListResponse.self,
+                method: "thread/list",
+                params: SharedKMPBridge.threadListParams(cwd: cwd, limit: limit, cursor: cursor)
+            )
             threads.append(contentsOf: response.data.filter(\.isUserFacingSession))
             cursor = response.nextCursor
         } while cursor != nil
@@ -147,7 +122,11 @@ actor CodexAppServerClient {
         struct Response: Decodable {
             var data: [String]
         }
-        let response = try await requestDecoded(Response.self, method: "thread/loaded/list", params: .object(["limit": .int(limit)]))
+        let response = try await requestDecoded(
+            Response.self,
+            method: "thread/loaded/list",
+            params: SharedKMPBridge.loadedThreadListParams(limit: limit)
+        )
         return response.data
     }
 
@@ -163,10 +142,7 @@ actor CodexAppServerClient {
         let response = try await requestDecoded(
             ThreadReadResponse.self,
             method: "thread/read",
-            params: .object([
-                "threadId": .string(threadID),
-                "includeTurns": .bool(includeTurns)
-            ])
+            params: SharedKMPBridge.readThreadParams(threadID: threadID, includeTurns: includeTurns)
         )
         return response.thread
     }
@@ -175,14 +151,17 @@ actor CodexAppServerClient {
         let response = try await requestDecoded(
             ThreadReadResponse.self,
             method: "thread/resume",
-            params: .object(["threadId": .string(threadID)])
+            params: SharedKMPBridge.resumeThreadParams(threadID: threadID)
         )
         return response.thread
     }
 
     func startThread(cwd: String?) async throws -> CodexThread {
-        let params: JSONValue = cwd.map { .object(["cwd": .string($0)]) } ?? .object([:])
-        let response = try await requestDecoded(ThreadReadResponse.self, method: "thread/start", params: params)
+        let response = try await requestDecoded(
+            ThreadReadResponse.self,
+            method: "thread/start",
+            params: SharedKMPBridge.startThreadParams(cwd: cwd)
+        )
         return response.thread
     }
 
@@ -195,13 +174,10 @@ actor CodexAppServerClient {
         input: [CodexInputItem],
         options: CodexTurnOptions = .default
     ) async throws -> CodexTurn {
-        var params = options.jsonFields
-        params["threadId"] = .string(threadID)
-        params["input"] = .inputItems(input)
         let response = try await requestDecoded(
             TurnStartResponse.self,
             method: "turn/start",
-            params: .object(params)
+            params: SharedKMPBridge.startTurnParams(threadID: threadID, input: input, options: options)
         )
         return response.turn
     }
@@ -209,10 +185,7 @@ actor CodexAppServerClient {
     func interrupt(threadID: String, turnID: String) async throws {
         _ = try await request(
             method: "turn/interrupt",
-            params: .object([
-                "threadId": .string(threadID),
-                "turnId": .string(turnID)
-            ])
+            params: SharedKMPBridge.interruptTurnParams(threadID: threadID, turnID: turnID)
         )
     }
 
@@ -223,11 +196,7 @@ actor CodexAppServerClient {
     func steer(threadID: String, expectedTurnID: String, input: [CodexInputItem]) async throws {
         _ = try await request(
             method: "turn/steer",
-            params: .object([
-                "threadId": .string(threadID),
-                "expectedTurnId": .string(expectedTurnID),
-                "input": .inputItems(input)
-            ])
+            params: SharedKMPBridge.steerTurnParams(threadID: threadID, expectedTurnID: expectedTurnID, input: input)
         )
     }
 
@@ -235,7 +204,7 @@ actor CodexAppServerClient {
         try await requestDecoded(
             GitDiffToRemoteResponse.self,
             method: "gitDiffToRemote",
-            params: .object(["cwd": .string(cwd)])
+            params: SharedKMPBridge.gitDiffToRemoteParams(cwd: cwd)
         )
     }
 
@@ -399,6 +368,15 @@ actor CodexAppServerClient {
     }
 
     private func encodeLine<T: Encodable>(_ value: T) throws -> String {
+        if let request = value as? CodexRPCRequest {
+            return SharedKMPBridge.encode(request)
+        }
+        if let notification = value as? CodexRPCNotification {
+            return SharedKMPBridge.encode(notification)
+        }
+        if let response = value as? CodexRPCResultResponse {
+            return SharedKMPBridge.encode(response)
+        }
         let data = try encoder.encode(value)
         guard let line = String(data: data, encoding: .utf8) else {
             throw CodexAppServerClientError.invalidResponse

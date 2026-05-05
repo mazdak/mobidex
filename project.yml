@@ -33,7 +33,13 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - path: Sources/Mobidex
+    preBuildScripts:
+      - name: Build Shared KMP Framework
+        script: Scripts/build-shared-framework.sh
+        basedOnDependencyAnalysis: false
     dependencies:
+      - framework: build/shared-core/MobidexShared.xcframework
+        embed: false
       - sdk: Security.framework
       - package: SwiftASN1
         product: SwiftASN1
