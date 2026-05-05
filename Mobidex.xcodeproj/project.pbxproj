@@ -10,7 +10,6 @@
 		029A0B4EE8B75D7E6463F82C /* CodexSSHWebSocketTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB39406C31D7D2E32AF33332 /* CodexSSHWebSocketTransport.swift */; };
 		06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */; };
 		10BA0070BDE5B83F3721FD57 /* SSHClientService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43AB39944ABF583A29C1AB6A /* SSHClientService.swift */; };
-		23EF7E435BBC5663CAD339D5 /* ComposerTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF85CB276DC530E40F85757A /* ComposerTextView.swift */; };
 		2F63409CB4571EFBEC15FFB8 /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B4A95D6997F1824BDB826C9 /* SplashView.swift */; };
 		351C04401089759BC2A130AE /* CodexProtocolCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53A923E362D4A585D7FD1EE5 /* CodexProtocolCore.swift */; };
 		3D02EE812C214072E99C6F9A /* MobidexLaunchSmoke.swift in Sources */ = {isa = PBXBuildFile; fileRef = 943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */; };
@@ -101,7 +100,6 @@
 		B84B375AFEC4D0FF298D73FE /* CredentialStorageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStorageTests.swift; sourceTree = "<group>"; };
 		BD120FFE204CF33E5F865DD1 /* MobidexUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MobidexUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		CD0F20BD6482ACD9456BFFC9 /* GitDiffParsing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitDiffParsing.swift; sourceTree = "<group>"; };
-		CF85CB276DC530E40F85757A /* ComposerTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerTextView.swift; sourceTree = "<group>"; };
 		D89135403B0F71480B09E5A6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E2A70EEBAFA590B84DAC2D48 /* ServerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModels.swift; sourceTree = "<group>"; };
 		EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectionTests.swift; sourceTree = "<group>"; };
@@ -128,7 +126,6 @@
 		0410CF4EB696CB84A56A7E4E /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				CF85CB276DC530E40F85757A /* ComposerTextView.swift */,
 				7BB66DF8C4500739CFA7E00D /* ConversationView.swift */,
 				8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */,
 				4F62709AA1D51EBE375B8A23 /* RootView.swift */,
@@ -414,7 +411,6 @@
 				351C04401089759BC2A130AE /* CodexProtocolCore.swift in Sources */,
 				029A0B4EE8B75D7E6463F82C /* CodexSSHWebSocketTransport.swift in Sources */,
 				E1757AEB23E37E2300CB6932 /* CodexSessionProjection.swift in Sources */,
-				23EF7E435BBC5663CAD339D5 /* ComposerTextView.swift in Sources */,
 				AE7CFE95DD2C6CE001853B80 /* ConversationView.swift in Sources */,
 				CF30371B3B835A966C08BE4A /* CredentialStore.swift in Sources */,
 				EA630B6ECD0E0A9C99137981 /* DiffModels.swift in Sources */,
