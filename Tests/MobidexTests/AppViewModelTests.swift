@@ -115,6 +115,56 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAddProjectPersistsSelectsAndReportsSuccess() throws {
+        let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
+        let repository = InMemoryServerRepository(servers: [server])
+        let viewModel = AppViewModel(repository: repository, credentialStore: InMemoryCredentialStore(), sshService: StubSSHService())
+
+        XCTAssertTrue(viewModel.addProject(path: " /srv/app "))
+
+        let project = try XCTUnwrap(viewModel.selectedServer?.projects.first)
+        XCTAssertEqual(project.path, "/srv/app")
+        XCTAssertEqual(viewModel.selectedProjectID, project.id)
+        XCTAssertEqual(try repository.loadServers().first?.projects.first?.path, "/srv/app")
+        XCTAssertEqual(viewModel.statusMessage, "Added app.")
+    }
+
+    @MainActor
+    func testAddProjectRejectsMissingSelectionWithStatus() {
+        let viewModel = AppViewModel(
+            repository: InMemoryServerRepository(),
+            credentialStore: InMemoryCredentialStore(),
+            sshService: StubSSHService(),
+            loadServersOnInit: false
+        )
+
+        XCTAssertFalse(viewModel.addProject(path: "/srv/app"))
+
+        XCTAssertEqual(viewModel.statusMessage, "Select a server before adding a project.")
+    }
+
+    @MainActor
+    func testAddProjectRejectsDuplicateWithStatus() {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let viewModel = AppViewModel(
+            repository: InMemoryServerRepository(servers: [server]),
+            credentialStore: InMemoryCredentialStore(),
+            sshService: StubSSHService()
+        )
+
+        XCTAssertFalse(viewModel.addProject(path: "/srv/app"))
+
+        XCTAssertEqual(viewModel.statusMessage, "That project is already saved.")
+    }
+
+    @MainActor
     func testUnexpectedAppServerDisconnectWithoutReconnectClearsOpenSessionCounts() async throws {
         let project = ProjectRecord(path: "/srv/app", discovered: true, discoveredSessionCount: 37)
         let server = ServerRecord(

@@ -4,6 +4,7 @@ struct ProjectAddView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppViewModel
     @State private var path = ""
+    @State private var validationMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -12,6 +13,15 @@ struct ProjectAddView: View {
                     TextField("/home/user/project", text: $path)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .onSubmit(add)
+                }
+
+                if let validationMessage {
+                    Section {
+                        Text(validationMessage)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("projectValidationMessage")
+                    }
                 }
             }
             .navigationTitle("Add Project")
@@ -21,13 +31,21 @@ struct ProjectAddView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
-                        if model.addProject(path: path) {
-                            dismiss()
-                        }
+                        add()
                     }
-                    .disabled(path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .onChange(of: path) { _, _ in
+                validationMessage = nil
+            }
+        }
+    }
+
+    private func add() {
+        if model.addProject(path: path) {
+            dismiss()
+        } else {
+            validationMessage = model.statusMessage ?? "Mobidex could not save this project."
         }
     }
 }

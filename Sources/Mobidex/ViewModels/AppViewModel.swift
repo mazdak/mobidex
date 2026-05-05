@@ -421,6 +421,7 @@ final class AppViewModel: ObservableObject {
     @discardableResult
     func addProject(path: String) -> Bool {
         guard let selectedServerID else {
+            statusMessage = "Select a server before adding a project."
             return false
         }
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -431,6 +432,7 @@ final class AppViewModel: ObservableObject {
 
         var nextServers = servers
         guard let index = nextServers.firstIndex(where: { $0.id == selectedServerID }) else {
+            statusMessage = "The selected server is no longer available."
             return false
         }
         guard !nextServers[index].projects.contains(where: { $0.path == trimmed }) else {
@@ -447,6 +449,7 @@ final class AppViewModel: ObservableObject {
             servers = nextServers
             selectedProjectID = project.id
             resetSessionState(clearThreads: true)
+            statusMessage = "Added \(project.displayName)."
             return true
         } catch {
             statusMessage = error.localizedDescription

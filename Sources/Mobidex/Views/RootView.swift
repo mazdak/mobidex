@@ -9,7 +9,11 @@ struct RootView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
-            ServerSidebarView(showingAddServer: $showingAddServer)
+            ServerSidebarView(
+                showingAddServer: $showingAddServer,
+                columnVisibility: $columnVisibility,
+                preferredCompactColumn: $preferredCompactColumn
+            )
                 .navigationTitle("Servers")
         } content: {
             ProjectSessionListView(
@@ -55,23 +59,35 @@ struct RootView: View {
 
 struct ServerSidebarView: View {
     @EnvironmentObject private var model: AppViewModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Binding var showingAddServer: Bool
+    @Binding var columnVisibility: NavigationSplitViewVisibility
+    @Binding var preferredCompactColumn: NavigationSplitViewColumn
     @State private var editingServer: ServerRecord?
 
     var body: some View {
-        List(selection: selectedServerBinding) {
+        List {
             ForEach(model.servers) { server in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(server.displayName)
-                        .font(.headline)
-                    Text(server.endpointLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                Button {
+                    if model.selectServer(server.id) {
+                        promoteContentIfCompact()
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(server.displayName)
+                            .font(.headline)
+                        Text(server.endpointLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("serverRow")
-                .tag(server.id)
+                .listRowBackground(server.id == model.selectedServerID ? Color.accentColor.opacity(0.12) : nil)
                 .contextMenu {
                     Button {
                         editingServer = server
@@ -106,11 +122,10 @@ struct ServerSidebarView: View {
         }
     }
 
-    private var selectedServerBinding: Binding<UUID?> {
-        Binding {
-            model.selectedServerID
-        } set: { serverID in
-            _ = model.selectServer(serverID)
+    private func promoteContentIfCompact() {
+        if horizontalSizeClass == .compact {
+            preferredCompactColumn = .content
+            columnVisibility = .doubleColumn
         }
     }
 }
