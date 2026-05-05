@@ -10,6 +10,7 @@ struct ConversationView: View {
     @State private var attachmentPaths: [String] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isFileImporterPresented = false
+    @State private var composerHeight: CGFloat = 44
     @FocusState private var isComposerFocused: Bool
     private let conversationBottomID = "conversationBottom"
 
@@ -193,11 +194,16 @@ struct ConversationView: View {
     private var composer: some View {
         VStack(spacing: 0) {
             VStack(spacing: 12) {
-                TextField("Ask for follow-up changes", text: $composerText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(2...6)
-                    .font(.body)
-                    .focused($isComposerFocused)
+                ComposerTextView(
+                    text: $composerText,
+                    isFocused: Binding(
+                        get: { isComposerFocused },
+                        set: { isComposerFocused = $0 }
+                    ),
+                    measuredHeight: $composerHeight,
+                    placeholder: "Ask for follow-up changes"
+                )
+                    .frame(minHeight: 44, maxHeight: composerHeight)
                     .accessibilityIdentifier("messageComposer")
 
                 if !attachmentPaths.isEmpty {
