@@ -110,6 +110,10 @@ targets:
 schemes:
   Mobidex:
     build:
+      preActions:
+        - name: Build Shared KMP Framework
+          script: "$SRCROOT/Scripts/build-shared-framework.sh"
+          settingsTarget: Mobidex
       targets:
         Mobidex: all
     test:

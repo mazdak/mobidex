@@ -8,6 +8,7 @@ CONFIGURATION="${CONFIGURATION:-Debug}"
 SDK="${SDK:-iphonesimulator}"
 DEFAULT_SOURCE_PACKAGES_DIR="${TMPDIR:-/tmp}/mobidex-source-packages"
 SOURCE_PACKAGES_DIR="${MOBIDEX_SOURCE_PACKAGES_DIR:-$DEFAULT_SOURCE_PACKAGES_DIR}"
+SHARED_FRAMEWORK_PATH="$ROOT_DIR/build/shared-core/MobidexShared.xcframework"
 
 case "$SDK" in
   iphonesimulator | iphoneos)
@@ -17,6 +18,10 @@ case "$SDK" in
     exit 2
     ;;
 esac
+
+if [[ ! -d "$SHARED_FRAMEWORK_PATH" ]]; then
+  CONFIGURATION="$CONFIGURATION" "$ROOT_DIR/Scripts/build-shared-framework.sh"
+fi
 
 PLATFORM_BUILD_DIR="$CONFIGURATION-$SDK"
 if [[ -z "${LOG_PATH:-}" ]]; then
