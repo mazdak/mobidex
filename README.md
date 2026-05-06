@@ -184,4 +184,4 @@ Local raw input channels are still unavailable (`simctl` has no tap/type operati
 
 ## Security Note
 
-The first MVP accepts any SSH host key. Before treating this as production-ready, replace `.acceptAnything()` with host-key pinning or known-host verification.
+Mobidex uses trust-on-first-use SSH host-key pinning. If a pinned host key changes, the connection is rejected until the server is re-added or its pin is cleared by editing the endpoint.

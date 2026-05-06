@@ -15,6 +15,7 @@ struct ServerEditorView: View {
     @State private var password: String
     @State private var privateKey: String
     @State private var privateKeyPassphrase: String
+    @State private var revealPrivateKey: Bool
     @State private var credentialLoaded: Bool
     @State private var credentialFieldsWereEdited = false
     @State private var isHydratingCredential = false
@@ -33,6 +34,7 @@ struct ServerEditorView: View {
         _password = State(initialValue: "")
         _privateKey = State(initialValue: "")
         _privateKeyPassphrase = State(initialValue: "")
+        _revealPrivateKey = State(initialValue: server == nil)
         _credentialLoaded = State(initialValue: server == nil)
     }
 
@@ -88,9 +90,25 @@ struct ServerEditorView: View {
                     if authMethod == .password {
                         SecureField("Password", text: $password)
                     } else {
-                        TextEditor(text: $privateKey)
-                            .font(.system(.footnote, design: .monospaced))
-                            .frame(minHeight: 170)
+                        HStack {
+                            Text("OpenSSH Private Key")
+                            Spacer()
+                            Button(revealPrivateKey ? "Hide" : "Show") {
+                                revealPrivateKey.toggle()
+                            }
+                        }
+                        if revealPrivateKey {
+                            TextEditor(text: $privateKey)
+                                .font(.system(.footnote, design: .monospaced))
+                                .frame(minHeight: 170)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                        } else {
+                            SecureField("OpenSSH Private Key", text: $privateKey)
+                                .font(.system(.footnote, design: .monospaced))
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                        }
                         SecureField("Passphrase", text: $privateKeyPassphrase)
                     }
                 }

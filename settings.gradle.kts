@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MobidexShared"
 include(":shared-core")
+include(":android-app")

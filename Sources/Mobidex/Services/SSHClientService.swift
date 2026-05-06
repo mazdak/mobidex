@@ -2,6 +2,7 @@ import Foundation
 @preconcurrency import Citadel
 import Crypto
 import NIOCore
+import NIOSSH
 
 struct RemoteProject: Identifiable, Codable, Equatable {
     var id: String { path }
@@ -52,6 +53,7 @@ enum SSHServiceError: LocalizedError {
     case connectionClosed(String)
     case appServerClosed(command: String, details: String?)
     case localFileNotReadable(String)
+    case hostKeyChanged(String, Int)
 
     var errorDescription: String? {
         switch self {
@@ -85,6 +87,8 @@ enum SSHServiceError: LocalizedError {
             }
         case .localFileNotReadable(let path):
             "Could not read the local file at \(path)."
+        case .hostKeyChanged(let host, let port):
+            "The SSH host key for \(host):\(port) changed. Remove and re-add the server if this change was expected."
         }
     }
 }
@@ -193,7 +197,7 @@ final class CitadelSSHService: SSHService {
                 host: server.host,
                 port: server.port,
                 authenticationMethod: authenticationMethod(server: server, credential: credential),
-                hostKeyValidator: .acceptAnything(),
+                hostKeyValidator: .custom(PinnedHostKeyValidator(server: server)),
                 reconnect: .never,
                 algorithms: .all
             )
@@ -232,6 +236,56 @@ final class CitadelSSHService: SSHService {
         }
     }
 
+}
+
+private final class PinnedHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+    private let pinKey: String
+    private let host: String
+    private let port: Int
+
+    init(server: ServerRecord) {
+        host = server.host
+        port = server.port
+        pinKey = "mobidex.sshHostKey.\(server.id.uuidString).\(server.host).\(server.port)"
+    }
+
+    func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        let fingerprint = sshHostKeyFingerprint(hostKey)
+        if let pinned = HostKeyPinStore.fingerprint(for: pinKey) {
+            if pinned == fingerprint {
+                validationCompletePromise.succeed(())
+            } else {
+                validationCompletePromise.fail(SSHServiceError.hostKeyChanged(host, port))
+            }
+            return
+        }
+
+        HostKeyPinStore.save(fingerprint, for: pinKey)
+        validationCompletePromise.succeed(())
+    }
+}
+
+private enum HostKeyPinStore {
+    private static let lock = NSLock()
+
+    static func fingerprint(for key: String) -> String? {
+        lock.withLock {
+            UserDefaults.standard.string(forKey: key)
+        }
+    }
+
+    static func save(_ fingerprint: String, for key: String) {
+        lock.withLock {
+            UserDefaults.standard.set(fingerprint, forKey: key)
+        }
+    }
+}
+
+private func sshHostKeyFingerprint(_ hostKey: NIOSSHPublicKey) -> String {
+    var buffer = ByteBufferAllocator().buffer(capacity: 512)
+    hostKey.write(to: &buffer)
+    let digest = SHA256.hash(data: Data(buffer.readableBytesView))
+    return "SHA256:" + Data(digest).base64EncodedString().trimmingCharacters(in: CharacterSet(charactersIn: "="))
 }
 
 private func sanitizedFilename(_ value: String) -> String {
