@@ -283,6 +283,30 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAppServerReconnectDelayUsesCappedExponentialBackoff() {
+        XCTAssertEqual(
+            AppViewModel.appServerReconnectDelayNanoseconds(baseDelayNanoseconds: 100_000_000, attempt: 1),
+            100_000_000
+        )
+        XCTAssertEqual(
+            AppViewModel.appServerReconnectDelayNanoseconds(baseDelayNanoseconds: 100_000_000, attempt: 2),
+            200_000_000
+        )
+        XCTAssertEqual(
+            AppViewModel.appServerReconnectDelayNanoseconds(baseDelayNanoseconds: 100_000_000, attempt: 4),
+            800_000_000
+        )
+        XCTAssertEqual(
+            AppViewModel.appServerReconnectDelayNanoseconds(baseDelayNanoseconds: 0, attempt: 1),
+            10_000_000
+        )
+        XCTAssertEqual(
+            AppViewModel.appServerReconnectDelayNanoseconds(baseDelayNanoseconds: 3_000_000_000, attempt: 5),
+            8_000_000_000
+        )
+    }
+
+    @MainActor
     func testUnexpectedAppServerDisconnectClearsOpenSessionCountsAfterReconnectFailure() async throws {
         let project = ProjectRecord(path: "/srv/app", discovered: true, discoveredSessionCount: 37)
         let server = ServerRecord(

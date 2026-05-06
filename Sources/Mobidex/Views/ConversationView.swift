@@ -10,6 +10,7 @@ struct ConversationView: View {
     @State private var attachmentPaths: [String] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isFileImporterPresented = false
+    @State private var userWantsTimelineFollow = true
     @FocusState private var isComposerFocused: Bool
     private let conversationBottomID = "conversationBottom"
 
@@ -133,50 +134,76 @@ struct ConversationView: View {
 
     private var timeline: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .top) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(model.pendingApprovals) { approval in
-                            ApprovalCard(approval: approval)
-                                .environmentObject(model)
+            GeometryReader { geometry in
+                ZStack(alignment: .top) {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(model.pendingApprovals) { approval in
+                                ApprovalCard(approval: approval)
+                                    .environmentObject(model)
+                            }
+                            ForEach(model.conversationSections) { section in
+                                ConversationSectionView(section: section)
+                                    .id(section.id)
+                            }
+                            Color.clear
+                                .frame(height: 1)
+                                .id(conversationBottomID)
+                                .background {
+                                    GeometryReader { bottomGeometry in
+                                        Color.clear.preference(
+                                            key: TimelineBottomPreferenceKey.self,
+                                            value: bottomGeometry.frame(in: .named("timelineScroll")).maxY
+                                        )
+                                    }
+                                }
                         }
-                        ForEach(model.conversationSections) { section in
-                            ConversationSectionView(section: section)
-                                .id(section.id)
-                        }
-                        Color.clear
-                            .frame(height: 1)
-                            .id(conversationBottomID)
                     }
+                    .coordinateSpace(name: "timelineScroll")
                     .padding()
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .simultaneousGesture(TapGesture().onEnded {
-                    isComposerFocused = false
-                })
-                if model.isSelectedThreadLoading {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("Loading session")
-                            .font(.subheadline)
+                    .scrollDismissesKeyboard(.interactively)
+                    .simultaneousGesture(TapGesture().onEnded {
+                        isComposerFocused = false
+                    })
+                    .simultaneousGesture(DragGesture().onChanged { _ in
+                        userWantsTimelineFollow = false
+                    })
+                    .onPreferenceChange(TimelineBottomPreferenceKey.self) { bottomY in
+                        if bottomY <= geometry.size.height + 44 {
+                            userWantsTimelineFollow = true
+                        }
                     }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.top, 10)
-                    .accessibilityIdentifier("sessionLoadingIndicator")
+                    if model.isSelectedThreadLoading {
+                        HStack(spacing: 10) {
+                            ProgressView()
+                            Text("Loading session")
+                                .font(.subheadline)
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.top, 10)
+                        .accessibilityIdentifier("sessionLoadingIndicator")
+                    }
                 }
-            }
-            .onAppear {
-                scrollToConversationBottom(proxy)
-            }
-            .onChange(of: model.conversationRevision) { _, _ in
-                scrollToConversationBottom(proxy)
-            }
-            .onChange(of: model.isSelectedThreadLoading) { _, loading in
-                if !loading {
+                .onAppear {
+                    userWantsTimelineFollow = true
                     scrollToConversationBottom(proxy)
+                }
+                .onChange(of: model.selectedThreadID) { _, _ in
+                    userWantsTimelineFollow = true
+                    scrollToConversationBottom(proxy)
+                }
+                .onChange(of: model.conversationRevision) { _, _ in
+                    if userWantsTimelineFollow {
+                        scrollToConversationBottom(proxy)
+                    }
+                }
+                .onChange(of: model.isSelectedThreadLoading) { _, loading in
+                    if !loading, userWantsTimelineFollow {
+                        scrollToConversationBottom(proxy)
+                    }
                 }
             }
         }
@@ -487,6 +514,14 @@ private enum SessionDetailMode: String, CaseIterable, Identifiable {
     }
 }
 
+private struct TimelineBottomPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct ApprovalCard: View {
     @EnvironmentObject private var model: AppViewModel
     let approval: PendingApproval
@@ -638,6 +673,8 @@ struct ConversationSectionView: View {
             .system(.caption, design: .monospaced)
         case .tool, .agent:
             .caption
+        case .assistant, .reasoning, .plan, .review, .system:
+            .callout
         default:
             .body
         }
@@ -693,14 +730,114 @@ private struct MarkdownText: View {
     private let markdown: String
 
     init(_ markdown: String) {
-        self.markdown = markdown
+        self.markdown = ConversationTextPresentation.displayBody(from: markdown)
     }
 
     var body: some View {
-        if let attributed = try? AttributedString(markdown: markdown) {
-            Text(attributed)
-        } else {
-            Text(markdown)
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(ConversationTextPresentation.markdownBlocks(from: markdown).enumerated()), id: \.offset) { _, block in
+                if let attributed = try? AttributedString(markdown: block) {
+                    Text(attributed)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text(block)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
+    }
+}
+
+enum ConversationTextPresentation {
+    static func displayBody(from body: String) -> String {
+        stripCodexAppDirectives(from: body)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func markdownBlocks(from body: String) -> [String] {
+        let normalized = body
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        var blocks: [String] = []
+        var currentLines: [Substring] = []
+        var isInFence = false
+
+        for line in normalized.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmedLine = line.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
+            if trimmedLine.hasPrefix("```") || trimmedLine.hasPrefix("~~~") {
+                isInFence.toggle()
+            }
+            if trimmedLine.isEmpty && !isInFence {
+                if !currentLines.isEmpty {
+                    blocks.append(currentLines.joined(separator: "\n"))
+                    currentLines = []
+                }
+            } else {
+                currentLines.append(line)
+            }
+        }
+        if !currentLines.isEmpty {
+            blocks.append(currentLines.joined(separator: "\n"))
+        }
+
+        return blocks
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    private static func stripCodexAppDirectives(from body: String) -> String {
+        var visibleLines: [Substring] = []
+        var isInFence = false
+
+        for line in body.split(separator: "\n", omittingEmptySubsequences: false) {
+            let trimmedLine = line.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
+            if trimmedLine.hasPrefix("```") || trimmedLine.hasPrefix("~~~") {
+                isInFence.toggle()
+                visibleLines.append(line)
+            } else if isInFence || !isCodexAppDirectiveLine(trimmedLine) {
+                visibleLines.append(line)
+            }
+        }
+
+        return visibleLines.joined(separator: "\n")
+    }
+
+    private static func isCodexAppDirectiveLine(_ line: String) -> Bool {
+        var remainder = line[...]
+        var foundDirective = false
+
+        while !remainder.isEmpty {
+            remainder = remainder.drop(while: { $0 == " " || $0 == "\t" })
+            if remainder.isEmpty {
+                return foundDirective
+            }
+            guard let name = knownCodexDirectiveName(atStartOf: remainder) else {
+                return false
+            }
+            remainder = remainder.dropFirst(2 + name.count)
+            guard remainder.first == "{" else {
+                return false
+            }
+            guard let closeBrace = remainder.firstIndex(of: "}") else {
+                return false
+            }
+            remainder = remainder[remainder.index(after: closeBrace)...]
+            foundDirective = true
+        }
+
+        return foundDirective
+    }
+
+    private static func knownCodexDirectiveName(atStartOf text: Substring) -> String? {
+        let names = [
+            "archive",
+            "code-comment",
+            "git-commit",
+            "git-create-branch",
+            "git-create-pr",
+            "git-push",
+            "git-stage",
+        ]
+        return names.first { text.hasPrefix("::\($0)") }
     }
 }

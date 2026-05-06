@@ -50,4 +50,53 @@ final class SessionProjectionTests: XCTestCase {
             XCTAssertFalse(section.rendersMarkdown, "\(section.kind) should render details verbatim")
         }
     }
+
+    func testConversationTextPresentationStripsCodexAppDirectivesAndKeepsBlocks() {
+        let body = """
+        Pushed straight to `master`.
+
+        Commit: `1eae538e4e fix(infra): stabilize rq worker health check`
+
+        Pre-push hooks passed.
+
+        ::git-stage{cwd="/Users/mazdak/.codex/worktrees/73e9/fullstack"} ::git-commit{cwd="/Users/mazdak/.codex/worktrees/73e9/fullstack"} ::git-push{cwd="/Users/mazdak/.codex/worktrees/73e9/fullstack" branch="master"}
+        """
+
+        let displayBody = ConversationTextPresentation.displayBody(from: body)
+
+        XCTAssertFalse(displayBody.contains("::git-stage"))
+        XCTAssertFalse(displayBody.contains("::git-commit"))
+        XCTAssertFalse(displayBody.contains("::git-push"))
+        XCTAssertEqual(
+            ConversationTextPresentation.markdownBlocks(from: displayBody),
+            [
+                "Pushed straight to `master`.",
+                "Commit: `1eae538e4e fix(infra): stabilize rq worker health check`",
+                "Pre-push hooks passed.",
+            ]
+        )
+    }
+
+    func testConversationTextPresentationPreservesFencedCodeAndLiteralDirectiveExamples() {
+        let body = """
+        Keep this literal example: `::git-stage{cwd="/tmp/example"}`.
+
+        ```swift
+        let first = true
+
+        let example = "::git-stage{cwd=\\"/tmp/example\\"}"
+        ```
+
+        ::git-stage{cwd="/tmp/hidden"}
+        """
+
+        let displayBody = ConversationTextPresentation.displayBody(from: body)
+        let blocks = ConversationTextPresentation.markdownBlocks(from: displayBody)
+
+        XCTAssertTrue(displayBody.contains("Keep this literal example"))
+        XCTAssertTrue(displayBody.contains("::git-stage{cwd=\"/tmp/example\"}"))
+        XCTAssertFalse(displayBody.contains("::git-stage{cwd=\"/tmp/hidden\"}"))
+        XCTAssertEqual(blocks.count, 2)
+        XCTAssertTrue(blocks[1].contains("let first = true\n\nlet example"))
+    }
 }

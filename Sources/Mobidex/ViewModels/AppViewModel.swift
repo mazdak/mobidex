@@ -144,6 +144,19 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    static func appServerReconnectDelayNanoseconds(baseDelayNanoseconds: UInt64, attempt: Int) -> UInt64 {
+        let fallbackBaseDelay: UInt64 = 10_000_000
+        let cappedBaseDelay = max(baseDelayNanoseconds, fallbackBaseDelay)
+        let cappedAttempt = max(min(attempt, 5), 1)
+        let multiplier = UInt64(1) << UInt64(cappedAttempt - 1)
+        let maxDelay: UInt64 = 8_000_000_000
+        let multiplied = cappedBaseDelay.multipliedReportingOverflow(by: multiplier)
+        guard !multiplied.overflow else {
+            return maxDelay
+        }
+        return min(multiplied.partialValue, maxDelay)
+    }
+
     var selectedServer: ServerRecord? {
         guard let selectedServerID else { return nil }
         return servers.first { $0.id == selectedServerID }
@@ -1474,20 +1487,22 @@ final class AppViewModel: ObservableObject {
 
     private func scheduleAppServerReconnect(serverID: UUID, disconnectMessage: String) {
         appServerReconnectAttemptsByServerID[serverID, default: 0] += 1
+        let attempt = appServerReconnectAttemptsByServerID[serverID] ?? 1
         appServerReconnectTask?.cancel()
         appServerReconnectTask = Task { [weak self] in
-            await self?.runScheduledAppServerReconnect(serverID: serverID, disconnectMessage: disconnectMessage)
+            await self?.runScheduledAppServerReconnect(serverID: serverID, disconnectMessage: disconnectMessage, attempt: attempt)
         }
     }
 
-    private func runScheduledAppServerReconnect(serverID: UUID, disconnectMessage: String) async {
-        let waitNanoseconds = appServerReconnectDelayNanoseconds == 0 ? 10_000_000 : appServerReconnectDelayNanoseconds
-        if appServerReconnectDelayNanoseconds > 0 {
-            do {
-                try await Task.sleep(nanoseconds: waitNanoseconds)
-            } catch {
-                return
-            }
+    private func runScheduledAppServerReconnect(serverID: UUID, disconnectMessage: String, attempt: Int) async {
+        let waitNanoseconds = Self.appServerReconnectDelayNanoseconds(
+            baseDelayNanoseconds: appServerReconnectDelayNanoseconds,
+            attempt: attempt
+        )
+        do {
+            try await Task.sleep(nanoseconds: waitNanoseconds)
+        } catch {
+            return
         }
         while selectedServerID == serverID, appServer == nil, isConnectingAppServer {
             do {
