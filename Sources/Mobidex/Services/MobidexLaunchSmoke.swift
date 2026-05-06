@@ -22,6 +22,7 @@ enum MobidexLaunchSmoke {
                 port: config.port,
                 username: config.username,
                 codexPath: config.codexPath,
+                targetShellRCFile: config.targetShellRCFile,
                 authMethod: config.authMethod,
                 projects: [ProjectRecord(path: config.cwd)]
             )
@@ -248,6 +249,7 @@ private struct SmokeConfig {
     var port: Int
     var username: String
     var codexPath: String
+    var targetShellRCFile: String
     var authMethod: ServerAuthMethod
     var mode: String
     var cwd: String
@@ -309,6 +311,7 @@ private struct SmokeConfig {
         self.port = environment["MOBIDEX_SMOKE_PORT"].flatMap(Int.init) ?? 22
         self.username = username
         self.codexPath = environment["MOBIDEX_SMOKE_CODEX_PATH"]?.nonEmpty ?? "codex"
+        self.targetShellRCFile = environment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"]?.nonEmpty ?? "$HOME/.zshrc"
         self.authMethod = parsedAuthMethod
         self.mode = parsedMode
         self.cwd = cwd

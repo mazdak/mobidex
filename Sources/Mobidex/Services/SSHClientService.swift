@@ -51,7 +51,6 @@ enum SSHServiceError: LocalizedError {
     case hostUnreachable(String, Int)
     case connectionClosed(String)
     case appServerClosed(command: String, details: String?)
-    case invalidAppServerWebSocketURL(String)
     case localFileNotReadable(String)
 
     var errorDescription: String? {
@@ -84,8 +83,6 @@ enum SSHServiceError: LocalizedError {
             } else {
                 "SSH connected, but the server closed the app-server session while starting `\(command)`. Check the Codex path and that Codex app-server can run on the server."
             }
-        case .invalidAppServerWebSocketURL(let value):
-            "The app-server WebSocket URL is invalid: \(value)"
         case .localFileNotReadable(let path):
             "Could not read the local file at \(path)."
         }
@@ -156,31 +153,6 @@ final class CitadelSSHService: SSHService {
     }
 
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {
-        if let urlValue = server.appServerWebSocketURL {
-            guard let url = server.appServerWebSocketEndpoint else {
-                throw SSHServiceError.invalidAppServerWebSocketURL(urlValue)
-            }
-            let client = try await connect(server: server, credential: credential)
-            do {
-                let transport = try await CodexSSHWebSocketTransport.open(
-                    client: client,
-                    url: url,
-                    bearerToken: credential.appServerAuthToken
-                )
-                let appServer = CodexAppServerClient(transport: transport)
-                do {
-                    try await appServer.initialize()
-                    return appServer
-                } catch {
-                    await appServer.close()
-                    throw error
-                }
-            } catch {
-                try? await client.close()
-                throw mapSSHError(error, server: server, operation: .appServer(command: urlValue))
-            }
-        }
-
         let command = server.appServerProxyCommand
         let client = try await connect(server: server, credential: credential)
         do {

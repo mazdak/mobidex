@@ -43,6 +43,27 @@ struct StatusAlert: Identifiable, Equatable {
     var message: String
 }
 
+struct AppServerReconnectStatus: Equatable {
+    var attempt: Int
+    var maxAttempts: Int
+    var delayNanoseconds: UInt64
+
+    var delaySeconds: Double {
+        Double(delayNanoseconds) / 1_000_000_000
+    }
+
+    var label: String {
+        let seconds = delaySeconds
+        if delayNanoseconds == 0 {
+            return "Reconnecting \(attempt)/\(maxAttempts)"
+        }
+        let delayLabel = seconds >= 1
+            ? "\(Int(seconds.rounded()))s"
+            : "\(Int((seconds * 1_000).rounded()))ms"
+        return "Reconnect \(attempt)/\(maxAttempts) in \(delayLabel)"
+    }
+}
+
 private enum AppViewModelError: LocalizedError {
     case selectionChanged
 
@@ -90,8 +111,13 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var conversationSections: [ConversationSection] = []
     @Published private(set) var isSelectedThreadLoading = false
     @Published private(set) var conversationRevision = 0
+    @Published private(set) var conversationRenderToken = 0
+    @Published private(set) var conversationFollowToken = 0
+    @Published private(set) var conversationSendToken = 0
+    @Published private(set) var conversationRenderDigest = ""
     @Published private(set) var pendingApprovals: [PendingApproval] = []
     @Published private(set) var connectionState: ServerConnectionState = .disconnected
+    @Published private(set) var appServerReconnectStatus: AppServerReconnectStatus?
     @Published private(set) var statusMessage: String?
     @Published var statusAlert: StatusAlert?
     @Published private(set) var changedFiles: [String] = []
@@ -191,6 +217,10 @@ final class AppViewModel: ObservableObject {
         selectedThreadTokenUsage?.contextFraction
     }
 
+    var contextUsagePercent: Int? {
+        contextUsageFraction.map { min(max(Int(($0 * 100).rounded()), 0), 100) }
+    }
+
     var selectedActivityLabel: String? {
         guard selectedThread?.status.isActive == true else {
             return nil
@@ -247,6 +277,7 @@ final class AppViewModel: ObservableObject {
         }
         appServerReconnectTask?.cancel()
         appServerReconnectTask = nil
+        appServerReconnectStatus = nil
         connectionState = .disconnected
         statusMessage = nil
         resetSessionState(clearThreads: true)
@@ -320,6 +351,10 @@ final class AppViewModel: ObservableObject {
         next.codexPath = next.codexPath.trimmingCharacters(in: .whitespacesAndNewlines)
         if next.codexPath.isEmpty {
             next.codexPath = "codex"
+        }
+        next.targetShellRCFile = next.targetShellRCFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        if next.targetShellRCFile.isEmpty {
+            next.targetShellRCFile = "$HOME/.zshrc"
         }
         next.updatedAt = .now
 
@@ -618,6 +653,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         appServerReconnectAttemptsByServerID.removeValue(forKey: targetServer.id)
+        appServerReconnectStatus = nil
 
         var syncSucceeded = true
         syncSucceeded = await runOperation(.discoveringProjects, status: "Syncing projects") {
@@ -1023,6 +1059,7 @@ final class AppViewModel: ObservableObject {
         if cancelReconnect {
             appServerReconnectTask?.cancel()
             appServerReconnectTask = nil
+            appServerReconnectStatus = nil
         }
         eventTask?.cancel()
         eventTask = nil
@@ -1040,6 +1077,7 @@ final class AppViewModel: ObservableObject {
                 appServerReconnectAttemptsByServerID.removeValue(forKey: selectedServerID)
             }
             connectionState = .disconnected
+            appServerReconnectStatus = nil
         }
     }
 
@@ -1218,8 +1256,7 @@ final class AppViewModel: ObservableObject {
             selectedThreadID = nil
             selectedThread = nil
             liveItems = []
-            conversationSections = []
-            conversationRevision += 1
+            publishConversationSections([])
             changedFiles = []
             diffSnapshot = .empty
             clearSelectedThreadLoads()
@@ -1488,17 +1525,32 @@ final class AppViewModel: ObservableObject {
     private func scheduleAppServerReconnect(serverID: UUID, disconnectMessage: String) {
         appServerReconnectAttemptsByServerID[serverID, default: 0] += 1
         let attempt = appServerReconnectAttemptsByServerID[serverID] ?? 1
-        appServerReconnectTask?.cancel()
-        appServerReconnectTask = Task { [weak self] in
-            await self?.runScheduledAppServerReconnect(serverID: serverID, disconnectMessage: disconnectMessage, attempt: attempt)
-        }
-    }
-
-    private func runScheduledAppServerReconnect(serverID: UUID, disconnectMessage: String, attempt: Int) async {
         let waitNanoseconds = Self.appServerReconnectDelayNanoseconds(
             baseDelayNanoseconds: appServerReconnectDelayNanoseconds,
             attempt: attempt
         )
+        appServerReconnectStatus = AppServerReconnectStatus(
+            attempt: attempt,
+            maxAttempts: maxAppServerReconnectAttempts,
+            delayNanoseconds: waitNanoseconds
+        )
+        appServerReconnectTask?.cancel()
+        appServerReconnectTask = Task { [weak self] in
+            await self?.runScheduledAppServerReconnect(
+                serverID: serverID,
+                disconnectMessage: disconnectMessage,
+                attempt: attempt,
+                waitNanoseconds: waitNanoseconds
+            )
+        }
+    }
+
+    private func runScheduledAppServerReconnect(
+        serverID: UUID,
+        disconnectMessage: String,
+        attempt: Int,
+        waitNanoseconds: UInt64
+    ) async {
         do {
             try await Task.sleep(nanoseconds: waitNanoseconds)
         } catch {
@@ -1514,6 +1566,11 @@ final class AppViewModel: ObservableObject {
         guard selectedServerID == serverID, appServer == nil, connectionState == .connecting else {
             return
         }
+        appServerReconnectStatus = AppServerReconnectStatus(
+            attempt: attempt,
+            maxAttempts: maxAppServerReconnectAttempts,
+            delayNanoseconds: 0
+        )
         appServerReconnectTask = nil
         await connectSelectedServer(syncActiveChatCounts: true, preservingVisibleState: true)
         guard selectedServerID == serverID else {
@@ -1525,6 +1582,7 @@ final class AppViewModel: ObservableObject {
                 statusMessage = "\(disconnectMessage) Reconnecting app-server."
                 scheduleAppServerReconnect(serverID: serverID, disconnectMessage: disconnectMessage)
             } else {
+                appServerReconnectStatus = nil
                 clearOpenSessionCounts()
                 if case .failed(let reconnectMessage) = connectionState {
                     statusMessage = "\(disconnectMessage) Reconnect failed: \(reconnectMessage)"
@@ -1650,8 +1708,37 @@ final class AppViewModel: ObservableObject {
     }
 
     private func rebuildConversationFromLiveItems() {
-        conversationSections = CodexSessionProjection.sections(from: liveItems)
+        let nextSections = CodexSessionProjection.sections(from: liveItems)
+        publishConversationSections(nextSections)
+    }
+
+    private func publishConversationSections(_ nextSections: [ConversationSection]) {
+        let didChange = conversationSections != nextSections
+        conversationSections = nextSections
         conversationRevision += 1
+        conversationRenderToken += 1
+        conversationRenderDigest = Self.conversationRenderDigest(for: nextSections)
+        if didChange, selectedThread?.status.isActive == true {
+            conversationFollowToken += 1
+        }
+    }
+
+    func requestConversationSendScroll() {
+        conversationSendToken += 1
+    }
+
+    private static func conversationRenderDigest(for sections: [ConversationSection]) -> String {
+        sections.map { section in
+            [
+                section.id,
+                "\(section.kind)",
+                section.title,
+                section.body,
+                section.detail ?? "",
+                section.status ?? ""
+            ].joined(separator: "\u{1F}")
+        }
+        .joined(separator: "\u{1E}")
     }
 
     private func beginSelectedThreadLoad(threadID: String) {
@@ -2077,8 +2164,7 @@ final class AppViewModel: ObservableObject {
         selectedThread = nil
         selectedThreadTokenUsage = nil
         liveItems = []
-        conversationSections = []
-        conversationRevision += 1
+        publishConversationSections([])
         changedFiles = []
         diffSnapshot = .empty
         clearSelectedThreadLoads()
@@ -2092,15 +2178,13 @@ final class AppViewModel: ObservableObject {
             SSHCredential(
                 password: credential.password,
                 privateKeyPEM: nil,
-                privateKeyPassphrase: nil,
-                appServerAuthToken: credential.appServerAuthToken
+                privateKeyPassphrase: nil
             )
         case .privateKey:
             SSHCredential(
                 password: nil,
                 privateKeyPEM: credential.privateKeyPEM,
-                privateKeyPassphrase: credential.privateKeyPassphrase,
-                appServerAuthToken: credential.appServerAuthToken
+                privateKeyPassphrase: credential.privateKeyPassphrase
             )
         }
     }

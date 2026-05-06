@@ -10,9 +10,19 @@ struct ConversationView: View {
     @State private var attachmentPaths: [String] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isFileImporterPresented = false
-    @State private var userWantsTimelineFollow = true
+    @State private var isTimelineNearBottom = true
+    @State private var timelineDistanceFromBottom: CGFloat = 0
+    @State private var autoFollowStreaming = true
+    @State private var userIsDraggingTimeline = false
+    @State private var followLayoutScrollScheduled = false
+    @State private var initialBottomScrollThreadID: String?
+    @State private var programmaticBottomScrollSettling = false
+    @State private var programmaticBottomScrollGeneration = 0
     @FocusState private var isComposerFocused: Bool
     private let conversationBottomID = "conversationBottom"
+    private static let latestButtonShowDistance: CGFloat = 48
+    private static let nearBottomRestoreDistance: CGFloat = 12
+    private static let bottomScrollSettleDuration: TimeInterval = 0.3
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,7 +34,9 @@ struct ConversationView: View {
                 switch selectedDetail {
                 case .chat:
                     timeline
-                    composer
+                        .safeAreaInset(edge: .bottom, spacing: 0) {
+                            composer
+                        }
                 case .changes:
                     SessionChangesView(cwd: thread.cwd)
                 }
@@ -133,87 +145,198 @@ struct ConversationView: View {
     }
 
     private var timeline: some View {
-        ScrollViewReader { proxy in
-            GeometryReader { geometry in
-                ZStack(alignment: .top) {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(model.pendingApprovals) { approval in
-                                ApprovalCard(approval: approval)
-                                    .environmentObject(model)
-                            }
-                            ForEach(model.conversationSections) { section in
-                                ConversationSectionView(section: section)
-                                    .id(section.id)
-                            }
-                            Color.clear
-                                .frame(height: 1)
-                                .id(conversationBottomID)
-                                .background {
-                                    GeometryReader { bottomGeometry in
-                                        Color.clear.preference(
-                                            key: TimelineBottomPreferenceKey.self,
-                                            value: bottomGeometry.frame(in: .named("timelineScroll")).maxY
-                                        )
-                                    }
+        let isStreaming = model.selectedThread?.status.isActive == true
+        let liveSectionID = isStreaming ? model.conversationSections.last?.id : nil
+        return ScrollViewReader { proxy in
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        ForEach(model.pendingApprovals) { approval in
+                            ApprovalCard(approval: approval)
+                                .environmentObject(model)
+                        }
+                        ForEach(model.conversationSections) { section in
+                            ConversationSectionView(
+                                section: section,
+                                isLive: section.id == liveSectionID,
+                                onLiveContentLayoutChanged: {
+                                    requestFollowScrollAfterLayout(proxy, isStreaming: isStreaming)
                                 }
+                            )
+                            .id(section.id)
                         }
+                        Color.clear
+                            .frame(height: 1)
+                            .id(conversationBottomID)
                     }
-                    .coordinateSpace(name: "timelineScroll")
                     .padding()
-                    .scrollDismissesKeyboard(.interactively)
-                    .simultaneousGesture(TapGesture().onEnded {
-                        isComposerFocused = false
-                    })
-                    .simultaneousGesture(DragGesture().onChanged { _ in
-                        userWantsTimelineFollow = false
-                    })
-                    .onPreferenceChange(TimelineBottomPreferenceKey.self) { bottomY in
-                        if bottomY <= geometry.size.height + 44 {
-                            userWantsTimelineFollow = true
+                }
+                .coordinateSpace(name: "timelineScroll")
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(TapGesture().onEnded {
+                    isComposerFocused = false
+                })
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    max(0, geometry.contentSize.height - geometry.visibleRect.maxY)
+                } action: { _, distance in
+                    updateTimelineDistanceFromBottom(distance, isStreaming: isStreaming)
+                }
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .onScrollPhaseChange { _, newPhase in
+                    switch newPhase {
+                    case .tracking, .interacting:
+                        programmaticBottomScrollSettling = false
+                        userIsDraggingTimeline = true
+                        if isStreaming {
+                            autoFollowStreaming = false
+                        }
+                    case .decelerating:
+                        userIsDraggingTimeline = true
+                    default:
+                        userIsDraggingTimeline = false
+                        if isTimelineNearBottom {
+                            autoFollowStreaming = true
                         }
                     }
-                    if model.isSelectedThreadLoading {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                            Text("Loading session")
-                                .font(.subheadline)
+                }
+                if model.isSelectedThreadLoading {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading session")
+                            .font(.subheadline)
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 10)
+                    .accessibilityIdentifier("sessionLoadingIndicator")
+                }
+                if timelineDistanceFromBottom > Self.latestButtonShowDistance {
+                    Button {
+                        autoFollowStreaming = true
+                        isTimelineNearBottom = true
+                        timelineDistanceFromBottom = 0
+                        scrollToConversationBottom(proxy)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
+                                scrollToConversationBottom(proxy)
+                            }
                         }
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(.regularMaterial, in: Capsule())
-                        .padding(.top, 10)
-                        .accessibilityIdentifier("sessionLoadingIndicator")
+                    } label: {
+                        Image(systemName: "arrow.down")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 36, height: 36)
+                            .background(.regularMaterial, in: Circle())
+                            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
                     }
-                }
-                .onAppear {
-                    userWantsTimelineFollow = true
-                    scrollToConversationBottom(proxy)
-                }
-                .onChange(of: model.selectedThreadID) { _, _ in
-                    userWantsTimelineFollow = true
-                    scrollToConversationBottom(proxy)
-                }
-                .onChange(of: model.conversationRevision) { _, _ in
-                    if userWantsTimelineFollow {
-                        scrollToConversationBottom(proxy)
-                    }
-                }
-                .onChange(of: model.isSelectedThreadLoading) { _, loading in
-                    if !loading, userWantsTimelineFollow {
-                        scrollToConversationBottom(proxy)
-                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Scroll to latest message")
+                    .padding(.trailing, 18)
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
+                .onAppear {
+                    autoFollowStreaming = true
+                    requestInitialBottomScrollIfNeeded(proxy)
+                }
+                .onChange(of: model.selectedThreadID) { _, _ in
+                    autoFollowStreaming = true
+                    isTimelineNearBottom = true
+                    timelineDistanceFromBottom = 0
+                    initialBottomScrollThreadID = nil
+                    requestInitialBottomScrollIfNeeded(proxy)
+                }
+                .onChange(of: model.conversationRenderToken) { _, _ in
+                    requestInitialBottomScrollIfNeeded(proxy)
+                }
+                .onChange(of: model.conversationFollowToken) { _, _ in
+                    guard isStreaming, autoFollowStreaming, !userIsDraggingTimeline else { return }
+                    scrollToConversationBottom(proxy)
+                }
+                .onChange(of: model.conversationSendToken) { _, _ in
+                    autoFollowStreaming = true
+                    isTimelineNearBottom = true
+                    timelineDistanceFromBottom = 0
+                    scrollToConversationBottom(proxy)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                        withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
+                            scrollToConversationBottom(proxy)
+                        }
+                    }
+                }
+                .onChange(of: model.selectedThread?.status) { oldStatus, status in
+                    let wasStreaming = oldStatus?.isActive == true
+                    let isStreaming = status?.isActive == true
+                    if wasStreaming && !isStreaming && autoFollowStreaming {
+                        scrollToConversationBottom(proxy)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            scrollToConversationBottom(proxy)
+                        }
+                    }
+                }
         }
     }
 
     private func scrollToConversationBottom(_ proxy: ScrollViewProxy) {
+        isTimelineNearBottom = true
+        timelineDistanceFromBottom = 0
+        programmaticBottomScrollGeneration &+= 1
+        let generation = programmaticBottomScrollGeneration
+        programmaticBottomScrollSettling = true
+        proxy.scrollTo(conversationBottomID, anchor: .bottom)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.bottomScrollSettleDuration) {
+            guard programmaticBottomScrollGeneration == generation else { return }
+            programmaticBottomScrollSettling = false
+        }
+    }
+
+    private func requestInitialBottomScrollIfNeeded(_ proxy: ScrollViewProxy) {
+        guard !model.conversationSections.isEmpty else { return }
+        guard let selectedThreadID = model.selectedThreadID else { return }
+        guard initialBottomScrollThreadID != selectedThreadID else { return }
+        initialBottomScrollThreadID = selectedThreadID
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.18)) {
-                proxy.scrollTo(conversationBottomID, anchor: .bottom)
+            guard model.selectedThreadID == selectedThreadID else { return }
+            scrollToConversationBottom(proxy)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                guard model.selectedThreadID == selectedThreadID else { return }
+                scrollToConversationBottom(proxy)
             }
+        }
+    }
+
+    private func requestFollowScrollAfterLayout(_ proxy: ScrollViewProxy, isStreaming: Bool) {
+        guard !followLayoutScrollScheduled else { return }
+        followLayoutScrollScheduled = true
+        DispatchQueue.main.async {
+            followLayoutScrollScheduled = false
+            guard isStreaming, autoFollowStreaming, !userIsDraggingTimeline else { return }
+            scrollToConversationBottom(proxy)
+        }
+    }
+
+    private func updateTimelineDistanceFromBottom(_ distance: CGFloat, isStreaming: Bool) {
+        let clampedDistance = max(0, distance)
+        if programmaticBottomScrollSettling {
+            if clampedDistance <= Self.nearBottomRestoreDistance {
+                programmaticBottomScrollSettling = false
+            } else {
+                return
+            }
+        }
+
+        timelineDistanceFromBottom = clampedDistance
+        let nextIsNearBottom = clampedDistance <= Self.nearBottomRestoreDistance
+        if nextIsNearBottom != isTimelineNearBottom {
+            isTimelineNearBottom = nextIsNearBottom
+        }
+        if nextIsNearBottom {
+            autoFollowStreaming = true
+        } else if isStreaming && userIsDraggingTimeline {
+            autoFollowStreaming = false
         }
     }
 
@@ -378,6 +501,7 @@ struct ConversationView: View {
             let text = composerText
             let attachments = attachmentPaths
             isComposerFocused = false
+            model.requestConversationSendScroll()
             Task {
                 let sent = await model.sendComposerInput(
                     text: text,
@@ -406,19 +530,29 @@ struct ConversationView: View {
 
     private var contextIndicator: some View {
         let fraction = model.contextUsageFraction
-        return ZStack {
-            Circle()
-                .stroke(Color.secondary.opacity(0.25), lineWidth: 3)
-                .frame(width: 18, height: 18)
-            if let fraction {
+        let percent = model.contextUsagePercent
+        return HStack(spacing: 5) {
+            ZStack {
                 Circle()
-                    .trim(from: 0, to: fraction)
-                    .stroke(Color.secondary, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 3)
                     .frame(width: 18, height: 18)
+                if let fraction {
+                    Circle()
+                        .trim(from: 0, to: fraction)
+                        .stroke(Color.secondary, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 18, height: 18)
+                }
+            }
+            if let percent {
+                Text("\(percent)%")
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
         }
-        .accessibilityLabel(fraction.map { "Context window \(Int($0 * 100)) percent used" } ?? "Context window")
+        .accessibilityLabel(percent.map { "Context window \($0) percent used" } ?? "Context window")
     }
 
     private var attachmentStrip: some View {
@@ -514,14 +648,6 @@ private enum SessionDetailMode: String, CaseIterable, Identifiable {
     }
 }
 
-private struct TimelineBottomPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct ApprovalCard: View {
     @EnvironmentObject private var model: AppViewModel
     let approval: PendingApproval
@@ -564,6 +690,8 @@ struct ApprovalCard: View {
 
 struct ConversationSectionView: View {
     let section: ConversationSection
+    var isLive = false
+    var onLiveContentLayoutChanged: () -> Void = {}
     @State private var isExpanded = false
 
     var body: some View {
@@ -578,6 +706,12 @@ struct ConversationSectionView: View {
             if section.kind != .user {
                 Spacer(minLength: 36)
             }
+        }
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            geometry.size.height
+        } action: { oldHeight, newHeight in
+            guard isLive, abs(newHeight - oldHeight) > 0.5 else { return }
+            onLiveContentLayoutChanged()
         }
     }
 
@@ -649,7 +783,7 @@ struct ConversationSectionView: View {
     @ViewBuilder
     private var bodyText: some View {
         if section.rendersMarkdown {
-            MarkdownText(section.body)
+            MarkdownText(section.body, id: section.id)
         } else {
             Text(section.body)
         }
@@ -727,24 +861,143 @@ struct ConversationSectionView: View {
 }
 
 private struct MarkdownText: View {
+    private let id: String
     private let markdown: String
 
-    init(_ markdown: String) {
+    init(_ markdown: String, id: String) {
+        self.id = id
         self.markdown = ConversationTextPresentation.displayBody(from: markdown)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(ConversationTextPresentation.markdownBlocks(from: markdown).enumerated()), id: \.offset) { _, block in
-                if let attributed = try? AttributedString(markdown: block) {
+            ForEach(ConversationMarkdownRenderCache.shared.segments(for: id, markdown: markdown)) { segment in
+                if let attributed = segment.attributed {
                     Text(attributed)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Text(block)
+                    Text(segment.text)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
+        .transaction { transaction in
+            transaction.animation = nil
+        }
+    }
+}
+
+private struct ConversationMarkdownSegment: Identifiable {
+    var id: String
+    var text: String
+    var attributed: AttributedString?
+}
+
+@MainActor
+private final class ConversationMarkdownRenderCache {
+    static let shared = ConversationMarkdownRenderCache()
+
+    private struct Entry {
+        var markdown: String
+        var prefix: String
+        var prefixSegments: [ConversationMarkdownSegment]
+        var segments: [ConversationMarkdownSegment]
+    }
+
+    private var entries: [String: Entry] = [:]
+    private var accessOrder: [String] = []
+    private let maximumEntries = 96
+    private let targetTailCharacters = 4_096
+    private let minimumReusablePrefixCharacters = 1_024
+
+    func segments(for id: String, markdown: String) -> [ConversationMarkdownSegment] {
+        if let entry = entries[id], entry.markdown == markdown {
+            touch(id)
+            return entry.segments
+        }
+
+        let previous = entries[id]
+        let nextEntry = buildEntry(id: id, markdown: markdown, previous: previous)
+        entries[id] = nextEntry
+        touch(id)
+        trimIfNeeded()
+        return nextEntry.segments
+    }
+
+    private func buildEntry(id: String, markdown: String, previous: Entry?) -> Entry {
+        guard markdown.count > minimumReusablePrefixCharacters,
+              let anchor = reusableTailAnchor(in: markdown),
+              anchor > markdown.startIndex
+        else {
+            let segments = parseSegments(id: id, namespace: "full", markdown: markdown)
+            return Entry(markdown: markdown, prefix: "", prefixSegments: [], segments: segments)
+        }
+
+        let prefix = String(markdown[..<anchor])
+        let tail = String(markdown[anchor...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefixSegments: [ConversationMarkdownSegment]
+        if let previous, previous.prefix == prefix {
+            prefixSegments = previous.prefixSegments
+        } else {
+            prefixSegments = parseSegments(id: id, namespace: "prefix", markdown: prefix)
+        }
+        let tailSegments = parseSegments(id: id, namespace: "tail", markdown: tail)
+        return Entry(markdown: markdown, prefix: prefix, prefixSegments: prefixSegments, segments: prefixSegments + tailSegments)
+    }
+
+    private func reusableTailAnchor(in markdown: String) -> String.Index? {
+        guard markdown.count > targetTailCharacters + minimumReusablePrefixCharacters else {
+            return nil
+        }
+        let tailStart = markdown.index(markdown.endIndex, offsetBy: -targetTailCharacters)
+        var search = markdown[..<tailStart]
+        while let range = search.range(of: "\n\n", options: .backwards) {
+            let anchor = range.upperBound
+            guard markdown.distance(from: markdown.startIndex, to: anchor) >= minimumReusablePrefixCharacters else {
+                return nil
+            }
+            let prefix = markdown[..<anchor]
+            let fenceCount = prefix.components(separatedBy: "```").count - 1
+            let tildeFenceCount = prefix.components(separatedBy: "~~~").count - 1
+            if fenceCount.isMultiple(of: 2), tildeFenceCount.isMultiple(of: 2) {
+                return anchor
+            }
+            search = markdown[..<range.lowerBound]
+        }
+        return nil
+    }
+
+    private func parseSegments(id: String, namespace: String, markdown: String) -> [ConversationMarkdownSegment] {
+        ConversationTextPresentation.markdownBlocks(from: markdown).enumerated().map { offset, block in
+            let segmentID = "\(id)-\(namespace)-\(offset)-\(Self.stableHash(block))"
+            return ConversationMarkdownSegment(
+                id: segmentID,
+                text: block,
+                attributed: try? AttributedString(markdown: block)
+            )
+        }
+    }
+
+    private func touch(_ id: String) {
+        accessOrder.removeAll { $0 == id }
+        accessOrder.append(id)
+    }
+
+    private func trimIfNeeded() {
+        guard accessOrder.count > maximumEntries else { return }
+        for id in accessOrder.prefix(accessOrder.count - maximumEntries) {
+            entries.removeValue(forKey: id)
+        }
+        accessOrder = Array(accessOrder.suffix(maximumEntries))
+    }
+
+    private static func stableHash(_ text: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(hash, radix: 16)
     }
 }
 

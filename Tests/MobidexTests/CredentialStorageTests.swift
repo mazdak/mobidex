@@ -25,54 +25,12 @@ final class CredentialStorageTests: XCTestCase {
 
         try repository.saveServers([server])
         try credentials.saveCredential(
-            SSHCredential(password: "secret", privateKeyPEM: nil, privateKeyPassphrase: nil, appServerAuthToken: "token"),
+            SSHCredential(password: "secret", privateKeyPEM: nil, privateKeyPassphrase: nil),
             serverID: server.id
         )
 
         XCTAssertEqual(try repository.loadServers(), [server])
         XCTAssertEqual(try credentials.loadCredential(serverID: server.id).password, "secret")
-        XCTAssertEqual(try credentials.loadCredential(serverID: server.id).appServerAuthToken, "token")
-    }
-
-    func testServerRecordStoresWebSocketEndpointWithoutAuthToken() throws {
-        let server = ServerRecord(
-            displayName: "Server",
-            host: "host",
-            username: "user",
-            appServerWebSocketURL: " ws://host:3030 ",
-            authMethod: .password
-        )
-
-        XCTAssertEqual(server.appServerWebSocketURL, "ws://host:3030")
-        XCTAssertEqual(server.appServerWebSocketEndpoint?.absoluteString, "ws://host:3030")
-
-        let data = try JSONEncoder().encode(server)
-        let encoded = try XCTUnwrap(String(data: data, encoding: .utf8))
-        let decoded = try JSONDecoder().decode(ServerRecord.self, from: data)
-        XCTAssertEqual(decoded.appServerWebSocketURL, "ws://host:3030")
-        XCTAssertFalse(encoded.contains("token"))
-    }
-
-    func testServerRecordRejectsNonWebSocketEndpoint() {
-        let server = ServerRecord(
-            displayName: "Server",
-            host: "host",
-            username: "user",
-            appServerWebSocketURL: "not-a-websocket-endpoint",
-            authMethod: .password
-        )
-
-        XCTAssertEqual(server.appServerWebSocketURL, "not-a-websocket-endpoint")
-        XCTAssertNil(server.appServerWebSocketEndpoint)
-
-        let tlsServer = ServerRecord(
-            displayName: "Server",
-            host: "host",
-            username: "user",
-            appServerWebSocketURL: "wss://host:3030",
-            authMethod: .password
-        )
-        XCTAssertNil(tlsServer.appServerWebSocketEndpoint)
     }
 
     func testServerRecordBuildsQuotedAppServerCommand() {
@@ -81,13 +39,38 @@ final class CredentialStorageTests: XCTestCase {
             host: "host",
             username: "user",
             codexPath: "/home/user/bin/codex'special",
+            targetShellRCFile: "/home/user/.config/zsh/env file",
             authMethod: .password
         )
 
         XCTAssertEqual(
             server.appServerCommand,
-            "export PATH=\"$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://"
+            "mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi; export PATH=\"$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://"
         )
+    }
+
+    func testServerRecordDefaultsAndDecodesTargetShellRCFile() throws {
+        let server = ServerRecord(displayName: "Server", host: "host", username: "user", authMethod: .password)
+        XCTAssertEqual(server.targetShellRCFile, "$HOME/.zshrc")
+        XCTAssertTrue(server.appServerProxyCommand.hasPrefix("mobidex_shell_rc=\"${HOME}\"/'.zshrc'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi;"))
+
+        let legacyPayload = Data("""
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "displayName": "Legacy",
+          "host": "host",
+          "port": 22,
+          "username": "user",
+          "codexPath": "codex",
+          "appServerWebSocketURL": "ws://legacy:3030",
+          "authMethod": "password",
+          "projects": [],
+          "createdAt": 1770000000,
+          "updatedAt": 1770000000
+        }
+        """.utf8)
+        let decoded = try JSONDecoder().decode(ServerRecord.self, from: legacyPayload)
+        XCTAssertEqual(decoded.targetShellRCFile, "$HOME/.zshrc")
     }
 
     func testServerRecordDefaultAppServerCommandResolvesCodexExecutable() {
@@ -99,6 +82,7 @@ final class CredentialStorageTests: XCTestCase {
         )
 
         XCTAssertTrue(server.appServerCommand.contains("command -v codex"))
+        XCTAssertTrue(server.appServerCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zshrc'"))
         XCTAssertTrue(server.appServerCommand.contains("$HOME/.bun/bin/codex"))
         XCTAssertTrue(server.appServerCommand.contains("/opt/homebrew/opt/node@22/bin"))
         XCTAssertTrue(server.appServerCommand.contains("zsh bash"))
@@ -115,6 +99,7 @@ final class CredentialStorageTests: XCTestCase {
         )
 
         XCTAssertTrue(server.appServerProxyCommand.contains("command -v codex"))
+        XCTAssertTrue(server.appServerProxyCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zshrc'"))
         XCTAssertTrue(server.appServerProxyCommand.contains("socket_root=\"${CODEX_HOME:-$HOME/.codex}\""))
         XCTAssertTrue(server.appServerProxyCommand.contains("app-server-control/app-server-control.sock"))
         XCTAssertTrue(server.appServerProxyCommand.contains("app-server --listen \"unix://$socket\""))
@@ -138,7 +123,7 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertEqual(
             server.appServerCommand,
-            "export PATH=\"$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; \"${HOME}\"/'.bun/bin/codex' app-server --listen stdio://"
+            "mobidex_shell_rc=\"${HOME}\"/'.zshrc'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi; export PATH=\"$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; \"${HOME}\"/'.bun/bin/codex' app-server --listen stdio://"
         )
     }
 

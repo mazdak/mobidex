@@ -238,6 +238,7 @@ final class AppViewModelTests: XCTestCase {
         try await connectWithSingleOpenSessionAfterReconnect(in: viewModel, transport: secondTransport)
         try await waitForConnectionState(.connected, in: viewModel)
         try await waitForStatusMessage("App-server connected.", in: viewModel)
+        XCTAssertNil(viewModel.appServerReconnectStatus)
         XCTAssertEqual(sshService.openAppServerCallCount, 2)
         let reconnectedProject = try XCTUnwrap(viewModel.selectedServer?.projects.first)
         XCTAssertEqual(reconnectedProject.activeChatCount, 1)
@@ -304,6 +305,18 @@ final class AppViewModelTests: XCTestCase {
             AppViewModel.appServerReconnectDelayNanoseconds(baseDelayNanoseconds: 3_000_000_000, attempt: 5),
             8_000_000_000
         )
+        XCTAssertEqual(
+            AppServerReconnectStatus(attempt: 2, maxAttempts: 3, delayNanoseconds: 200_000_000).label,
+            "Reconnect 2/3 in 200ms"
+        )
+        XCTAssertEqual(
+            AppServerReconnectStatus(attempt: 3, maxAttempts: 3, delayNanoseconds: 2_000_000_000).label,
+            "Reconnect 3/3 in 2s"
+        )
+        XCTAssertEqual(
+            AppServerReconnectStatus(attempt: 3, maxAttempts: 3, delayNanoseconds: 0).label,
+            "Reconnecting 3/3"
+        )
     }
 
     @MainActor
@@ -337,6 +350,7 @@ final class AppViewModelTests: XCTestCase {
             "The app-server SSH channel closed. Reconnect failed: The app-server connection closed.",
             in: viewModel
         )
+        XCTAssertNil(viewModel.appServerReconnectStatus)
         let failedProject = try XCTUnwrap(viewModel.selectedServer?.projects.first)
         XCTAssertEqual(failedProject.activeChatCount, 0)
         XCTAssertNil(failedProject.lastActiveChatAt)
@@ -371,6 +385,10 @@ final class AppViewModelTests: XCTestCase {
         try await connectWithSingleOpenSession(in: viewModel, transport: firstTransport)
         firstTransport.finishInbound(throwing: ChannelError.inputClosed)
         try await waitForConnectionState(.connecting, in: viewModel)
+        try await waitForReconnectStatus(
+            AppServerReconnectStatus(attempt: 1, maxAttempts: 3, delayNanoseconds: 500_000_000),
+            in: viewModel
+        )
 
         await viewModel.disconnect()
         try await Task.sleep(nanoseconds: 50_000_000)
@@ -379,6 +397,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(sshService.openAppServerCallCount, 1)
         XCTAssertFalse(secondTransport.sentLinesSnapshot.compactMap(methodName).contains("initialize"))
         XCTAssertEqual(viewModel.selectedServer?.projects.first?.activeChatCount, 0)
+        XCTAssertNil(viewModel.appServerReconnectStatus)
     }
 
     @MainActor
@@ -866,7 +885,7 @@ final class AppViewModelTests: XCTestCase {
     @MainActor
     func testSaveServerRestoresPreviousCredentialWhenCredentialSaveFails() async throws {
         let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
-        let oldCredential = SSHCredential(password: "old-secret", appServerAuthToken: "old-token")
+        let oldCredential = SSHCredential(password: "old-secret")
         let repository = InMemoryServerRepository(servers: [server])
         let credentials = FailingFirstSaveCredentialStore(initialCredential: oldCredential)
         let viewModel = AppViewModel(repository: repository, credentialStore: credentials, sshService: StubSSHService())
@@ -882,7 +901,7 @@ final class AppViewModelTests: XCTestCase {
         )
         let saved = await viewModel.saveServer(
             updatedServer,
-            credential: SSHCredential(password: "new-secret", appServerAuthToken: "new-token")
+            credential: SSHCredential(password: "new-secret")
         )
 
         XCTAssertFalse(saved)
@@ -1373,6 +1392,7 @@ final class AppViewModelTests: XCTestCase {
         """)
 
         try await waitForContextUsageFraction(0.25, in: viewModel)
+        XCTAssertEqual(viewModel.contextUsagePercent, 25)
 
         let newSessionTask = Task { await viewModel.startNewSession() }
         let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
@@ -2160,7 +2180,10 @@ final class AppViewModelTests: XCTestCase {
         let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
         cursor = startThread.nextCursor
 
+        let renderTokenBeforeProjectChange = viewModel.conversationRenderToken
         viewModel.selectProject(projectTwo.id)
+        XCTAssertGreaterThan(viewModel.conversationRenderToken, renderTokenBeforeProjectChange)
+        XCTAssertEqual(viewModel.conversationRenderDigest, "")
         transport.receive("""
         {"id":\(startThread.id),"result":{"thread":{
           "id":"thread-old-project",
@@ -2814,6 +2837,8 @@ final class AppViewModelTests: XCTestCase {
         await sendTask.value
 
         let pollRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        let renderTokenBeforeDelta = viewModel.conversationRenderToken
+        let followTokenBeforeDelta = viewModel.conversationFollowToken
         transport.receive("""
         {"method":"item/agentMessage/delta","params":{
           "threadId":"thread-new",
@@ -2822,6 +2847,9 @@ final class AppViewModelTests: XCTestCase {
         }}
         """)
         try await waitForConversationSection(kind: .assistant, containing: "Streaming", in: viewModel)
+        XCTAssertGreaterThan(viewModel.conversationRenderToken, renderTokenBeforeDelta)
+        XCTAssertGreaterThan(viewModel.conversationFollowToken, followTokenBeforeDelta)
+        XCTAssertTrue(viewModel.conversationRenderDigest.contains("Streaming"))
 
         transport.receive("""
         {"id":\(pollRead.id),"result":{"thread":{
@@ -2846,6 +2874,9 @@ final class AppViewModelTests: XCTestCase {
             section.kind == .assistant && section.body.contains("Streaming")
         })
         XCTAssertTrue(viewModel.canInterruptActiveTurn)
+        let sendToken = viewModel.conversationSendToken
+        viewModel.requestConversationSendScroll()
+        XCTAssertEqual(viewModel.conversationSendToken, sendToken + 1)
 
         await viewModel.disconnect()
     }
@@ -4487,6 +4518,17 @@ private func waitForConnectionState(_ expected: ServerConnectionState, in viewMo
         try await Task.sleep(nanoseconds: 10_000_000)
     }
     XCTFail("Timed out waiting for connection state \(expected).")
+}
+
+@MainActor
+private func waitForReconnectStatus(_ expected: AppServerReconnectStatus, in viewModel: AppViewModel) async throws {
+    for _ in 0..<200 {
+        if viewModel.appServerReconnectStatus == expected {
+            return
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTFail("Timed out waiting for reconnect status \(expected). Last: \(String(describing: viewModel.appServerReconnectStatus))")
 }
 
 @MainActor

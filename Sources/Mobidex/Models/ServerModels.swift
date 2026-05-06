@@ -21,11 +21,25 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     var port: Int
     var username: String
     var codexPath: String
-    var appServerWebSocketURL: String?
+    var targetShellRCFile: String
     var authMethod: ServerAuthMethod
     var projects: [ProjectRecord]
     var createdAt: Date
     var updatedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case displayName
+        case host
+        case port
+        case username
+        case codexPath
+        case targetShellRCFile
+        case authMethod
+        case projects
+        case createdAt
+        case updatedAt
+    }
 
     init(
         id: UUID = UUID(),
@@ -34,7 +48,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         port: Int = 22,
         username: String,
         codexPath: String = "codex",
-        appServerWebSocketURL: String? = nil,
+        targetShellRCFile: String = "$HOME/.zshrc",
         authMethod: ServerAuthMethod,
         projects: [ProjectRecord] = [],
         createdAt: Date = .now,
@@ -46,11 +60,30 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         self.port = port
         self.username = username
         self.codexPath = codexPath.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "codex"
-        self.appServerWebSocketURL = appServerWebSocketURL?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        self.targetShellRCFile = targetShellRCFile.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "$HOME/.zshrc"
         self.authMethod = authMethod
         self.projects = projects
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        host = try container.decode(String.self, forKey: .host)
+        port = try container.decode(Int.self, forKey: .port)
+        username = try container.decode(String.self, forKey: .username)
+        codexPath = try container.decodeIfPresent(String.self, forKey: .codexPath)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty ?? "codex"
+        targetShellRCFile = try container.decodeIfPresent(String.self, forKey: .targetShellRCFile)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty ?? "$HOME/.zshrc"
+        authMethod = try container.decode(ServerAuthMethod.self, forKey: .authMethod)
+        projects = try container.decodeIfPresent([ProjectRecord].self, forKey: .projects) ?? []
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 
     var endpointLabel: String {
@@ -59,31 +92,22 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
 
     var appServerCommand: String {
         if codexPath == "codex" {
-            return Self.defaultCodexAppServerCommand
+            return defaultCodexAppServerCommand
         }
-        return "\(Self.remotePathBootstrapCommand); \(codexPath.shellQuotedExecutablePath) app-server --listen stdio://"
+        return [
+            shellEnvironmentBootstrapCommand,
+            "\(codexPath.shellQuotedExecutablePath) app-server --listen stdio://"
+        ].joined(separator: "; ")
     }
 
     var appServerProxyCommand: String {
         if codexPath == "codex" {
-            return Self.defaultCodexAppServerProxyCommand
+            return defaultCodexAppServerProxyCommand
         }
-        return Self.appServerProxyCommand(codexExecutable: codexPath.shellQuotedExecutablePath)
+        return appServerProxyCommand(codexExecutable: codexPath.shellQuotedExecutablePath)
     }
 
-    var appServerWebSocketEndpoint: URL? {
-        guard let appServerWebSocketURL,
-              let url = URL(string: appServerWebSocketURL),
-              let scheme = url.scheme?.lowercased(),
-              scheme == "ws",
-              url.host != nil
-        else {
-            return nil
-        }
-        return url
-    }
-
-    private static var defaultCodexAppServerCommand: String {
+    private var defaultCodexAppServerCommand: String {
         let candidates = [
             "$HOME/.bun/bin/codex",
             "$HOME/.local/bin/codex",
@@ -94,7 +118,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         ]
         let candidateList = candidates.map { "\"\($0)\"" }.joined(separator: " ")
         return [
-            remotePathBootstrapCommand,
+            shellEnvironmentBootstrapCommand,
             "if command -v codex >/dev/null 2>&1; then exec codex app-server --listen stdio://; fi",
             "for candidate in \(candidateList); do if [ -x \"$candidate\" ]; then exec \"$candidate\" app-server --listen stdio://; fi; done",
             "for shell in zsh bash; do if command -v \"$shell\" >/dev/null 2>&1; then resolved=\"$(\"$shell\" -lc 'command -v codex' 2>/dev/null || true)\"; if [ -n \"$resolved\" ] && [ -x \"$resolved\" ]; then exec \"$resolved\" app-server --listen stdio://; fi; fi; done",
@@ -103,23 +127,23 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         ].joined(separator: "; ")
     }
 
-    private static var defaultCodexAppServerProxyCommand: String {
+    private var defaultCodexAppServerProxyCommand: String {
         [
-            remotePathBootstrapCommand,
+            shellEnvironmentBootstrapCommand,
             codexResolutionCommand,
             appServerProxyScript(codexExecutable: "\"$codex_bin\"")
         ].joined(separator: "; ")
     }
 
-    private static func appServerProxyCommand(codexExecutable: String) -> String {
+    private func appServerProxyCommand(codexExecutable: String) -> String {
         [
-            remotePathBootstrapCommand,
+            shellEnvironmentBootstrapCommand,
             "codex_bin=\(codexExecutable)",
             appServerProxyScript(codexExecutable: "\"$codex_bin\"")
         ].joined(separator: "; ")
     }
 
-    private static var codexResolutionCommand: String {
+    private var codexResolutionCommand: String {
         let candidates = [
             "$HOME/.bun/bin/codex",
             "$HOME/.local/bin/codex",
@@ -138,7 +162,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         ].joined(separator: "; ")
     }
 
-    private static func appServerProxyScript(codexExecutable: String) -> String {
+    private func appServerProxyScript(codexExecutable: String) -> String {
         [
             "socket_root=\"${CODEX_HOME:-$HOME/.codex}\"",
             "socket=\"${CODEX_APP_SERVER_SOCK:-$socket_root/app-server-control/app-server-control.sock}\"",
@@ -151,7 +175,22 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         ].joined(separator: "; ")
     }
 
-    private static var remotePathBootstrapCommand: String {
+    private var shellEnvironmentBootstrapCommand: String {
+        [
+            targetShellRCBootstrapCommand,
+            remotePathBootstrapCommand
+        ].joined(separator: "; ")
+    }
+
+    private var targetShellRCBootstrapCommand: String {
+        let rcFile = targetShellRCFile.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rcFile.isEmpty else {
+            return "true"
+        }
+        return "mobidex_shell_rc=\(rcFile.shellQuotedRemotePath); if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi"
+    }
+
+    private var remotePathBootstrapCommand: String {
         "export PATH=\"$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\""
     }
 }
@@ -231,7 +270,6 @@ struct SSHCredential: Equatable {
     var password: String?
     var privateKeyPEM: String?
     var privateKeyPassphrase: String?
-    var appServerAuthToken: String?
 }
 
 enum ServerConnectionState: Equatable {
@@ -262,6 +300,22 @@ private extension String {
     var shellQuotedExecutablePath: String {
         if self == "~" {
             return "\"${HOME}\""
+        }
+        if hasPrefix("~/") {
+            return "\"${HOME}\"/\(String(dropFirst(2)).shellQuoted)"
+        }
+        return shellQuoted
+    }
+
+    var shellQuotedRemotePath: String {
+        if self == "$HOME" || self == "${HOME}" || self == "~" {
+            return "\"${HOME}\""
+        }
+        if hasPrefix("$HOME/") {
+            return "\"${HOME}\"/\(String(dropFirst(6)).shellQuoted)"
+        }
+        if hasPrefix("${HOME}/") {
+            return "\"${HOME}\"/\(String(dropFirst(8)).shellQuoted)"
         }
         if hasPrefix("~/") {
             return "\"${HOME}\"/\(String(dropFirst(2)).shellQuoted)"

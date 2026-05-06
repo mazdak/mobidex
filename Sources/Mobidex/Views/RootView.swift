@@ -152,6 +152,11 @@ struct ProjectSessionListView: View {
                                 Text(model.connectionState.label)
                                     .font(.caption)
                                     .foregroundStyle(statusColor)
+                                if let reconnectStatus = model.appServerReconnectStatus {
+                                    Text(reconnectStatus.label)
+                                        .font(.caption2)
+                                        .foregroundStyle(.orange)
+                                }
                             }
                             Spacer()
                             if model.isBusy {

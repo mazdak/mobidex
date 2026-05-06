@@ -10,8 +10,7 @@ struct ServerEditorView: View {
     @State private var port: Int
     @State private var username: String
     @State private var codexPath: String
-    @State private var appServerWebSocketURL: String
-    @State private var appServerAuthToken: String
+    @State private var targetShellRCFile: String
     @State private var authMethod: ServerAuthMethod
     @State private var password: String
     @State private var privateKey: String
@@ -29,8 +28,7 @@ struct ServerEditorView: View {
         _port = State(initialValue: server?.port ?? 22)
         _username = State(initialValue: server?.username ?? "")
         _codexPath = State(initialValue: server?.codexPath ?? "codex")
-        _appServerWebSocketURL = State(initialValue: server?.appServerWebSocketURL ?? "")
-        _appServerAuthToken = State(initialValue: "")
+        _targetShellRCFile = State(initialValue: server?.targetShellRCFile ?? "$HOME/.zshrc")
         _authMethod = State(initialValue: server?.authMethod ?? .password)
         _password = State(initialValue: "")
         _privateKey = State(initialValue: "")
@@ -55,6 +53,17 @@ struct ServerEditorView: View {
                 }
 
                 Section {
+                    TextField("Target Shell RC File", text: $targetShellRCFile, prompt: Text("$HOME/.zshrc"))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityIdentifier("targetShellRCFileField")
+                } header: {
+                    Text("Shell Environment")
+                } footer: {
+                    Text("Mobidex sources this file before resolving or starting Codex for the app-server session.")
+                }
+
+                Section {
                     TextField("Full Path to Codex", text: $codexPath, prompt: Text("~/.bun/bin/codex"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -66,22 +75,6 @@ struct ServerEditorView: View {
                         Text("Use the full remote executable path when possible. Mobidex uses this to attach through Codex's official Unix control socket, or to start that socket if needed.")
                         Text("Examples: ~/.bun/bin/codex, /home/ubuntu/.bun/bin/codex, /usr/local/bin/codex.")
                     }
-                }
-
-                Section {
-                    TextField("WebSocket URL", text: $appServerWebSocketURL, prompt: Text("ws://host:port"))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .accessibilityIdentifier("appServerWebSocketURLField")
-                    SecureField("Bearer Token", text: $appServerAuthToken)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("appServerAuthTokenField")
-                } header: {
-                    Text("Existing App-Server")
-                } footer: {
-                    Text("Leave blank to use `codex app-server proxy` over SSH. Mobidex attaches to Codex's official Unix socket and starts `codex app-server --listen unix://PATH` at that socket if it is missing. Set a WebSocket URL only for explicit `--listen ws://HOST:PORT` servers; ws://127.0.0.1:PORT is tunneled through this SSH server.")
                 }
 
                 Section("Authentication") {
@@ -137,14 +130,12 @@ struct ServerEditorView: View {
                 password = credential.password ?? ""
                 privateKey = credential.privateKeyPEM ?? ""
                 privateKeyPassphrase = credential.privateKeyPassphrase ?? ""
-                appServerAuthToken = credential.appServerAuthToken ?? ""
                 isHydratingCredential = false
                 credentialLoaded = true
             }
             .onChange(of: password) { _, _ in markCredentialEdited() }
             .onChange(of: privateKey) { _, _ in markCredentialEdited() }
             .onChange(of: privateKeyPassphrase) { _, _ in markCredentialEdited() }
-            .onChange(of: appServerAuthToken) { _, _ in markCredentialEdited() }
         }
     }
 
@@ -202,7 +193,7 @@ struct ServerEditorView: View {
             port: port,
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
             codexPath: codexPath,
-            appServerWebSocketURL: appServerWebSocketURL,
+            targetShellRCFile: targetShellRCFile,
             authMethod: authMethod,
             projects: original?.projects ?? [],
             createdAt: original?.createdAt ?? .now,
@@ -211,8 +202,7 @@ struct ServerEditorView: View {
         let credential = SSHCredential(
             password: authMethod == .password ? password : nil,
             privateKeyPEM: authMethod == .privateKey ? privateKey : nil,
-            privateKeyPassphrase: authMethod == .privateKey ? privateKeyPassphrase : nil,
-            appServerAuthToken: appServerAuthToken
+            privateKeyPassphrase: authMethod == .privateKey ? privateKeyPassphrase : nil
         )
         if await model.saveServer(server, credential: credential, connectAfterSave: original == nil) {
             dismiss()
