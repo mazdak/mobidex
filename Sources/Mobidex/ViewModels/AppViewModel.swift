@@ -124,6 +124,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var diffSnapshot: GitDiffSnapshot = .empty
     @Published private(set) var queuedTurnInputCount = 0
     @Published private(set) var selectedThreadTokenUsage: CodexTokenUsage?
+    @Published private(set) var switchingServerID: UUID?
     @Published var selectedReasoningEffort: CodexReasoningEffortOption = .medium
     @Published var selectedAccessMode: CodexAccessMode = .fullAccess
     @Published private var activeOperationCounts: [AppOperation: Int] = [:]
@@ -142,6 +143,7 @@ final class AppViewModel: ObservableObject {
     private var activeTurnRefreshTask: Task<Void, Never>?
     private var activeTurnRefreshThreadID: String?
     private var connectionGeneration = 0
+    private var sidebarSwitchGeneration = 0
     private var liveItems: [CodexThreadItem] = []
     private var selectedThreadLoadingCounts: [String: Int] = [:]
     private var queuedTurnInputsByThreadID: [String: [[CodexInputItem]]] = [:]
@@ -283,6 +285,42 @@ final class AppViewModel: ObservableObject {
         resetSessionState(clearThreads: true)
         pendingApprovals = []
         return true
+    }
+
+    @discardableResult
+    func switchServerFromSidebar(_ serverID: UUID?) async -> Bool {
+        sidebarSwitchGeneration &+= 1
+        let switchGeneration = sidebarSwitchGeneration
+        if selectedServerID == serverID {
+            switchingServerID = nil
+            statusMessage = nil
+            return true
+        }
+        switchingServerID = serverID
+        if let serverID,
+           let server = servers.first(where: { $0.id == serverID }) {
+            statusMessage = "Switching to \(server.displayName)"
+        } else {
+            statusMessage = "Switching servers"
+        }
+        defer {
+            if sidebarSwitchGeneration == switchGeneration {
+                switchingServerID = nil
+            }
+        }
+        if isConnectingAppServer {
+            connectionGeneration &+= 1
+            isConnectingAppServer = false
+            connectionState = .disconnected
+        }
+        if connectionState == .connected || connectionState == .connecting || appServer != nil {
+            await closeConnection(updateState: false)
+            connectionState = .disconnected
+        }
+        guard sidebarSwitchGeneration == switchGeneration else {
+            return false
+        }
+        return selectServer(serverID)
     }
 
     func selectProject(_ projectID: UUID?) {
@@ -636,7 +674,16 @@ final class AppViewModel: ObservableObject {
                 credential = nil
                 return
             }
-            let connectedAppServer = try await sshService.openAppServer(server: targetServer, credential: loadedCredential)
+            let connectedAppServer: CodexAppServerClient
+            do {
+                connectedAppServer = try await sshService.openAppServer(server: targetServer, credential: loadedCredential)
+            } catch {
+                guard selectedServerID == targetServer.id, connectionGeneration == connectGeneration else {
+                    credential = nil
+                    return
+                }
+                throw error
+            }
             guard selectedServerID == targetServer.id, connectionGeneration == connectGeneration else {
                 await connectedAppServer.close()
                 credential = nil

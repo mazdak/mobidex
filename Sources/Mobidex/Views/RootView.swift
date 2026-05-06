@@ -69,13 +69,21 @@ struct ServerSidebarView: View {
         List {
             ForEach(model.servers) { server in
                 Button {
-                    if model.selectServer(server.id) {
-                        promoteContentIfCompact()
+                    Task {
+                        if await model.switchServerFromSidebar(server.id) {
+                            promoteContentIfCompact()
+                        }
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(server.displayName)
-                            .font(.headline)
+                        HStack(spacing: 8) {
+                            Text(server.displayName)
+                                .font(.headline)
+                            if model.switchingServerID == server.id {
+                                ProgressView()
+                                    .controlSize(.mini)
+                            }
+                        }
                         Text(server.endpointLabel)
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -105,6 +113,17 @@ struct ServerSidebarView: View {
         .overlay {
             if model.servers.isEmpty {
                 ContentUnavailableView("No Servers", systemImage: "server.rack", description: Text("Add an SSH server to begin."))
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let statusMessage = model.statusMessage, !statusMessage.isEmpty {
+                Text(statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(.bar)
             }
         }
         .toolbar {

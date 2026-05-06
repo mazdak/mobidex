@@ -725,6 +725,92 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSidebarServerSwitchDisconnectsActiveAppServerBeforeSelecting() async throws {
+        let first = ServerRecord(displayName: "First Box", host: "first.example.com", username: "mazdak", authMethod: .password)
+        let second = ServerRecord(displayName: "Second Box", host: "second.example.com", username: "mazdak", authMethod: .password)
+        let repository = InMemoryServerRepository(servers: [first, second])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: first.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        try await connectWithSingleOpenSession(in: viewModel, transport: transport)
+        XCTAssertEqual(viewModel.connectionState, .connected)
+
+        let switched = await viewModel.switchServerFromSidebar(second.id)
+        XCTAssertTrue(switched)
+
+        XCTAssertEqual(viewModel.selectedServerID, second.id)
+        XCTAssertEqual(viewModel.connectionState, .disconnected)
+        XCTAssertNil(viewModel.selectedThreadID)
+        XCTAssertTrue(viewModel.conversationSections.isEmpty)
+    }
+
+    @MainActor
+    func testSidebarServerSwitchUsesLatestTapWhileConnectIsInFlight() async throws {
+        let first = ServerRecord(displayName: "First Box", host: "first.example.com", username: "mazdak", authMethod: .password)
+        let second = ServerRecord(displayName: "Second Box", host: "second.example.com", username: "mazdak", authMethod: .password)
+        let third = ServerRecord(displayName: "Third Box", host: "third.example.com", username: "mazdak", authMethod: .password)
+        let repository = InMemoryServerRepository(servers: [first, second, third])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: first.id)
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: StubSSHService(
+                openAppServerError: TestError.unexpectedSSH,
+                openAppServerDelayNanoseconds: 120_000_000
+            )
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        try await waitForConnectionState(.connecting, in: viewModel)
+
+        let firstSwitchSucceeded = await viewModel.switchServerFromSidebar(second.id)
+        let secondSwitchSucceeded = await viewModel.switchServerFromSidebar(third.id)
+
+        await connectTask.value
+
+        XCTAssertTrue(firstSwitchSucceeded)
+        XCTAssertTrue(secondSwitchSucceeded)
+        XCTAssertEqual(viewModel.selectedServerID, third.id)
+        XCTAssertEqual(viewModel.connectionState, .disconnected)
+        XCTAssertNil(viewModel.switchingServerID)
+    }
+
+    @MainActor
+    func testSidebarCurrentServerTapCancelsPendingSwitch() async throws {
+        let first = ServerRecord(displayName: "First Box", host: "first.example.com", username: "mazdak", authMethod: .password)
+        let second = ServerRecord(displayName: "Second Box", host: "second.example.com", username: "mazdak", authMethod: .password)
+        let repository = InMemoryServerRepository(servers: [first, second])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: first.id)
+        let transport = MockCodexLineTransport(closeDelayNanoseconds: 120_000_000)
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        try await connectWithSingleOpenSession(in: viewModel, transport: transport)
+        XCTAssertEqual(viewModel.connectionState, .connected)
+
+        let pendingSwitchTask = Task { await viewModel.switchServerFromSidebar(second.id) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        let cancelled = await viewModel.switchServerFromSidebar(first.id)
+        let pendingSwitchSucceeded = await pendingSwitchTask.value
+
+        XCTAssertTrue(cancelled)
+        XCTAssertFalse(pendingSwitchSucceeded)
+        XCTAssertEqual(viewModel.selectedServerID, first.id)
+        XCTAssertNil(viewModel.switchingServerID)
+    }
+
+    @MainActor
     func testAutoConnectCanRetryAfterFailureWhenServerIsReselected() async throws {
         let first = ServerRecord(displayName: "Bad Box", host: "bad.example.com", username: "mazdak", authMethod: .password)
         let second = ServerRecord(displayName: "Good Box", host: "good.example.com", username: "mazdak", authMethod: .password)
@@ -4334,6 +4420,7 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
     private let discoverProjectsError: Error?
     private let testConnectionError: Error?
     private let openAppServerError: Error?
+    private let openAppServerDelayNanoseconds: UInt64
     private let lock = NSLock()
     private var openAppServerCalls = 0
 
@@ -4341,12 +4428,14 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
         discoveredProjects: [RemoteProject] = [],
         discoverProjectsError: Error? = nil,
         testConnectionError: Error? = nil,
-        openAppServerError: Error? = nil
+        openAppServerError: Error? = nil,
+        openAppServerDelayNanoseconds: UInt64 = 0
     ) {
         self.discoveredProjects = discoveredProjects
         self.discoverProjectsError = discoverProjectsError
         self.testConnectionError = testConnectionError
         self.openAppServerError = openAppServerError
+        self.openAppServerDelayNanoseconds = openAppServerDelayNanoseconds
     }
 
     var openAppServerCallCount: Int {
@@ -4373,6 +4462,9 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {
         lock.withLock {
             openAppServerCalls += 1
+        }
+        if openAppServerDelayNanoseconds > 0 {
+            try await Task.sleep(nanoseconds: openAppServerDelayNanoseconds)
         }
         if let openAppServerError {
             throw openAppServerError

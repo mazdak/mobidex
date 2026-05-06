@@ -411,13 +411,15 @@ private func clientFacingChannelErrorMessage(_ error: ChannelError) -> String {
 final class MockCodexLineTransport: CodexLineTransport, @unchecked Sendable {
     let inboundLines: AsyncThrowingStream<String, Error>
     private let continuation: AsyncThrowingStream<String, Error>.Continuation
+    private let closeDelayNanoseconds: UInt64
     private(set) var sentLines: [String] = []
     private let lock = NSLock()
 
-    init() {
+    init(closeDelayNanoseconds: UInt64 = 0) {
         let stream = AsyncThrowingStream<String, Error>.makeStream()
         inboundLines = stream.stream
         continuation = stream.continuation
+        self.closeDelayNanoseconds = closeDelayNanoseconds
     }
 
     func sendLine(_ line: String) async throws {
@@ -431,6 +433,9 @@ final class MockCodexLineTransport: CodexLineTransport, @unchecked Sendable {
     }
 
     func close() async {
+        if closeDelayNanoseconds > 0 {
+            try? await Task.sleep(nanoseconds: closeDelayNanoseconds)
+        }
         continuation.finish()
     }
 
