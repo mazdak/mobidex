@@ -30,19 +30,19 @@ data class ProjectListSections(
                 discovered = sorted.filter { project ->
                     project.discovered &&
                         !project.isFavorite &&
-                        (project.discoveredSessionCount > 0 || showInactiveDiscoveredProjects || searching)
+                        (project.activeChatCount > 0 || project.discoveredSessionCount > 0 || showInactiveDiscoveredProjects || searching)
                 },
                 added = sorted.filter { !it.discovered && !it.isFavorite },
                 showInactiveDiscoveredFilter = projects.any {
-                    it.discovered && !it.isFavorite && it.discoveredSessionCount == 0
+                    it.discovered && !it.isFavorite && it.activeChatCount == 0 && it.discoveredSessionCount == 0
                 },
             )
         }
 
         private val projectListComparator = Comparator<ProjectRecord> { lhs, rhs ->
             compareByDescending<ProjectRecord> { it.isFavorite }
-                .thenByDescending { it.discoveredSessionCount }
                 .thenByDescending { it.activeChatCount }
+                .thenByDescending { it.discoveredSessionCount }
                 .thenByDescending { it.lastActiveChatAtEpochSeconds ?: it.lastDiscoveredAtEpochSeconds ?: Long.MIN_VALUE }
                 .thenComparator { left, right -> left.displayName.lowercase().compareTo(right.displayName.lowercase()) }
                 .compare(lhs, rhs)

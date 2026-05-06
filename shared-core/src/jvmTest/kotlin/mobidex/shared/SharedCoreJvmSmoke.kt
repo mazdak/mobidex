@@ -11,7 +11,9 @@ private fun assertTrue(value: Boolean) {
 fun main() {
     separatesFavoritesFromActiveDiscoveredProjects()
     searchFindsInactiveDiscoveredProjects()
+    appServerLoadedProjectsAreVisibleAndSortedBeforeHistoricalDiscovery()
     projectCatalogAppliesOpenSessionCounts()
+    projectCatalogGroupsCodexWorktreesFromAppServerSessions()
     diffParserBuildsFileDiffs()
     diffParserIncludesDeletedAndQuotedPaths()
     println("shared-core parity smoke passed")
@@ -48,6 +50,21 @@ private fun searchFindsInactiveDiscoveredProjects() {
     assertEquals(listOf("/srv/inactive-match"), sections.discovered.map { it.path })
 }
 
+private fun appServerLoadedProjectsAreVisibleAndSortedBeforeHistoricalDiscovery() {
+    val loaded = ProjectRecord(path = "/srv/loaded", discovered = true, activeChatCount = 1)
+    val historical = ProjectRecord(path = "/srv/historical", discovered = true, discoveredSessionCount = 10)
+    val inactive = ProjectRecord(path = "/srv/inactive", discovered = true)
+
+    val sections = ProjectListSections.from(
+        projects = listOf(inactive, historical, loaded),
+        searchText = "",
+        showInactiveDiscoveredProjects = false,
+    )
+
+    assertEquals(listOf("/srv/loaded", "/srv/historical"), sections.discovered.map { it.path })
+    assertTrue(sections.showInactiveDiscoveredFilter)
+}
+
 private fun projectCatalogAppliesOpenSessionCounts() {
     val existing = listOf(ProjectRecord(path = "/srv/app", discovered = true, discoveredSessionCount = 1))
     val sessions = listOf(CodexThreadSummary(id = "thread-1", cwd = "/srv/app", updatedAtEpochSeconds = 42))
@@ -60,6 +77,24 @@ private fun projectCatalogAppliesOpenSessionCounts() {
 
     assertEquals(1, refreshed.single().activeChatCount)
     assertEquals(42L, refreshed.single().lastActiveChatAtEpochSeconds)
+}
+
+private fun projectCatalogGroupsCodexWorktreesFromAppServerSessions() {
+    val refreshed = ProjectCatalog.refreshedProjects(
+        existingProjects = emptyList(),
+        discoveredProjects = emptyList(),
+        openSessions = listOf(
+            CodexThreadSummary(id = "main", cwd = "/Users/me/Code/codex-rs", updatedAtEpochSeconds = 10),
+            CodexThreadSummary(id = "worktree", cwd = "/Users/me/.codex/worktrees/abc/codex-rs", updatedAtEpochSeconds = 20),
+        ),
+    )
+
+    assertEquals(listOf("/Users/me/Code/codex-rs"), refreshed.map { it.path })
+    assertEquals(2, refreshed.single().activeChatCount)
+    assertEquals(
+        listOf("/Users/me/Code/codex-rs", "/Users/me/.codex/worktrees/abc/codex-rs"),
+        refreshed.single().sessionPaths,
+    )
 }
 
 private fun diffParserBuildsFileDiffs() {

@@ -53,17 +53,24 @@ object ProjectCatalog {
         val projectPathByCodexWorktreeName = mutableMapOf<String, String>()
         val ambiguousCodexWorktreeNames = mutableSetOf<String>()
 
-        for ((path, record) in projects) {
-            for (sessionPath in ProjectRecord.normalizedSessionPaths(record.sessionPaths, record.path)) {
-                projectPathBySessionPath[sessionPath] = path
-            }
-            if (isCodexWorktreePath(record.path)) continue
-            val name = record.path.substringAfterLast('/')
-            if (name in projectPathByCodexWorktreeName) {
+        fun addCodexWorktreeCandidate(path: String) {
+            if (isCodexWorktreePath(path)) return
+            val name = path.substringAfterLast('/')
+            if (name in projectPathByCodexWorktreeName && projectPathByCodexWorktreeName[name] != path) {
                 ambiguousCodexWorktreeNames.add(name)
             } else {
                 projectPathByCodexWorktreeName[name] = path
             }
+        }
+
+        for ((path, record) in projects) {
+            for (sessionPath in ProjectRecord.normalizedSessionPaths(record.sessionPaths, record.path)) {
+                projectPathBySessionPath[sessionPath] = path
+            }
+            addCodexWorktreeCandidate(record.path)
+        }
+        for (session in sessions) {
+            addCodexWorktreeCandidate(session.cwd)
         }
         for (name in ambiguousCodexWorktreeNames) {
             projectPathByCodexWorktreeName.remove(name)

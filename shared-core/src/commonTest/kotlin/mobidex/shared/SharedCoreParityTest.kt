@@ -39,6 +39,22 @@ class SharedCoreParityTest {
     }
 
     @Test
+    fun appServerLoadedProjectsAreVisibleAndSortedBeforeHistoricalDiscovery() {
+        val loaded = ProjectRecord(path = "/srv/loaded", discovered = true, activeChatCount = 1)
+        val historical = ProjectRecord(path = "/srv/historical", discovered = true, discoveredSessionCount = 10)
+        val inactive = ProjectRecord(path = "/srv/inactive", discovered = true)
+
+        val sections = ProjectListSections.from(
+            projects = listOf(inactive, historical, loaded),
+            searchText = "",
+            showInactiveDiscoveredProjects = false,
+        )
+
+        assertEquals(listOf("/srv/loaded", "/srv/historical"), sections.discovered.map { it.path })
+        assertTrue(sections.showInactiveDiscoveredFilter)
+    }
+
+    @Test
     fun projectDisplayNameTrimsTrailingSlashLikeSwift() {
         assertEquals("app", ProjectRecord(path = "/srv/app/").displayName)
     }
@@ -56,6 +72,25 @@ class SharedCoreParityTest {
 
         assertEquals(1, refreshed.single().activeChatCount)
         assertEquals(42, refreshed.single().lastActiveChatAtEpochSeconds)
+    }
+
+    @Test
+    fun projectCatalogGroupsCodexWorktreesFromAppServerSessions() {
+        val refreshed = ProjectCatalog.refreshedProjects(
+            existingProjects = emptyList(),
+            discoveredProjects = emptyList(),
+            openSessions = listOf(
+                CodexThreadSummary(id = "main", cwd = "/Users/me/Code/codex-rs", updatedAtEpochSeconds = 10),
+                CodexThreadSummary(id = "worktree", cwd = "/Users/me/.codex/worktrees/abc/codex-rs", updatedAtEpochSeconds = 20),
+            ),
+        )
+
+        assertEquals(listOf("/Users/me/Code/codex-rs"), refreshed.map { it.path })
+        assertEquals(2, refreshed.single().activeChatCount)
+        assertEquals(
+            listOf("/Users/me/Code/codex-rs", "/Users/me/.codex/worktrees/abc/codex-rs"),
+            refreshed.single().sessionPaths,
+        )
     }
 
     @Test

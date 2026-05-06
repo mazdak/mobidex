@@ -1,0 +1,4 @@
+<full-backup-content>
+    <exclude domain="sharedpref" path="mobidex_credentials.xml" />
+    <exclude domain="sharedpref" path="mobidex_host_keys.xml" />
+</full-backup-content>
