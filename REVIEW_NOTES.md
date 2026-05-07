@@ -85,7 +85,7 @@ This file records the subagent review checkpoints used during the Mobidex build.
 ## Simulator Launch Verification
 
 - Historical finding: while official scheme destination selection was blocked, the helper-built simulator app could still be installed and launched directly with `simctl` on the available simulator runtimes.
-- Fix: `Scripts/verify-simulator-launch.sh` forces a Debug simulator helper build, installs the app on an available iOS simulator, terminates any existing app process, launches `com.mazdak.mobidex`, verifies the launched PID is still running after a settle delay, and captures a screenshot.
+- Fix: `Scripts/verify-simulator-launch.sh` forces a Debug simulator helper build, installs the app on an available iOS simulator, terminates any existing app process, launches `com.getresq.mobidex`, verifies the launched PID is still running after a settle delay, and captures a screenshot.
 - Verification: `MOBIDEX_SCREENSHOT_PATH=/tmp/mobidex-runtime/verify-launch-default-full.png Scripts/verify-simulator-launch.sh` succeeds and the screenshot shows the rendered initial `Servers` / `No Servers` UI.
 - Follow-up review findings: the verifier originally could inherit `SDK=iphoneos` / `CONFIGURATION=Release`, could interact with a running app, and auto-device parsing initially selected the status token instead of the simulator UDID.
 - Follow-up fixes: the verifier now command-scopes `SDK=iphonesimulator CONFIGURATION=Debug`, terminates before launch and uses `--terminate-running-process`, extracts UUID-shaped device IDs, only shuts down simulators it observed as `Shutdown`, waits before screenshot capture, and checks the launched PID with `launchctl`.

@@ -1,0 +1,110 @@
+{
+  "env": {
+    "APP_ID": "6767185049",
+    "BUNDLE_ID": "com.getresq.mobidex",
+    "PROJECT_PATH": "Mobidex.xcodeproj",
+    "SCHEME": "Mobidex",
+    "CONFIGURATION": "Release",
+    "TEAM_ID": "JX3932QCN8",
+    "ADHOC_EXPORT_OPTIONS": ".asc/export-options-adhoc.plist",
+    "TESTFLIGHT_EXPORT_OPTIONS": ".asc/export-options-testflight.plist",
+    "TESTFLIGHT_GROUP": "Internal Testers",
+    "EXTERNAL_TESTFLIGHT_GROUP": ""
+  },
+  "before_all": "asc auth status >/dev/null || true",
+  "workflows": {
+    "adhoc": {
+      "description": "Archive Mobidex and export an Ad Hoc IPA. Requires VERSION and BUILD_NUMBER.",
+      "steps": [
+        {
+          "name": "validate_adhoc_inputs",
+          "run": "test -n \"${VERSION:-}\" || { echo \"VERSION is required, for example VERSION:1.0\" >&2; exit 2; }; test -n \"${BUILD_NUMBER:-}\" || { echo \"BUILD_NUMBER is required, for example BUILD_NUMBER:1\" >&2; exit 2; }; mkdir -p .asc/artifacts"
+        },
+        {
+          "name": "archive_adhoc",
+          "run": "asc xcode archive --project \"$PROJECT_PATH\" --scheme \"$SCHEME\" --configuration \"$CONFIGURATION\" --archive-path \".asc/artifacts/Mobidex-$VERSION-$BUILD_NUMBER.xcarchive\" --clean --overwrite --xcodebuild-flag=-destination --xcodebuild-flag=generic/platform=iOS --xcodebuild-flag=-allowProvisioningUpdates --xcodebuild-flag=-hideShellScriptEnvironment --xcodebuild-flag=DEVELOPMENT_TEAM=$TEAM_ID --xcodebuild-flag=MARKETING_VERSION=$VERSION --xcodebuild-flag=CURRENT_PROJECT_VERSION=$BUILD_NUMBER --output json",
+          "outputs": {
+            "ARCHIVE_PATH": "$.archive_path",
+            "VERSION": "$.version",
+            "BUILD_NUMBER": "$.build_number"
+          }
+        },
+        {
+          "name": "export_adhoc",
+          "run": "asc xcode export --archive-path ${steps.archive_adhoc.ARCHIVE_PATH} --export-options \"$ADHOC_EXPORT_OPTIONS\" --ipa-path \".asc/artifacts/Mobidex-AdHoc-$VERSION-${steps.archive_adhoc.BUILD_NUMBER}.ipa\" --overwrite --xcodebuild-flag=-allowProvisioningUpdates --output json",
+          "outputs": {
+            "IPA_PATH": "$.ipa_path",
+            "VERSION": "$.version",
+            "BUILD_NUMBER": "$.build_number"
+          }
+        }
+      ]
+    },
+    "testflight": {
+      "description": "Archive Mobidex, export an App Store Connect IPA, upload it, and add it to a TestFlight group.",
+      "steps": [
+        {
+          "name": "validate_testflight_inputs",
+          "run": "test -n \"${APP_ID:-}\" || { echo \"APP_ID is required\" >&2; exit 2; }; test -n \"${VERSION:-}\" || { echo \"VERSION is required, for example VERSION:1.0\" >&2; exit 2; }; test -n \"${TESTFLIGHT_GROUP:-}\" || { echo \"TESTFLIGHT_GROUP is required\" >&2; exit 2; }; mkdir -p .asc/artifacts"
+        },
+        {
+          "name": "resolve_testflight_build",
+          "run": "asc builds next-build-number --app \"$APP_ID\" --version \"$VERSION\" --platform IOS --initial-build-number 1 --output json",
+          "outputs": {
+            "BUILD_NUMBER": "$.nextBuildNumber"
+          }
+        },
+        {
+          "name": "archive_testflight",
+          "run": "asc xcode archive --project \"$PROJECT_PATH\" --scheme \"$SCHEME\" --configuration \"$CONFIGURATION\" --archive-path \".asc/artifacts/Mobidex-TestFlight-$VERSION-${steps.resolve_testflight_build.BUILD_NUMBER}.xcarchive\" --clean --overwrite --xcodebuild-flag=-destination --xcodebuild-flag=generic/platform=iOS --xcodebuild-flag=-allowProvisioningUpdates --xcodebuild-flag=-hideShellScriptEnvironment --xcodebuild-flag=DEVELOPMENT_TEAM=$TEAM_ID --xcodebuild-flag=MARKETING_VERSION=$VERSION --xcodebuild-flag=CURRENT_PROJECT_VERSION=${steps.resolve_testflight_build.BUILD_NUMBER} --output json",
+          "outputs": {
+            "ARCHIVE_PATH": "$.archive_path",
+            "VERSION": "$.version",
+            "BUILD_NUMBER": "$.build_number"
+          }
+        },
+        {
+          "name": "export_testflight",
+          "run": "asc xcode export --archive-path ${steps.archive_testflight.ARCHIVE_PATH} --export-options \"$TESTFLIGHT_EXPORT_OPTIONS\" --ipa-path \".asc/artifacts/Mobidex-TestFlight-$VERSION-${steps.archive_testflight.BUILD_NUMBER}.ipa\" --overwrite --xcodebuild-flag=-allowProvisioningUpdates --output json",
+          "outputs": {
+            "IPA_PATH": "$.ipa_path",
+            "VERSION": "$.version",
+            "BUILD_NUMBER": "$.build_number"
+          }
+        },
+        {
+          "name": "upload_testflight",
+          "run": "asc builds upload --app \"$APP_ID\" --ipa ${steps.export_testflight.IPA_PATH} --version \"$VERSION\" --build-number ${steps.archive_testflight.BUILD_NUMBER} --wait --poll-interval 30s --output json"
+        },
+        {
+          "name": "set_export_compliance",
+          "run": "asc builds update --app \"$APP_ID\" --build-number ${steps.archive_testflight.BUILD_NUMBER} --version \"$VERSION\" --platform IOS --uses-non-exempt-encryption=false --output json"
+        },
+        {
+          "name": "add_internal_group",
+          "run": "asc builds add-groups --app \"$APP_ID\" --build-number ${steps.archive_testflight.BUILD_NUMBER} --version \"$VERSION\" --platform IOS --group \"$TESTFLIGHT_GROUP\" --output json",
+          "outputs": {
+            "BUILD_ID": "$.buildId"
+          }
+        }
+      ]
+    },
+    "testflight_external": {
+      "description": "Distribute an already uploaded build to an external TestFlight group and submit it for beta app review.",
+      "steps": [
+        {
+          "name": "validate_external_inputs",
+          "run": "test -n \"${APP_ID:-}\" || { echo \"APP_ID is required\" >&2; exit 2; }; test -n \"${BUILD_ID:-}\" || { echo \"BUILD_ID is required\" >&2; exit 2; }; test -n \"${EXTERNAL_TESTFLIGHT_GROUP:-}\" || { echo \"EXTERNAL_TESTFLIGHT_GROUP is required\" >&2; exit 2; }"
+        },
+        {
+          "name": "publish_external_group",
+          "run": "asc publish testflight --app \"$APP_ID\" --build \"$BUILD_ID\" --group \"$EXTERNAL_TESTFLIGHT_GROUP\" --wait --submit --confirm --poll-interval 30s --output json",
+          "outputs": {
+            "BUILD_ID": "$.buildId",
+            "BUILD_NUMBER": "$.buildNumber"
+          }
+        }
+      ]
+    }
+  }
+}

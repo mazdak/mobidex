@@ -1,6 +1,6 @@
 name: Mobidex
 options:
-  bundleIdPrefix: com.mazdak
+  bundleIdPrefix: com.getresq
   deploymentTarget:
     iOS: "18.0"
   xcodeVersion: "16.0"
@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_STRICT_CONCURRENCY: targeted
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     IPHONEOS_DEPLOYMENT_TARGET: "18.0"
     SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
@@ -64,7 +64,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.mazdak.mobidex
+        PRODUCT_BUNDLE_IDENTIFIER: com.getresq.mobidex
         INFOPLIST_FILE: Sources/Mobidex/Info.plist
         CODE_SIGN_ENTITLEMENTS: Sources/Mobidex/Mobidex.entitlements
         CODE_SIGN_STYLE: Automatic
@@ -86,7 +86,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.mazdak.mobidex.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.getresq.mobidex.tests
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
 
   MobidexUITests:
@@ -104,7 +104,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.mazdak.mobidex.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.getresq.mobidex.uitests
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
 
 schemes:

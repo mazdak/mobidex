@@ -25,7 +25,7 @@ protocol CredentialStore: Sendable {
 }
 
 final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
-    private let service = "com.mazdak.mobidex.ssh"
+    private let service = "com.getresq.mobidex.ssh"
 
     func loadCredential(serverID: UUID) throws -> SSHCredential {
         SSHCredential(

@@ -1,5 +1,11 @@
 /.derivedData/
 /build/
+/.secrets/
+.asc/artifacts/
+.asc/runs/
+.asc/signing/
+.asc/config.json
+.asc/*.p8
 .DS_Store
 xcuserdata/
 **/xcuserdata/

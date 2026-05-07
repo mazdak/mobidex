@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PATH="${MOBIDEX_APP_PATH:-"$ROOT_DIR/build/Debug-iphonesimulator/Mobidex.app"}"
-BUNDLE_ID="${MOBIDEX_BUNDLE_ID:-com.mazdak.mobidex}"
+BUNDLE_ID="${MOBIDEX_BUNDLE_ID:-com.getresq.mobidex}"
 SCREENSHOT_PATH="${MOBIDEX_SCREENSHOT_PATH:-"/tmp/mobidex-simulator-launch.png"}"
 DEVICE_ID="${MOBIDEX_SIMULATOR_ID:-}"
 KEEP_SIMULATOR="${MOBIDEX_KEEP_SIMULATOR:-0}"

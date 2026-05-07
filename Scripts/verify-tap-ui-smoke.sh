@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PATH="${MOBIDEX_APP_PATH:-"$ROOT_DIR/build/Debug-iphonesimulator/Mobidex.app"}"
+BUNDLE_ID="${MOBIDEX_BUNDLE_ID:-com.getresq.mobidex}"
 RUNNER_PATH="${MOBIDEX_UI_TEST_RUNNER_PATH:-"$ROOT_DIR/build/Debug-iphonesimulator/MobidexUITests-Runner.app"}"
 TEST_BUNDLE_PATH="${MOBIDEX_UI_TEST_BUNDLE_PATH:-"$RUNNER_PATH/PlugIns/MobidexUITests.xctest"}"
 LOG_PATH="${LOG_PATH:-/tmp/mobidex-tap-ui-smoke.log}"
@@ -186,7 +187,7 @@ plist="/usr/libexec/PlistBuddy"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:TestBundlePath string $TEST_BUNDLE_PATH" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:TestHostBundleIdentifier string $runner_bundle_id" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:TestHostPath string $RUNNER_PATH" "$XCTESTRUN_PATH"
-"$plist" -c "Add :TestConfigurations:0:TestTargets:0:UITargetAppBundleIdentifier string com.mazdak.mobidex" "$XCTESTRUN_PATH"
+"$plist" -c "Add :TestConfigurations:0:TestTargets:0:UITargetAppBundleIdentifier string $BUNDLE_ID" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:UITargetAppPath string $APP_PATH" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:UserAttachmentLifetime string deleteOnSuccess" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:TestingEnvironmentVariables dict" "$XCTESTRUN_PATH"
@@ -225,7 +226,7 @@ for key in \
   add_test_environment "$key"
 done
 
-xcrun simctl terminate "$DEVICE_ID" com.mazdak.mobidex >/dev/null 2>&1 || true
+xcrun simctl terminate "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl terminate "$DEVICE_ID" "$runner_bundle_id" >/dev/null 2>&1 || true
 
 set +e
