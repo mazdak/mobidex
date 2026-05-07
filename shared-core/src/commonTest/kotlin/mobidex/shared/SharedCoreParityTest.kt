@@ -94,6 +94,26 @@ class SharedCoreParityTest {
     }
 
     @Test
+    fun sessionListSectionsGroupByProjectAndSortByRecentActivity() {
+        val projects = listOf(
+            ProjectRecord(path = "/srv/app", sessionPaths = listOf("/srv/app", "/srv/.codex/worktrees/a/app")),
+            ProjectRecord(path = "/srv/tools"),
+        )
+        val sections = SessionListSections.from(
+            sessions = listOf(
+                CodexThreadSummary(id = "tools-old", cwd = "/srv/tools", updatedAtEpochSeconds = 10),
+                CodexThreadSummary(id = "app-worktree-new", cwd = "/srv/.codex/worktrees/a/app", updatedAtEpochSeconds = 40),
+                CodexThreadSummary(id = "unknown", cwd = "/tmp/loose", updatedAtEpochSeconds = 30),
+                CodexThreadSummary(id = "app-main-old", cwd = "/srv/app", updatedAtEpochSeconds = 20),
+            ),
+            projects = projects,
+        )
+
+        assertEquals(listOf("app", "/tmp/loose", "tools"), sections.map { it.title })
+        assertEquals(listOf("app-worktree-new", "app-main-old"), sections.first().sessionIds)
+    }
+
+    @Test
     fun diffParserBuildsFileDiffs() {
         val diff = """
             diff --git a/Sources/App.swift b/Sources/App.swift

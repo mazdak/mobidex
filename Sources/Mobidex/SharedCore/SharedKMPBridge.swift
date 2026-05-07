@@ -45,6 +45,7 @@ enum SharedKMPBridge {
     typealias SharedJsonValueString = MobidexShared.JsonValueStringValue
     typealias SharedProjectRecord = MobidexShared.ProjectRecord
     typealias SharedRemoteProject = MobidexShared.RemoteProject
+    typealias SharedSessionListSection = MobidexShared.SessionListSection
 
     static func changedFilePaths(from diff: String) -> [String] {
         MobidexShared.GitDiffChangedFileParser.shared.paths(diff: diff)
@@ -88,6 +89,21 @@ enum SharedKMPBridge {
             showInactiveDiscoveredFilter: sections.showInactiveDiscoveredFilter,
             discoveredTitle: sections.discoveredTitle
         )
+    }
+
+    static func sessionListSections(threads: [CodexThread], projects: [ProjectRecord]) -> [SessionListSection] {
+        let threadsByID = Dictionary(uniqueKeysWithValues: threads.map { ($0.id, $0) })
+        let sections = MobidexShared.SessionListSections.shared.from(
+            sessions: threads.map(toSharedCodexThreadSummary),
+            projects: projects.map(toSharedProjectRecord)
+        )
+        return sections.map { section in
+            SessionListSection(
+                id: section.id,
+                title: section.title,
+                threads: section.sessionIds.compactMap { threadsByID[$0] }
+            )
+        }
     }
 
     static func normalizedSessionPaths(_ paths: [String], primaryPath: String) -> [String] {

@@ -105,6 +105,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var servers: [ServerRecord] = []
     @Published private(set) var selectedServerID: UUID?
     @Published private(set) var selectedProjectID: UUID?
+    @Published private(set) var isShowingAllSessions = false
     @Published private(set) var threads: [CodexThread] = []
     @Published private(set) var selectedThreadID: String?
     @Published private(set) var selectedThread: CodexThread?
@@ -149,6 +150,7 @@ final class AppViewModel: ObservableObject {
     private var queuedTurnInputsByThreadID: [String: [[CodexInputItem]]] = [:]
     private var isConnectingAppServer = false
     private var didLoadServers = false
+    private var suppressThreadAutoSelection = false
     private var autoConnectAttemptedServerIDs = Set<UUID>()
     private var appServerReconnectAttemptsByServerID: [UUID: Int] = [:]
 
@@ -212,7 +214,11 @@ final class AppViewModel: ObservableObject {
     }
 
     var canCreateSession: Bool {
-        appServer != nil && !isSessionMutationInFlight
+        appServer != nil && (selectedProject != nil || selectedThread != nil) && !isSessionMutationInFlight
+    }
+
+    var sessionSections: [SessionListSection] {
+        SessionListSections.sections(threads: threads, projects: selectedServer?.projects ?? [])
     }
 
     var contextUsageFraction: Double? {
@@ -270,6 +276,7 @@ final class AppViewModel: ObservableObject {
         }
 
         selectedServerID = serverID
+        isShowingAllSessions = false
         selectedProjectID = serverID.flatMap { id in
             servers.first { $0.id == id }?.projects.first?.id
         }
@@ -324,10 +331,22 @@ final class AppViewModel: ObservableObject {
     }
 
     func selectProject(_ projectID: UUID?) {
-        guard selectedProjectID != projectID else {
+        guard selectedProjectID != projectID || isShowingAllSessions else {
             return
         }
+        isShowingAllSessions = false
+        suppressThreadAutoSelection = true
         selectedProjectID = projectID
+        resetSessionState(clearThreads: true)
+    }
+
+    func selectAllSessions() {
+        guard !isShowingAllSessions || selectedProjectID != nil else {
+            return
+        }
+        isShowingAllSessions = true
+        suppressThreadAutoSelection = true
+        selectedProjectID = nil
         resetSessionState(clearThreads: true)
     }
 
@@ -438,6 +457,7 @@ final class AppViewModel: ObservableObject {
                 || (connectionState != .connected && connectionState != .connecting)
             if shouldSelectSavedServer {
                 selectedServerID = next.id
+                isShowingAllSessions = false
                 selectedProjectID = next.projects.first?.id
                 connectionState = .disconnected
                 resetSessionState(clearThreads: true)
@@ -491,6 +511,7 @@ final class AppViewModel: ObservableObject {
             servers = nextServers
             if selectedServerID == server.id {
                 selectedServerID = servers.first?.id
+                isShowingAllSessions = false
                 selectedProjectID = selectedServer?.projects.first?.id
                 resetSessionState(clearThreads: true)
             }
@@ -533,6 +554,7 @@ final class AppViewModel: ObservableObject {
         do {
             try persistServers(nextServers)
             servers = nextServers
+            isShowingAllSessions = false
             selectedProjectID = project.id
             resetSessionState(clearThreads: true)
             statusMessage = "Added \(project.displayName)."
@@ -563,6 +585,7 @@ final class AppViewModel: ObservableObject {
             servers = nextServers
             selectedProjectID = nextSelectedProjectID
             if removedSelectedProject {
+                isShowingAllSessions = false
                 resetSessionState(clearThreads: true)
             }
             return true
@@ -617,6 +640,7 @@ final class AppViewModel: ObservableObject {
             }
             if selectedServerID == nil {
                 selectedServerID = servers.first?.id
+                isShowingAllSessions = false
                 selectedProjectID = selectedServer?.projects.first?.id
             }
         } catch {
@@ -740,6 +764,7 @@ final class AppViewModel: ObservableObject {
 
     func openThread(_ thread: CodexThread) async {
         let scope = currentThreadLoadScope
+        suppressThreadAutoSelection = false
         selectedThreadID = thread.id
         selectedThreadTokenUsage = nil
         hydrateConversation(from: thread)
@@ -761,7 +786,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func startNewSession() async {
-        guard selectedProject != nil else { return }
+        guard let cwd = selectedProject?.path ?? selectedThread?.cwd else { return }
         guard appServer != nil else {
             statusMessage = "Connect to the app-server before starting a new session."
             return
@@ -773,14 +798,15 @@ final class AppViewModel: ObservableObject {
                 statusMessage = "Connect to the app-server before starting a new session."
                 return
             }
-            let thread = try await appServer.startThread(cwd: scope.cwd)
+            let thread = try await appServer.startThread(cwd: cwd)
             guard currentThreadLoadScope == scope, threadMatchesScope(thread, scope: scope) else {
                 return
             }
             selectedThreadID = thread.id
             selectedThreadTokenUsage = nil
             hydrateConversation(from: thread)
-            threads = prioritizeActiveThreads([thread] + threads.filter { $0.id != thread.id })
+            suppressThreadAutoSelection = false
+            threads = sortedThreads([thread] + threads.filter { $0.id != thread.id })
             statusMessage = "New session created."
         }
     }
@@ -1144,7 +1170,15 @@ final class AppViewModel: ObservableObject {
     }
 
     private var currentThreadLoadScope: ThreadLoadScope {
-        ThreadLoadScope(
+        if isShowingAllSessions {
+            return ThreadLoadScope(
+                serverID: selectedServerID,
+                projectID: nil,
+                cwd: nil,
+                sessionPaths: []
+            )
+        }
+        return ThreadLoadScope(
             serverID: selectedServerID,
             projectID: selectedProjectID,
             cwd: selectedProject?.path,
@@ -1162,6 +1196,7 @@ final class AppViewModel: ObservableObject {
                 try? persistServers(normalizedServers)
             }
             selectedServerID = servers.first?.id
+            isShowingAllSessions = false
             selectedProjectID = selectedServer?.projects.first?.id
         } catch {
             statusMessage = error.localizedDescription
@@ -1234,9 +1269,14 @@ final class AppViewModel: ObservableObject {
             openSessions: openSessions
         )
         nextServers[index].updatedAt = .now
-        let nextSelectedProjectID = nextServers[index].projects.contains { $0.id == selectedProjectID }
-            ? selectedProjectID
-            : nextServers[index].projects.first?.id
+        let nextSelectedProjectID: UUID?
+        if isShowingAllSessions {
+            nextSelectedProjectID = nil
+        } else if nextServers[index].projects.contains(where: { $0.id == selectedProjectID }) {
+            nextSelectedProjectID = selectedProjectID
+        } else {
+            nextSelectedProjectID = nextServers[index].projects.first?.id
+        }
         try persistServers(nextServers)
         servers = nextServers
         if selectedServerID == server.id {
@@ -1274,9 +1314,6 @@ final class AppViewModel: ObservableObject {
         }
 
         return summaries.sorted { lhs, rhs in
-            if lhs.status.isActive != rhs.status.isActive {
-                return lhs.status.isActive && !rhs.status.isActive
-            }
             if lhs.updatedAt != rhs.updatedAt {
                 return lhs.updatedAt > rhs.updatedAt
             }
@@ -1293,11 +1330,22 @@ final class AppViewModel: ObservableObject {
         guard currentThreadLoadScope == scope else {
             return
         }
-        let prioritizedThreads = prioritizeActiveThreads(loadedThreads)
+        let prioritizedThreads = sortedThreads(loadedThreads)
         threads = prioritizedThreads
 
         let currentSelection = selectedThreadID.flatMap { id in
             prioritizedThreads.first { $0.id == id }
+        }
+        if currentSelection == nil, suppressThreadAutoSelection {
+            selectedThreadID = nil
+            selectedThread = nil
+            liveItems = []
+            publishConversationSections([])
+            changedFiles = []
+            diffSnapshot = .empty
+            clearSelectedThreadLoads()
+            refreshQueuedTurnInputCount()
+            return
         }
         guard let threadToShow = currentSelection ?? prioritizedThreads.first else {
             selectedThreadID = nil
@@ -1336,15 +1384,13 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func prioritizeActiveThreads(_ threads: [CodexThread]) -> [CodexThread] {
-        threads.enumerated().sorted { lhs, rhs in
-            let lhsActive = lhs.element.status.isActive
-            let rhsActive = rhs.element.status.isActive
-            if lhsActive != rhsActive {
-                return lhsActive && !rhsActive
+    private func sortedThreads(_ threads: [CodexThread]) -> [CodexThread] {
+        threads.sorted { lhs, rhs in
+            if lhs.updatedAt != rhs.updatedAt {
+                return lhs.updatedAt > rhs.updatedAt
             }
-            return lhs.offset < rhs.offset
-        }.map(\.element)
+            return lhs.id < rhs.id
+        }
     }
 
     private func startEventLoop() {
@@ -1510,7 +1556,7 @@ final class AppViewModel: ObservableObject {
             guard currentThreadLoadScope == scope else {
                 return
             }
-            threads = prioritizeActiveThreads(loadedThreads)
+            threads = sortedThreads(loadedThreads)
             if let selectedSummary = loadedThreads.first(where: { $0.id == selectedThreadID }),
                selectedSummary.status.isActive {
                 applySelectedThreadStatus(selectedSummary.status)
@@ -1528,7 +1574,7 @@ final class AppViewModel: ObservableObject {
             guard currentThreadLoadScope == scope else {
                 return
             }
-            threads = prioritizeActiveThreads(loadedThreads)
+            threads = sortedThreads(loadedThreads)
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1683,7 +1729,7 @@ final class AppViewModel: ObservableObject {
             return []
         }
         guard !scope.sessionPaths.isEmpty else {
-            return try await listOpenSessionSummaries(appServer: appServer)
+            return try await appServer.listThreads(cwd: nil)
         }
         guard scope.sessionPaths.count > 1 else {
             return try await appServer.listThreads(cwd: scope.cwd)

@@ -510,7 +510,7 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testUnscopedSessionListUsesLoadedSessionSummaries() async throws {
+    func testUnscopedSessionListUsesThreadListHistory() async throws {
         let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
         let repository = InMemoryServerRepository(servers: [server])
         let credentials = InMemoryCredentialStore()
@@ -527,31 +527,19 @@ final class AppViewModelTests: XCTestCase {
         let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
         cursor = initialize.nextCursor
         transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
-        let loadedList = try await waitForRequest(method: "thread/loaded/list", in: transport, after: cursor)
-        cursor = loadedList.nextCursor
-        transport.receive(#"{"id":\#(loadedList.id),"result":{"data":["thread-subagent","thread-open"]}}"#)
-        let subagentSummary = try await respondToThreadSummary(
-            threadID: "thread-subagent",
-            preview: "Review worker",
-            cwd: "/srv/app",
-            updatedAt: 1_770_000_600,
-            sourceJSON: #"{"subagent":"review"}"#,
-            in: transport,
-            after: cursor
-        )
-        cursor = subagentSummary.nextCursor
-        let summary = try await respondToThreadSummary(
-            threadID: "thread-open",
-            preview: "Open work",
-            cwd: "/srv/app",
-            statusJSON: #"{"type":"active","activeFlags":[]}"#,
-            updatedAt: 1_770_000_500,
-            sourceJSON: #""appServer""#,
-            in: transport,
-            after: cursor
-        )
-        cursor = summary.nextCursor
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = list.nextCursor
+        let params = try requestParams(for: list, in: transport)
+        XCTAssertNil(params["cwd"])
+        transport.receive("""
+        {"id":\(list.id),"result":{"data":[
+          {"id":"thread-open","preview":"Open work","cwd":"/srv/app","status":{"type":"active","activeFlags":[]},"updatedAt":1770000500,"createdAt":1770000000,"source":"appServer","turns":[]},
+          {"id":"thread-old","preview":"Old work","cwd":"/srv/old","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"source":"cli","turns":[]},
+          {"id":"thread-subagent","preview":"Review worker","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000600,"createdAt":1770000000,"source":{"subagent":"review"},"turns":[]}
+        ],"nextCursor":null}}
+        """)
         let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = read.nextCursor
         let readParams = try requestParams(for: read, in: transport)
         XCTAssertEqual(readParams["threadId"] as? String, "thread-open")
         XCTAssertEqual(readParams["includeTurns"] as? Bool, true)
@@ -568,9 +556,147 @@ final class AppViewModelTests: XCTestCase {
         """)
         await connectTask.value
 
-        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-open"])
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-open", "thread-old"])
         XCTAssertEqual(viewModel.selectedThreadID, "thread-open")
-        XCTAssertFalse(transport.sentLinesSnapshot.compactMap(methodName).contains("thread/list"))
+        XCTAssertFalse(transport.sentLinesSnapshot.compactMap(methodName).contains("thread/loaded/list"))
+
+        cursor = transport.sentLinesSnapshot.count
+        let newSessionTask = Task { await viewModel.startNewSession() }
+        let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
+        let startParams = try requestParams(for: startThread, in: transport)
+        XCTAssertEqual(startParams["cwd"] as? String, "/srv/app")
+        transport.receive("""
+        {"id":\(startThread.id),"result":{"thread":{
+          "id":"thread-new",
+          "preview":"New work",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000700,
+          "createdAt":1770000700,
+          "turns":[]
+        }}}
+        """)
+        await newSessionTask.value
+
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-new")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testSessionSectionsGroupByProjectAndSortByTime() async throws {
+        let projects = [
+            ProjectRecord(path: "/srv/app", sessionPaths: ["/srv/app", "/srv/.codex/worktrees/a/app"]),
+            ProjectRecord(path: "/srv/tools"),
+        ]
+        let threads = [
+            CodexThread(
+                id: "tools-old",
+                preview: "Tools old",
+                cwd: "/srv/tools",
+                status: .idle,
+                updatedAt: Date(timeIntervalSince1970: 10),
+                createdAt: Date(timeIntervalSince1970: 1)
+            ),
+            CodexThread(
+                id: "app-worktree-new",
+                preview: "App worktree",
+                cwd: "/srv/.codex/worktrees/a/app",
+                status: .idle,
+                updatedAt: Date(timeIntervalSince1970: 40),
+                createdAt: Date(timeIntervalSince1970: 1)
+            ),
+            CodexThread(
+                id: "unknown",
+                preview: "Loose",
+                cwd: "/tmp/loose",
+                status: .idle,
+                updatedAt: Date(timeIntervalSince1970: 30),
+                createdAt: Date(timeIntervalSince1970: 1)
+            ),
+            CodexThread(
+                id: "app-main-old",
+                preview: "App main",
+                cwd: "/srv/app",
+                status: .idle,
+                updatedAt: Date(timeIntervalSince1970: 20),
+                createdAt: Date(timeIntervalSince1970: 1)
+            ),
+        ]
+        let sections = SessionListSections.sections(threads: threads, projects: projects)
+
+        XCTAssertEqual(sections.map(\.title), ["app", "/tmp/loose", "tools"])
+        XCTAssertEqual(sections.first?.threads.map(\.id), ["app-worktree-new", "app-main-old"])
+    }
+
+    @MainActor
+    func testSelectingProjectLoadsSessionsWithoutOpeningOne() async throws {
+        let appProject = ProjectRecord(path: "/srv/app")
+        let toolsProject = ProjectRecord(path: "/srv/tools")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [appProject, toolsProject]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = initialList.nextCursor
+        var params = try requestParams(for: initialList, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/srv/app")
+        transport.receive("""
+        {"id":\(initialList.id),"result":{"data":[
+          {"id":"thread-app","preview":"App work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let initialRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = initialRead.nextCursor
+        transport.receive("""
+        {"id":\(initialRead.id),"result":{"thread":{
+          "id":"thread-app",
+          "preview":"App work",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+        await connectTask.value
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-app")
+
+        viewModel.selectProject(toolsProject.id)
+        XCTAssertNil(viewModel.selectedThreadID)
+        cursor = transport.sentLinesSnapshot.count
+        let refreshTask = Task { await viewModel.refreshThreads() }
+        let toolsList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        params = try requestParams(for: toolsList, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/srv/tools")
+        transport.receive("""
+        {"id":\(toolsList.id),"result":{"data":[
+          {"id":"thread-tools","preview":"Tools work","cwd":"/srv/tools","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        await refreshTask.value
+
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-tools"])
+        XCTAssertNil(viewModel.selectedThreadID)
+        XCTAssertNil(viewModel.selectedThread)
+        XCTAssertTrue(viewModel.conversationSections.isEmpty)
         await viewModel.disconnect()
     }
 
@@ -689,8 +815,8 @@ final class AppViewModelTests: XCTestCase {
         let loadedList = try await waitForRequest(method: "thread/loaded/list", in: transport, after: cursor)
         cursor = loadedList.nextCursor
         transport.receive(#"{"id":\#(loadedList.id),"result":{"data":[]}}"#)
-        let emptyScopeLoadedList = try await waitForRequest(method: "thread/loaded/list", in: transport, after: cursor)
-        transport.receive(#"{"id":\#(emptyScopeLoadedList.id),"result":{"data":[]}}"#)
+        let emptyScopeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive(#"{"id":\#(emptyScopeList.id),"result":{"data":[],"nextCursor":null}}"#)
 
         try await waitForConnectionState(.connected, in: viewModel)
         await ensureTask.value
@@ -943,8 +1069,8 @@ final class AppViewModelTests: XCTestCase {
         let loadedList = try await waitForRequest(method: "thread/loaded/list", in: transport, after: cursor)
         cursor = loadedList.nextCursor
         transport.receive(#"{"id":\#(loadedList.id),"result":{"data":[]}}"#)
-        let emptyScopeLoadedList = try await waitForRequest(method: "thread/loaded/list", in: transport, after: cursor)
-        transport.receive(#"{"id":\#(emptyScopeLoadedList.id),"result":{"data":[]}}"#)
+        let emptyScopeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive(#"{"id":\#(emptyScopeList.id),"result":{"data":[],"nextCursor":null}}"#)
         try await waitForConnectionState(.connected, in: viewModel)
         await connectTask.value
         let editedServer = ServerRecord(
@@ -1932,6 +2058,38 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.selectedThread)
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
         await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testRefreshProjectsPreservesAllSessionsScope() async throws {
+        let project = ProjectRecord(path: "/srv/app", discovered: true, discoveredSessionCount: 1)
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: StubSSHService(
+                discoveredProjects: [
+                    RemoteProject(path: "/srv/app", discoveredSessionCount: 2, lastDiscoveredAt: Date(timeIntervalSince1970: 1_770_000_300))
+                ]
+            )
+        )
+
+        viewModel.selectAllSessions()
+        await viewModel.refreshProjects()
+
+        XCTAssertTrue(viewModel.isShowingAllSessions)
+        XCTAssertNil(viewModel.selectedProjectID)
+        XCTAssertNil(viewModel.selectedProject)
+        XCTAssertEqual(viewModel.selectedServer?.projects.first?.discoveredSessionCount, 2)
     }
 
     @MainActor
@@ -3746,7 +3904,7 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testLoadThreadsPrioritizesActiveSessions() async throws {
+    func testLoadThreadsSortsSessionsByUpdatedTime() async throws {
         let project = ProjectRecord(path: "/srv/app")
         let server = ServerRecord(
             displayName: "Build Box",
@@ -3785,20 +3943,20 @@ final class AppViewModelTests: XCTestCase {
         cursor = read.nextCursor
         transport.receive("""
         {"id":\(read.id),"result":{"thread":{
-          "id":"active-server-first",
-          "preview":"Active server first",
+          "id":"active-server-second",
+          "preview":"Active server second",
           "cwd":"/srv/app",
           "status":{"type":"active","activeFlags":[]},
-          "updatedAt":1770000200,
-          "createdAt":1770000002,
+          "updatedAt":1770000500,
+          "createdAt":1770000003,
           "turns":[]
         }}}
         """)
         await connectTask.value
 
-        let activeFirstOrder = ["active-server-first", "active-server-second", "idle-server-first", "idle-server-second"]
-        XCTAssertEqual(viewModel.threads.map(\.id), activeFirstOrder)
-        XCTAssertEqual(viewModel.selectedThreadID, "active-server-first")
+        let newestFirstOrder = ["active-server-second", "idle-server-second", "active-server-first", "idle-server-first"]
+        XCTAssertEqual(viewModel.threads.map(\.id), newestFirstOrder)
+        XCTAssertEqual(viewModel.selectedThreadID, "active-server-second")
 
         cursor = transport.sentLinesSnapshot.count
         transport.receive(#"{"method":"thread/updated","params":{"threadId":"active-server-first"}}"#)
@@ -3811,7 +3969,7 @@ final class AppViewModelTests: XCTestCase {
           {"id":"idle-server-second","preview":"Idle server second","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000004,"turns":[]}
         ],"nextCursor":null}}
         """)
-        try await waitForThreadIDs(activeFirstOrder, in: viewModel)
+        try await waitForThreadIDs(newestFirstOrder, in: viewModel)
 
         await viewModel.disconnect()
 	    }

@@ -304,9 +304,7 @@ private fun ProjectSessionPane(
                     Text("Test")
                 }
                 Button(onClick = { model.connectSelectedServer() }) {
-                    Icon(Icons.Default.Bolt, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (state.connectionState == ServerConnectionState.Connected) "Reconnect App-Server" else "Connect App-Server")
+                    Text(if (state.connectionState == ServerConnectionState.Connected) "Reconnect Codex" else "Connect Codex")
                 }
             }
             SecondaryTabRow(selectedTabIndex = mode.ordinal) {

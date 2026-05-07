@@ -83,6 +83,16 @@ struct ConversationView: View {
                     .lineLimit(1)
             }
             Spacer()
+            Button {
+                Task { await model.startNewSession() }
+            } label: {
+                Image(systemName: "plus.bubble")
+            }
+            .buttonStyle(.bordered)
+            .disabled(!model.canCreateSession)
+            .accessibilityLabel("New Session")
+            .accessibilityHint(model.canCreateSession ? "Creates a Codex session for this project." : "Select a project and connect to the server before creating a session.")
+            .accessibilityIdentifier("newSessionButton")
             if model.canInterruptActiveTurn {
                 Button {
                     Task { await model.interruptActiveTurn() }

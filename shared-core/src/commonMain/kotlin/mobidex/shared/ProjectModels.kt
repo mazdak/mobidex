@@ -37,6 +37,12 @@ data class CodexThreadSummary(
     val updatedAtEpochSeconds: Long,
 )
 
+data class SessionListSection(
+    val id: String,
+    val title: String,
+    val sessionIds: List<String>,
+)
+
 
 private fun defaultProjectDisplayName(path: String): String {
     val trimmed = path.trimEnd('/')

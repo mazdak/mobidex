@@ -31,7 +31,6 @@ final class MobidexUITests: XCTestCase {
 
         let composer = app.descendants(matching: .any)["messageComposer"]
         XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after starting a new session.")
-        XCTAssertFalse(newSessionButton.exists, "New Session button should not remain in the header after entering a session.")
         composer.tap()
         composer.typeText(smokeText("PROMPT", defaultValue: "Start control smoke"))
 

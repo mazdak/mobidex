@@ -192,7 +192,7 @@ struct ProjectSessionListView: View {
                             Button {
                                 Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
                             } label: {
-                                Label(model.isAppServerConnected ? "Reconnect App-Server" : "Connect App-Server", systemImage: "bolt.horizontal")
+                                Text(model.isAppServerConnected ? "Reconnect Codex" : "Connect Codex")
                             }
                             .accessibilityIdentifier("connectButton")
                         }
@@ -253,18 +253,22 @@ struct ProjectSessionListView: View {
                             }
                         }
                     case .sessions:
-                        Section("Sessions") {
-                            ForEach(model.threads) { thread in
-                                Button {
-                                    promoteDetailIfCompact()
-                                    Task { await model.openThread(thread) }
-                                } label: {
-                                    ThreadRow(thread: thread, selected: thread.id == model.selectedThreadID)
+                        ForEach(model.sessionSections) { sessionSection in
+                            Section(sessionSection.title) {
+                                ForEach(sessionSection.threads) { thread in
+                                    Button {
+                                        promoteDetailIfCompact()
+                                        Task { await model.openThread(thread) }
+                                    } label: {
+                                        ThreadRow(thread: thread, selected: thread.id == model.selectedThreadID)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityIdentifier("threadRow")
                                 }
-                                .buttonStyle(.plain)
-                                .accessibilityIdentifier("threadRow")
                             }
-                            if model.threads.isEmpty {
+                        }
+                        if model.threads.isEmpty {
+                            Section("Sessions") {
                                 ContentUnavailableView(
                                     model.connectionState == .connected ? "No Sessions" : "Connect to Load Sessions",
                                     systemImage: "bubble.left.and.bubble.right"
@@ -280,6 +284,11 @@ struct ProjectSessionListView: View {
                     if !newValue.isEmpty {
                         selectedMode = .projects
                     }
+                }
+                .onChange(of: selectedMode) { _, newValue in
+                    guard newValue == .sessions else { return }
+                    model.selectAllSessions()
+                    Task { await model.refreshThreads() }
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {

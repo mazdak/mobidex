@@ -34,6 +34,7 @@
 		BF995F62B88F5B2FDC857801 /* ProjectListProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44BED278D1B41DAB45E1B55D /* ProjectListProjection.swift */; };
 		C6A370E1CD7150B718F41ED0 /* ServerEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B6F945AC3EF7F65796D4359 /* ServerEditorView.swift */; };
 		CB2B5BC4866DDF8D535915DA /* SessionChangesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84FDD3A694257EDC18131C08 /* SessionChangesView.swift */; };
+		CC8B7B2C111D4E8D9DD08101 /* SessionListProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC8B7B2B111D4E8D9DD08101 /* SessionListProjection.swift */; };
 		CF30371B3B835A966C08BE4A /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B962D351C5EDF581C16E298 /* CredentialStore.swift */; };
 		CF6AEAAF87DCBBFABA5FA1DE /* CodexProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66FD964BE3321934D7CC6B95 /* CodexProtocolTests.swift */; };
 		D5E96C567472710520ED7A20 /* CredentialStorageTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B84B375AFEC4D0FF298D73FE /* CredentialStorageTests.swift */; };
@@ -92,6 +93,7 @@
 		7FFEE6E89AB7883BE87D5EAA /* DiffModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffModels.swift; sourceTree = "<group>"; };
 		82A0BC0C7137371A8AFAB12B /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
 		84FDD3A694257EDC18131C08 /* SessionChangesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionChangesView.swift; sourceTree = "<group>"; };
+		CC8B7B2B111D4E8D9DD08101 /* SessionListProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListProjection.swift; sourceTree = "<group>"; };
 		8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectAddView.swift; sourceTree = "<group>"; };
 		943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexLaunchSmoke.swift; sourceTree = "<group>"; };
 		97220BF00949FD3FFDB61C6D /* CodexModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexModels.swift; sourceTree = "<group>"; };
@@ -177,6 +179,7 @@
 				CD0F20BD6482ACD9456BFFC9 /* GitDiffParsing.swift */,
 				FD173BE099A8B5B43F253561 /* ProjectCatalog.swift */,
 				44BED278D1B41DAB45E1B55D /* ProjectListProjection.swift */,
+				CC8B7B2B111D4E8D9DD08101 /* SessionListProjection.swift */,
 				35B866DBC1E7520AE0FE2229 /* SharedKMPBridge.swift */,
 			);
 			path = SharedCore;
@@ -427,6 +430,7 @@
 				A72F18C8388039F0E0BD8231 /* ServerModels.swift in Sources */,
 				A267EFB96A42F2D26B792C09 /* ServerRepository.swift in Sources */,
 				CB2B5BC4866DDF8D535915DA /* SessionChangesView.swift in Sources */,
+				CC8B7B2C111D4E8D9DD08101 /* SessionListProjection.swift in Sources */,
 				F7EC2022662CBC70F41991CA /* SharedKMPBridge.swift in Sources */,
 				2F63409CB4571EFBEC15FFB8 /* SplashView.swift in Sources */,
 			);
