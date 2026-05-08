@@ -1188,6 +1188,41 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAppDeclaresLocalNetworkUsageForLANSSH() async throws {
+        let usageDescription = Bundle.main.object(forInfoDictionaryKey: "NSLocalNetworkUsageDescription") as? String
+
+        XCTAssertEqual(usageDescription, "Mobidex connects to SSH servers on your local network.")
+    }
+
+    func testLocalNetworkPermissionErrorIsActionable() throws {
+        let error = SSHServiceError.localNetworkPermissionDenied(
+            "192.168.1.239",
+            22,
+            "192.168.1.239:22: operation not permitted"
+        )
+
+        XCTAssertEqual(
+            error.localizedDescription,
+            "iOS may be blocking local-network access to 192.168.1.239:22. Allow Local Network access for Mobidex in Settings, then try again. Underlying failure: 192.168.1.239:22: operation not permitted"
+        )
+    }
+
+    func testRealNIOConnectionErrorMapsToReadableSSHFailure() async throws {
+        let server = ServerRecord(displayName: "Closed Local Port", host: "127.0.0.1", port: 1, username: "mazdak", authMethod: .password)
+        let service = CitadelSSHService()
+
+        do {
+            try await service.testConnection(server: server, credential: SSHCredential(password: "unused"))
+            XCTFail("Expected a closed local SSH port to fail.")
+        } catch {
+            let message = error.localizedDescription
+            XCTAssertTrue(message.hasPrefix("Could not connect to 127.0.0.1:1:"), message)
+            XCTAssertFalse(message.contains("NIOConnectionError"), message)
+            XCTAssertFalse(message.contains("NIOPosix"), message)
+        }
+    }
+
+    @MainActor
     func testConnectMapsClosedChannelToAppServerMessage() async throws {
         let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
         let repository = InMemoryServerRepository(servers: [server])
@@ -1518,7 +1553,6 @@ final class AppViewModelTests: XCTestCase {
         }}
         """)
         try await waitForSelectedThreadStatus("Working: waitingOnApproval", in: viewModel)
-        XCTAssertEqual(viewModel.selectedActivityLabel, "Thinking")
         let notificationList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         transport.receive("""
         {"id":\(notificationList.id),"result":{"data":[

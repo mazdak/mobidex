@@ -2,6 +2,7 @@ import Foundation
 @preconcurrency import Citadel
 import Crypto
 import NIOCore
+import NIOPosix
 import NIOSSH
 
 struct RemoteProject: Identifiable, Codable, Equatable {
@@ -50,6 +51,8 @@ enum SSHServiceError: LocalizedError {
     case authenticationFailed
     case connectionTimedOut(String, Int)
     case hostUnreachable(String, Int)
+    case localNetworkPermissionDenied(String, Int, String)
+    case connectionFailed(String, Int, String)
     case connectionClosed(String)
     case appServerClosed(command: String, details: String?)
     case localFileNotReadable(String)
@@ -77,6 +80,10 @@ enum SSHServiceError: LocalizedError {
             "Timed out connecting to \(host):\(port). Check that SSH is reachable from this network."
         case .hostUnreachable(let host, let port):
             "Could not reach \(host):\(port). Check the host, port, and network connection."
+        case .localNetworkPermissionDenied(let host, let port, let details):
+            "iOS may be blocking local-network access to \(host):\(port). Allow Local Network access for Mobidex in Settings, then try again. Underlying failure: \(details)"
+        case .connectionFailed(let host, let port, let details):
+            "Could not connect to \(host):\(port): \(details)"
         case .connectionClosed(let operation):
             "The SSH server closed the connection while \(operation). Check the server logs and SSH authentication settings."
         case .appServerClosed(let command, let details):
@@ -336,7 +343,31 @@ private func mapSSHError(_ error: Error, server: ServerRecord, operation: SSHOpe
         #endif
         }
     }
+    if let connectionError = error as? NIOConnectionError {
+        let details = connectionFailureDetails(connectionError)
+        if details.localizedCaseInsensitiveContains("operation not permitted")
+            || details.localizedCaseInsensitiveContains("errno: 1")
+            || details.localizedCaseInsensitiveContains("error 1") {
+            return SSHServiceError.localNetworkPermissionDenied(server.host, server.port, details)
+        }
+        return SSHServiceError.connectionFailed(server.host, server.port, details)
+    }
     return error
+}
+
+private func connectionFailureDetails(_ error: NIOConnectionError) -> String {
+    if !error.connectionErrors.isEmpty {
+        return error.connectionErrors
+            .map { "\($0.target): \(String(describing: $0.error))" }
+            .joined(separator: "; ")
+    }
+    if let dnsAError = error.dnsAError, let dnsAAAAError = error.dnsAAAAError {
+        return "DNS lookup failed: A \(String(describing: dnsAError)); AAAA \(String(describing: dnsAAAAError))"
+    }
+    if let dnsError = error.dnsAError ?? error.dnsAAAAError {
+        return "DNS lookup failed: \(String(describing: dnsError))"
+    }
+    return String(describing: error)
 }
 
 private func closedError(for operation: SSHOperationContext) -> SSHServiceError {

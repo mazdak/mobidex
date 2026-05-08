@@ -1,5 +1,11 @@
 package mobidex.android.ui
 
+import android.animation.ValueAnimator
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,7 +38,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
@@ -79,7 +84,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -524,9 +532,45 @@ private fun ConversationHeader(thread: CodexThread, state: MobidexUiState, model
                 Icon(Icons.Default.Stop, contentDescription = "Stop Turn")
             }
         }
-        AssistChip(onClick = {}, label = { Text(thread.status.sessionLabel) }, leadingIcon = { Icon(Icons.Default.PlayArrow, contentDescription = null) })
+        SessionStatusDot(thread)
     }
     HorizontalDivider()
+}
+
+@Composable
+private fun SessionStatusDot(thread: CodexThread) {
+    val color = sessionHeaderStatusColor(thread)
+    val shouldPulse = thread.status.isActive && ValueAnimator.areAnimatorsEnabled()
+    Box(
+        Modifier
+            .size(28.dp)
+            .semantics { contentDescription = sessionHeaderStatusDescription(thread) },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (shouldPulse) {
+            val transition = rememberInfiniteTransition(label = "session status pulse")
+            val pulseScale by transition.animateFloat(
+                initialValue = 1f,
+                targetValue = 2.35f,
+                animationSpec = infiniteRepeatable(tween(durationMillis = 1050), RepeatMode.Reverse),
+                label = "session status pulse scale",
+            )
+            val pulseAlpha by transition.animateFloat(
+                initialValue = 0.28f,
+                targetValue = 0.10f,
+                animationSpec = infiniteRepeatable(tween(durationMillis = 1050), RepeatMode.Reverse),
+                label = "session status pulse alpha",
+            )
+            Box(
+                Modifier
+                    .size(12.dp)
+                    .graphicsLayer(scaleX = pulseScale, scaleY = pulseScale)
+                    .clip(CircleShape)
+                    .background(color.copy(alpha = pulseAlpha))
+            )
+        }
+        Box(Modifier.size(11.dp).clip(CircleShape).background(color))
+    }
 }
 
 @Composable
@@ -926,6 +970,23 @@ private fun threadStatusColor(thread: CodexThread): Color =
         thread.status.isActive -> Color(0xFF12805C)
         thread.status.type == "systemError" -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.7f)
+    }
+
+@Composable
+private fun sessionHeaderStatusColor(thread: CodexThread): Color =
+    if (thread.hasErrorStatus) MaterialTheme.colorScheme.error else Color(0xFF12805C)
+
+private fun sessionHeaderStatusDescription(thread: CodexThread): String =
+    when {
+        thread.hasErrorStatus -> "Session needs attention"
+        thread.status.isActive -> "Session active"
+        else -> "Session ready"
+    }
+
+private val CodexThread.hasErrorStatus: Boolean
+    get() {
+        val normalized = status.type.lowercase()
+        return normalized == "systemerror" || normalized.contains("error") || normalized.contains("fail")
     }
 
 @Composable

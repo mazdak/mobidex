@@ -229,34 +229,6 @@ final class AppViewModel: ObservableObject {
         contextUsageFraction.map { min(max(Int(($0 * 100).rounded()), 0), 100) }
     }
 
-    var selectedActivityLabel: String? {
-        guard selectedThread?.status.isActive == true else {
-            return nil
-        }
-        if isOperationActive(.sending) {
-            return "Sending"
-        }
-        for item in liveItems.reversed() {
-            switch item {
-            case .reasoning:
-                return "Thinking"
-            case .command(_, _, _, let status, _),
-                 .fileChange(_, _, let status),
-                 .toolCall(_, _, let status, _),
-                 .agentEvent(_, _, let status, _):
-                guard !Self.isTerminalItemStatus(status) else {
-                    continue
-                }
-                return status.isEmpty ? "Working" : status.capitalized
-            case .agentMessage:
-                return "Responding"
-            default:
-                continue
-            }
-        }
-        return "Thinking"
-    }
-
     var isRefreshingChanges: Bool {
         isOperationActive(.refreshingChangedFiles)
     }
@@ -1092,11 +1064,6 @@ final class AppViewModel: ObservableObject {
     private static func isImageAttachment(_ path: String) -> Bool {
         let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
         return ["png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp"].contains(ext)
-    }
-
-    private static func isTerminalItemStatus(_ status: String) -> Bool {
-        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return ["completed", "complete", "failed", "cancelled", "canceled", "done"].contains(normalized)
     }
 
     func interruptActiveTurn() async {

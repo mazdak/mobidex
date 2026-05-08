@@ -103,16 +103,12 @@ struct ConversationView: View {
                 .accessibilityLabel("Stop Turn")
                 .accessibilityIdentifier("stopTurnButton")
             }
-            if thread.status.isActive {
-                Label(model.selectedActivityLabel ?? thread.status.sessionLabel, systemImage: "dot.radiowaves.left.and.right")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            }
             if !model.canSendMessage {
                 Label("Connect to continue", systemImage: "wifi.slash")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            SessionStatusDot(status: thread.status)
         }
         .padding()
     }
@@ -633,6 +629,63 @@ struct ConversationView: View {
             } catch {
                 continue
             }
+        }
+    }
+}
+
+private struct SessionStatusDot: View {
+    let status: CodexThreadStatus
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isPulsing = false
+
+    var body: some View {
+        ZStack {
+            if shouldPulse {
+                Circle()
+                    .fill(color.opacity(isPulsing ? 0.10 : 0.28))
+                    .frame(width: isPulsing ? 26 : 12, height: isPulsing ? 26 : 12)
+            }
+            Circle()
+                .fill(color)
+                .frame(width: 11, height: 11)
+        }
+        .frame(width: 28, height: 28)
+        .animation(
+            shouldPulse
+                ? .easeInOut(duration: 1.05).repeatForever(autoreverses: true)
+                : .default,
+            value: isPulsing
+        )
+        .onAppear {
+            isPulsing = shouldPulse
+        }
+        .onChange(of: shouldPulse) { _, shouldPulse in
+            isPulsing = shouldPulse
+        }
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var shouldPulse: Bool {
+        status.isActive && !reduceMotion
+    }
+
+    private var color: Color {
+        switch status.indicator {
+        case .needsAttention:
+            return .red
+        case .active, .inactive:
+            return .green
+        }
+    }
+
+    private var accessibilityLabel: String {
+        switch status.indicator {
+        case .needsAttention:
+            return "Session needs attention"
+        case .active:
+            return "Session active"
+        case .inactive:
+            return "Session ready"
         }
     }
 }
