@@ -361,6 +361,70 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMergedLiveItemsDropsKnownCurrentUserEchoAlreadyPresentInPoll() {
+        let current: [CodexThreadItem] = [
+            .userMessage(id: "optimistic-user", text: "Start work"),
+            .agentMessage(id: "agent", text: "Working")
+        ]
+        let polled: [CodexThreadItem] = [
+            .userMessage(id: "hydrated-user", text: "Start work"),
+            .agentMessage(id: "agent", text: "Working")
+        ]
+
+        let merged = AppViewModel.mergedLiveItems(
+            current: current,
+            polled: polled,
+            dropCurrentItemIDs: ["optimistic-user"]
+        )
+
+        XCTAssertEqual(merged, [
+            .userMessage(id: "hydrated-user", text: "Start work"),
+            .agentMessage(id: "agent", text: "Working")
+        ])
+    }
+
+    @MainActor
+    func testMergedLiveItemsKeepsRepeatedUserMessagesFromPoll() {
+        let polled: [CodexThreadItem] = [
+            .userMessage(id: "first-user", text: "Start work"),
+            .userMessage(id: "second-user", text: "Start work")
+        ]
+
+        let merged = AppViewModel.mergedLiveItems(current: [], polled: polled)
+
+        XCTAssertEqual(merged, polled)
+    }
+
+    @MainActor
+    func testCurrentUserEchoItemIDsOnlyDropsMatchingUserMessagesInSameTurn() {
+        let currentThread = CodexThread(
+            id: "thread",
+            preview: "",
+            cwd: "/srv/app",
+            status: .active(flags: []),
+            updatedAt: Date(timeIntervalSince1970: 1_770_000_400),
+            createdAt: Date(timeIntervalSince1970: 1_770_000_000),
+            turns: [
+                CodexTurn(id: "turn-1", items: [.userMessage(id: "old-ok", text: "ok")], status: "completed"),
+                CodexTurn(id: "turn-2", items: [.userMessage(id: "optimistic-ok", text: "ok")], status: "inProgress")
+            ]
+        )
+        let polledThread = CodexThread(
+            id: "thread",
+            preview: "",
+            cwd: "/srv/app",
+            status: .active(flags: []),
+            updatedAt: Date(timeIntervalSince1970: 1_770_000_400),
+            createdAt: Date(timeIntervalSince1970: 1_770_000_000),
+            turns: [
+                CodexTurn(id: "turn-1", items: [.userMessage(id: "hydrated-old-ok", text: "ok")], status: "completed")
+            ]
+        )
+
+        XCTAssertEqual(AppViewModel.currentUserEchoItemIDs(currentThread: currentThread, polledThread: polledThread), ["old-ok"])
+    }
+
+    @MainActor
     func testUnexpectedAppServerDisconnectClearsOpenSessionCountsAfterReconnectFailure() async throws {
         let project = ProjectRecord(path: "/srv/app", discovered: true, discoveredSessionCount: 37)
         let server = ServerRecord(
@@ -4501,6 +4565,10 @@ private final class BlockingOpenSSHService: SSHService, @unchecked Sendable {
         []
     }
 
+    func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: path, entries: [])
+    }
+
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] {
         localPaths.map { "/tmp/mobidex-uploaded/\(URL(fileURLWithPath: $0).lastPathComponent)" }
     }
@@ -4615,6 +4683,10 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         }
     }
 
+    func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: path, entries: [])
+    }
+
     var stagedLocalPaths: [String] {
         lock.withLock { stagedLocalPathBatches.flatMap { $0 } }
     }
@@ -4692,6 +4764,10 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
             throw discoverProjectsError
         }
         return discoveredProjects
+    }
+
+    func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: path, entries: [])
     }
 
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] {

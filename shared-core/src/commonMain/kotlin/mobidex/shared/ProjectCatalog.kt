@@ -17,6 +17,7 @@ object ProjectCatalog {
                     discovered = false,
                     sessionPaths = listOf(record.path),
                     discoveredSessionCount = 0,
+                    archivedSessionCount = 0,
                     lastDiscoveredAtEpochSeconds = null,
                 )
             } else {
@@ -30,6 +31,7 @@ object ProjectCatalog {
                 discovered = true,
                 sessionPaths = ProjectRecord.normalizedSessionPaths(project.sessionPaths, project.path),
                 discoveredSessionCount = project.discoveredSessionCount,
+                archivedSessionCount = project.archivedSessionCount,
                 lastDiscoveredAtEpochSeconds = project.lastDiscoveredAtEpochSeconds,
             )
         }
@@ -113,6 +115,7 @@ object ProjectCatalog {
     private val projectCatalogComparator = Comparator<ProjectRecord> { lhs, rhs ->
         compareByDescending<ProjectRecord> { it.discoveredSessionCount }
             .thenByDescending { it.activeChatCount }
+            .thenByDescending { it.archivedSessionCount }
             .thenByDescending { it.lastActiveChatAtEpochSeconds ?: it.lastDiscoveredAtEpochSeconds ?: Long.MIN_VALUE }
             .compare(lhs, rhs)
     }

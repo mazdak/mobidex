@@ -99,14 +99,23 @@ actor CodexAppServerClient {
         try await sendNotification(method: "initialized", params: nil)
     }
 
-    func listThreads(cwd: String? = nil, limit: Int = 80) async throws -> [CodexThread] {
+    func listThreads(cwd: String? = nil, limit: Int = 80, includeArchived: Bool = false) async throws -> [CodexThread] {
+        let activeThreads = try await listThreads(cwd: cwd, limit: limit, archived: false)
+        guard includeArchived else {
+            return activeThreads
+        }
+        let archivedThreads = try await listThreads(cwd: cwd, limit: limit, archived: true)
+        return Self.mergedThreadList(activeThreads + archivedThreads)
+    }
+
+    private func listThreads(cwd: String?, limit: Int, archived: Bool) async throws -> [CodexThread] {
         var cursor: String?
         var threads: [CodexThread] = []
         repeat {
             let response = try await requestDecoded(
                 ThreadListResponse.self,
                 method: "thread/list",
-                params: SharedKMPBridge.threadListParams(cwd: cwd, limit: limit, cursor: cursor)
+                params: SharedKMPBridge.threadListParams(cwd: cwd, limit: limit, cursor: cursor, archived: archived)
             )
             threads.append(contentsOf: response.data.filter(\.isUserFacingSession))
             cursor = response.nextCursor
@@ -116,6 +125,16 @@ actor CodexAppServerClient {
             return threads
         }
         return threads.filter { $0.cwd == cwd }
+    }
+
+    private static func mergedThreadList(_ threads: [CodexThread]) -> [CodexThread] {
+        var byID: [String: CodexThread] = [:]
+        for thread in threads {
+            if byID[thread.id] == nil {
+                byID[thread.id] = thread
+            }
+        }
+        return byID.values.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     func listLoadedThreadIDs(limit: Int = 200) async throws -> [String] {

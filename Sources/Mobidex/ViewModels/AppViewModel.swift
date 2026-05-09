@@ -105,6 +105,7 @@ private struct ThreadLoadScope: Equatable {
     var projectID: UUID?
     var cwd: String?
     var sessionPaths: Set<String>
+    var includeArchivedSessions: Bool
 }
 
 private enum AppOperation: Hashable {
@@ -153,6 +154,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var switchingServerID: UUID?
     @Published var selectedReasoningEffort: CodexReasoningEffortOption = .medium
     @Published var selectedAccessMode: CodexAccessMode = .fullAccess
+    @Published var showsArchivedSessions = false
     @Published private var activeOperationCounts: [AppOperation: Int] = [:]
 
     private let repository: ServerRepository
@@ -260,6 +262,10 @@ final class AppViewModel: ObservableObject {
 
     var isRefreshingSessions: Bool {
         isOperationActive(.refreshingSessions)
+    }
+
+    var isDiscoveringProjects: Bool {
+        isOperationActive(.discoveringProjects)
     }
 
     func loadCredential(for serverID: UUID) async -> SSHCredential {
@@ -429,7 +435,9 @@ final class AppViewModel: ObservableObject {
             let shouldDisconnectSavedSelection = wasSelected && (appServer != nil || connectionState == .connecting)
 
             var nextServers = servers
+            var previousEndpoint: (host: String, port: Int)?
             if let index = nextServers.firstIndex(where: { $0.id == server.id }) {
+                previousEndpoint = (nextServers[index].host, nextServers[index].port)
                 next.createdAt = nextServers[index].createdAt
                 next.projects = nextServers[index].projects
                 nextServers[index] = next
@@ -441,6 +449,13 @@ final class AppViewModel: ObservableObject {
                 nextServers = serversClearingOpenSessionCounts(nextServers)
             }
 
+            if let previousEndpoint {
+                SSHHostKeyPinStore.migrateLegacyEndpointPin(
+                    serverID: next.id,
+                    host: previousEndpoint.host,
+                    port: previousEndpoint.port
+                )
+            }
             do {
                 try persistServers(nextServers)
             } catch {
@@ -562,6 +577,14 @@ final class AppViewModel: ObservableObject {
             statusMessage = error.localizedDescription
             return false
         }
+    }
+
+    func listRemoteDirectories(path: String) async throws -> RemoteDirectoryListing {
+        guard let selectedServer else {
+            throw SSHServiceError.remoteDirectoryBrowseFailed("Select a server before browsing folders.")
+        }
+        let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
+        return try await sshService.listDirectories(path: path, server: selectedServer, credential: credential)
     }
 
     @discardableResult
@@ -1176,14 +1199,16 @@ final class AppViewModel: ObservableObject {
                 serverID: selectedServerID,
                 projectID: nil,
                 cwd: nil,
-                sessionPaths: []
+                sessionPaths: [],
+                includeArchivedSessions: showsArchivedSessions
             )
         }
         return ThreadLoadScope(
             serverID: selectedServerID,
             projectID: selectedProjectID,
             cwd: selectedProject?.path,
-            sessionPaths: Set(selectedProject?.sessionPaths ?? selectedProject.map { [$0.path] } ?? [])
+            sessionPaths: Set(selectedProject?.sessionPaths ?? selectedProject.map { [$0.path] } ?? []),
+            includeArchivedSessions: showsArchivedSessions
         )
     }
 
@@ -1730,15 +1755,15 @@ final class AppViewModel: ObservableObject {
             return []
         }
         guard !scope.sessionPaths.isEmpty else {
-            return try await appServer.listThreads(cwd: nil)
+            return try await appServer.listThreads(cwd: nil, includeArchived: scope.includeArchivedSessions)
         }
         guard scope.sessionPaths.count > 1 else {
-            return try await appServer.listThreads(cwd: scope.cwd)
+            return try await appServer.listThreads(cwd: scope.cwd, includeArchived: scope.includeArchivedSessions)
         }
         var merged: [CodexThread] = []
         var seen = Set<String>()
         for cwd in scope.sessionPaths.sorted() {
-            let loaded = try await appServer.listThreads(cwd: cwd)
+            let loaded = try await appServer.listThreads(cwd: cwd, includeArchived: scope.includeArchivedSessions)
             for thread in loaded where seen.insert(thread.id).inserted {
                 merged.append(thread)
             }
@@ -1778,16 +1803,25 @@ final class AppViewModel: ObservableObject {
     }
 
     private func applyActivePoll(_ polledThread: CodexThread) {
+        let currentThread = selectedThread
         selectedThread = polledThread
         if let index = threads.firstIndex(where: { $0.id == polledThread.id }) {
             threads[index] = polledThread
         }
-        liveItems = Self.mergedLiveItems(current: liveItems, polled: polledThread.turns.flatMap(\.items))
+        liveItems = Self.mergedLiveItems(
+            current: liveItems,
+            polled: polledThread.turns.flatMap(\.items),
+            dropCurrentItemIDs: Self.currentUserEchoItemIDs(currentThread: currentThread, polledThread: polledThread)
+        )
         rebuildConversationFromLiveItems()
         refreshQueuedTurnInputCount()
     }
 
-    static func mergedLiveItems(current: [CodexThreadItem], polled: [CodexThreadItem]) -> [CodexThreadItem] {
+    static func mergedLiveItems(
+        current: [CodexThreadItem],
+        polled: [CodexThreadItem],
+        dropCurrentItemIDs: Set<String> = []
+    ) -> [CodexThreadItem] {
         let currentByID = bestItemsByID(current)
         var seen = Set<String>()
         var indexByID: [String: Int] = [:]
@@ -1806,11 +1840,45 @@ final class AppViewModel: ObservableObject {
             guard seen.insert(currentItem.id).inserted else {
                 continue
             }
+            if dropCurrentItemIDs.contains(currentItem.id) {
+                continue
+            }
             let item = currentByID[currentItem.id] ?? currentItem
             indexByID[currentItem.id] = merged.count
             merged.append(item)
         }
         return merged
+    }
+
+    static func currentUserEchoItemIDs(currentThread: CodexThread?, polledThread: CodexThread) -> Set<String> {
+        guard let currentThread else {
+            return []
+        }
+        let polledTurnsByID = Dictionary(uniqueKeysWithValues: polledThread.turns.map { ($0.id, $0) })
+        var echoIDs = Set<String>()
+        for currentTurn in currentThread.turns {
+            guard let polledTurn = polledTurnsByID[currentTurn.id] else {
+                continue
+            }
+            let polledUserTexts = Set(polledTurn.items.compactMap { item -> String? in
+                if case .userMessage(_, let text) = item {
+                    return text
+                }
+                return nil
+            })
+            let polledItemIDs = Set(polledTurn.items.map(\.id))
+            guard !polledUserTexts.isEmpty else {
+                continue
+            }
+            for item in currentTurn.items {
+                if case .userMessage(let id, let text) = item,
+                   !polledItemIDs.contains(id),
+                   polledUserTexts.contains(text) {
+                    echoIDs.insert(id)
+                }
+            }
+        }
+        return echoIDs
     }
 
     private static func bestItemsByID(_ items: [CodexThreadItem]) -> [String: CodexThreadItem] {

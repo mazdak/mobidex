@@ -99,4 +99,23 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertEqual(blocks.count, 2)
         XCTAssertTrue(blocks[1].contains("let first = true\n\nlet example"))
     }
+
+    func testConversationTextPresentationTurnsSoftLineBreaksIntoRenderedBreaksOutsideCode() {
+        let block = """
+        Details:
+        Branch: codex/include-qlaw-devbox
+        Validation passed:
+        ```bash
+        one
+        two
+        ```
+        """
+
+        let markdown = ConversationTextPresentation.markdownForRendering(from: block)
+
+        XCTAssertTrue(markdown.contains("Details:  \nBranch:"))
+        XCTAssertTrue(markdown.contains("Validation passed:  \n```bash"))
+        XCTAssertTrue(markdown.contains("one\ntwo"))
+        XCTAssertFalse(markdown.contains("one  \ntwo"))
+    }
 }

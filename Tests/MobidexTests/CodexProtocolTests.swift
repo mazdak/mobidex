@@ -382,6 +382,41 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testThreadListIncludeArchivedMergesActiveAndArchivedRequests() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.listThreads(cwd: "/srv/app", limit: 20, includeArchived: true) }
+
+        let activeLine = try await waitForSentLine(in: transport)
+        let activeObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(activeLine.utf8)) as? [String: Any])
+        let activeID = try XCTUnwrap(activeObject["id"] as? Int)
+        let activeParams = try XCTUnwrap(activeObject["params"] as? [String: Any])
+        XCTAssertEqual(activeParams["archived"] as? Bool, false)
+
+        transport.receive("""
+        {"id":\(activeID),"result":{"data":[
+          {"id":"active","preview":"Active","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        let archivedLine = try await waitForSentLine(in: transport, after: 1)
+        let archivedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(archivedLine.utf8)) as? [String: Any])
+        let archivedID = try XCTUnwrap(archivedObject["id"] as? Int)
+        let archivedParams = try XCTUnwrap(archivedObject["params"] as? [String: Any])
+        XCTAssertEqual(archivedParams["archived"] as? Bool, true)
+
+        transport.receive("""
+        {"id":\(archivedID),"result":{"data":[
+          {"id":"archived","preview":"Archived","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
+          {"id":"active","preview":"Active duplicate","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000200,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        let threads = try await task.value
+        XCTAssertEqual(threads.map(\.id), ["archived", "active"])
+        await client.close()
+    }
+
     func testThreadListDecodeFailureIncludesMethodContext() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport)

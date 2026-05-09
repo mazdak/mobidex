@@ -51,6 +51,8 @@ enum SharedKMPBridge {
     typealias SharedKotlinByteArray = MobidexShared.KotlinByteArray
     typealias SharedProjectRecord = MobidexShared.ProjectRecord
     typealias SharedRemoteProject = MobidexShared.RemoteProject
+    typealias SharedRemoteDirectoryEntry = MobidexShared.RemoteDirectoryEntry
+    typealias SharedRemoteDirectoryListing = MobidexShared.RemoteDirectoryListing
     typealias SharedRemoteServerLaunchConfig = MobidexShared.RemoteServerLaunchConfig
     typealias SharedSessionListSection = MobidexShared.SessionListSection
     typealias SharedWebSocketFrame = MobidexShared.WebSocketFrame
@@ -102,6 +104,14 @@ enum SharedKMPBridge {
 
     static func decodeRemoteProjects(from output: String) throws -> [RemoteProject] {
         try MobidexShared.RemoteCodexDiscovery.shared.decodeProjects(output: output).map(toRemoteProject)
+    }
+
+    static func remoteDirectoryBrowserShellCommand(path: String) -> String {
+        MobidexShared.RemoteDirectoryBrowser.shared.shellCommand(path: path)
+    }
+
+    static func decodeRemoteDirectoryListing(from output: String) throws -> RemoteDirectoryListing {
+        toRemoteDirectoryListing(try MobidexShared.RemoteDirectoryBrowser.shared.decodeListing(output: output))
     }
 
     static func parseWebSocketFrame(buffer: Data) throws -> SharedWebSocketFrameParseResult? {
@@ -185,19 +195,22 @@ enum SharedKMPBridge {
     static func projectListSections(
         projects: [ProjectRecord],
         searchText: String,
-        showInactiveDiscoveredProjects: Bool
+        showInactiveDiscoveredProjects: Bool,
+        showArchivedSessionProjects: Bool
     ) -> ProjectListSections {
         let existingByPath = Dictionary(uniqueKeysWithValues: projects.map { ($0.path, $0) })
         let sections = MobidexShared.ProjectListSections.companion.from(
             projects: projects.map(toSharedProjectRecord),
             searchText: searchText,
-            showInactiveDiscoveredProjects: showInactiveDiscoveredProjects
+            showInactiveDiscoveredProjects: showInactiveDiscoveredProjects,
+            showArchivedSessionProjects: showArchivedSessionProjects
         )
         return ProjectListSections(
             favorites: sections.favorites.map { toProjectRecord($0, existing: existingByPath[$0.path]) },
             discovered: sections.discovered.map { toProjectRecord($0, existing: existingByPath[$0.path]) },
             added: sections.added.map { toProjectRecord($0, existing: existingByPath[$0.path]) },
             showInactiveDiscoveredFilter: sections.showInactiveDiscoveredFilter,
+            showArchivedSessionFilter: sections.showArchivedSessionFilter,
             discoveredTitle: sections.discoveredTitle
         )
     }
@@ -258,13 +271,14 @@ enum SharedKMPBridge {
         )
     }
 
-    static func threadListParams(cwd: String?, limit: Int, cursor: String?) -> JSONValue? {
+    static func threadListParams(cwd: String?, limit: Int, cursor: String?, archived: Bool) -> JSONValue? {
         params(
             from: MobidexShared.CodexRpcRequests.shared.threadList(
                 id: 0,
                 cwd: cwd,
                 limit: Int32(limit),
-                cursor: cursor
+                cursor: cursor,
+                archived: archived
             )
         )
     }
@@ -419,6 +433,7 @@ enum SharedKMPBridge {
             displayName: record.displayName,
             discovered: record.discovered,
             discoveredSessionCount: Int32(record.discoveredSessionCount),
+            archivedSessionCount: Int32(record.archivedSessionCount),
             activeChatCount: Int32(record.activeChatCount),
             lastDiscoveredAtEpochSeconds: kotlinLong(from: record.lastDiscoveredAt),
             lastActiveChatAtEpochSeconds: kotlinLong(from: record.lastActiveChatAt),
@@ -438,6 +453,7 @@ enum SharedKMPBridge {
             displayName: record.displayName,
             discovered: record.discovered,
             discoveredSessionCount: Int(record.discoveredSessionCount),
+            archivedSessionCount: Int(record.archivedSessionCount),
             activeChatCount: Int(record.activeChatCount),
             lastDiscoveredAt: date(from: record.lastDiscoveredAtEpochSeconds),
             lastActiveChatAt: date(from: record.lastActiveChatAtEpochSeconds),
@@ -450,6 +466,7 @@ enum SharedKMPBridge {
             path: project.path,
             sessionPaths: project.sessionPaths,
             discoveredSessionCount: Int32(project.discoveredSessionCount),
+            archivedSessionCount: Int32(project.archivedSessionCount),
             lastDiscoveredAtEpochSeconds: kotlinLong(from: project.lastDiscoveredAt)
         )
     }
@@ -459,7 +476,17 @@ enum SharedKMPBridge {
             path: project.path,
             sessionPaths: project.sessionPaths,
             discoveredSessionCount: Int(project.discoveredSessionCount),
+            archivedSessionCount: Int(project.archivedSessionCount),
             lastDiscoveredAt: date(from: project.lastDiscoveredAtEpochSeconds)
+        )
+    }
+
+    private static func toRemoteDirectoryListing(_ listing: SharedRemoteDirectoryListing) -> RemoteDirectoryListing {
+        RemoteDirectoryListing(
+            path: listing.path,
+            entries: listing.entries.map { entry in
+                RemoteDirectoryEntry(name: entry.name, path: entry.path)
+            }
         )
     }
 

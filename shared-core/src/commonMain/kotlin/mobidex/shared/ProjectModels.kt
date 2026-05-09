@@ -4,6 +4,7 @@ data class RemoteProject(
     val path: String,
     val sessionPaths: List<String> = listOf(path),
     val discoveredSessionCount: Int,
+    val archivedSessionCount: Int = 0,
     val lastDiscoveredAtEpochSeconds: Long? = null,
 )
 
@@ -13,6 +14,7 @@ data class ProjectRecord(
     val displayName: String = defaultProjectDisplayName(path),
     val discovered: Boolean = false,
     val discoveredSessionCount: Int = 0,
+    val archivedSessionCount: Int = 0,
     val activeChatCount: Int = 0,
     val lastDiscoveredAtEpochSeconds: Long? = null,
     val lastActiveChatAtEpochSeconds: Long? = null,

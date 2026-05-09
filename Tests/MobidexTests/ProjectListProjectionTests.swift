@@ -10,7 +10,8 @@ final class ProjectListProjectionTests: XCTestCase {
         let sections = ProjectListSections(
             projects: [inactiveDiscovered, activeDiscovered, favoriteWithoutChats],
             searchText: "",
-            showInactiveDiscoveredProjects: false
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: false
         )
 
         XCTAssertEqual(sections.favorites.map(\.path), ["/srv/favorite"])
@@ -26,7 +27,8 @@ final class ProjectListProjectionTests: XCTestCase {
         let sections = ProjectListSections(
             projects: [inactiveDiscovered, activeDiscovered],
             searchText: "",
-            showInactiveDiscoveredProjects: true
+            showInactiveDiscoveredProjects: true,
+            showArchivedSessionProjects: false
         )
 
         XCTAssertEqual(sections.discovered.map(\.path), ["/srv/active", "/srv/inactive"])
@@ -40,7 +42,8 @@ final class ProjectListProjectionTests: XCTestCase {
         let sections = ProjectListSections(
             projects: [activeDiscovered, inactiveDiscovered],
             searchText: "match",
-            showInactiveDiscoveredProjects: false
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: false
         )
 
         XCTAssertTrue(sections.favorites.isEmpty)
@@ -55,16 +58,61 @@ final class ProjectListProjectionTests: XCTestCase {
         let defaultSections = ProjectListSections(
             projects: [manualProject, activeDiscovered],
             searchText: "",
-            showInactiveDiscoveredProjects: false
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: false
         )
         XCTAssertEqual(defaultSections.added.map(\.path), ["/srv/manual"])
 
         let searchSections = ProjectListSections(
             projects: [manualProject, activeDiscovered],
             searchText: "manual",
-            showInactiveDiscoveredProjects: false
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: false
         )
         XCTAssertEqual(searchSections.added.map(\.path), ["/srv/manual"])
         XCTAssertTrue(searchSections.discovered.isEmpty)
+    }
+
+    func testArchivedSessionProjectsStayHiddenUntilRequested() throws {
+        let archived = ProjectRecord(path: "/srv/archive", discovered: true, archivedSessionCount: 4)
+        let active = ProjectRecord(path: "/srv/active", discovered: true, discoveredSessionCount: 1)
+
+        let hidden = ProjectListSections(
+            projects: [archived, active],
+            searchText: "",
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: false
+        )
+        XCTAssertEqual(hidden.discovered.map(\.path), ["/srv/active"])
+        XCTAssertTrue(hidden.showArchivedSessionFilter)
+
+        let shown = ProjectListSections(
+            projects: [archived, active],
+            searchText: "",
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: true
+        )
+        XCTAssertEqual(shown.discovered.map(\.path), ["/srv/active", "/srv/archive"])
+    }
+
+    func testSearchDoesNotRevealArchivedOnlyProjectsUntilRequested() throws {
+        let archived = ProjectRecord(path: "/srv/archive-match", displayName: "archive-match", discovered: true, archivedSessionCount: 4)
+        let inactive = ProjectRecord(path: "/srv/inactive-match", displayName: "inactive-match", discovered: true)
+
+        let hidden = ProjectListSections(
+            projects: [archived, inactive],
+            searchText: "match",
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: false
+        )
+        XCTAssertEqual(hidden.discovered.map(\.path), ["/srv/inactive-match"])
+
+        let shown = ProjectListSections(
+            projects: [archived, inactive],
+            searchText: "match",
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: true
+        )
+        XCTAssertEqual(shown.discovered.map(\.path), ["/srv/archive-match", "/srv/inactive-match"])
     }
 }

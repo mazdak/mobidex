@@ -33,6 +33,50 @@ final class CredentialStorageTests: XCTestCase {
         XCTAssertEqual(try credentials.loadCredential(serverID: server.id).password, "secret")
     }
 
+    func testHostKeyPinStoreMigratesLegacyEndpointPin() {
+        let serverID = UUID()
+        let fingerprint = "SHA256:same-machine"
+        defer { SSHHostKeyPinStore.clear(serverID: serverID, legacyHost: "192.168.1.239", legacyPort: 22) }
+        SSHHostKeyPinStore.clear(serverID: serverID, legacyHost: "192.168.1.239", legacyPort: 22)
+        UserDefaults.standard.set(fingerprint, forKey: legacyHostKeyPinKey(serverID: serverID, host: "192.168.1.239", port: 22))
+
+        XCTAssertEqual(
+            SSHHostKeyPinStore.fingerprint(serverID: serverID, legacyHost: "192.168.1.239", legacyPort: 22),
+            fingerprint
+        )
+        XCTAssertEqual(
+            SSHHostKeyPinStore.fingerprint(serverID: serverID, legacyHost: "them4maxmacbookpro.tail866988.ts.net", legacyPort: 22),
+            fingerprint
+        )
+    }
+
+    @MainActor
+    func testSavingEditedServerMigratesLegacyEndpointHostKeyPin() async throws {
+        let server = ServerRecord(displayName: "MacBook", host: "192.168.1.239", username: "mazdak", authMethod: .password)
+        let fingerprint = "SHA256:same-machine"
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        defer { SSHHostKeyPinStore.clear(serverID: server.id, legacyHost: server.host, legacyPort: server.port) }
+        SSHHostKeyPinStore.clear(serverID: server.id, legacyHost: server.host, legacyPort: server.port)
+        UserDefaults.standard.set(fingerprint, forKey: legacyHostKeyPinKey(serverID: server.id, host: server.host, port: server.port))
+        var edited = server
+        edited.host = "them4maxmacbookpro.tail866988.ts.net"
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: CredentialStorageStubSSHService()
+        )
+
+        let saved = await viewModel.saveServer(edited, credential: SSHCredential(password: "secret"))
+
+        XCTAssertTrue(saved)
+        XCTAssertEqual(
+            SSHHostKeyPinStore.fingerprint(serverID: server.id, legacyHost: edited.host, legacyPort: edited.port),
+            fingerprint
+        )
+    }
+
     func testServerRecordBuildsQuotedAppServerCommand() {
         let server = ServerRecord(
             displayName: "Server",
@@ -204,5 +248,21 @@ final class CredentialStorageTests: XCTestCase {
         XCTAssertEqual(defaults.data(forKey: "mobidex.servers.v3"), v3StoragePayload)
         XCTAssertEqual(try repository.loadServers(), [server])
         XCTAssertNotNil(defaults.data(forKey: "mobidex.servers.v4"))
+    }
+}
+
+private func legacyHostKeyPinKey(serverID: UUID, host: String, port: Int) -> String {
+    "mobidex.sshHostKey.\(serverID.uuidString).\(host).\(port)"
+}
+
+private struct CredentialStorageStubSSHService: SSHService {
+    func testConnection(server: ServerRecord, credential: SSHCredential) async throws {}
+    func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] { [] }
+    func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: path, entries: [])
+    }
+    func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] { [] }
+    func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {
+        throw SSHServiceError.authenticationFailed
     }
 }

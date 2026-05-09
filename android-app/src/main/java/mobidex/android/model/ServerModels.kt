@@ -57,6 +57,7 @@ data class ProjectRecord(
     val displayName: String = path.trimEnd('/').substringAfterLast('/').ifEmpty { path },
     val discovered: Boolean = false,
     val discoveredSessionCount: Int = 0,
+    val archivedSessionCount: Int = 0,
     val activeChatCount: Int = 0,
     val lastDiscoveredAtEpochSeconds: Long? = null,
     val lastActiveChatAtEpochSeconds: Long? = null,

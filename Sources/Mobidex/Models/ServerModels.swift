@@ -110,6 +110,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
     var displayName: String
     var discovered: Bool
     var discoveredSessionCount: Int
+    var archivedSessionCount: Int
     var activeChatCount: Int
     var lastDiscoveredAt: Date?
     var lastActiveChatAt: Date?
@@ -122,6 +123,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         case displayName
         case discovered
         case discoveredSessionCount
+        case archivedSessionCount
         case activeChatCount
         case lastDiscoveredAt
         case lastActiveChatAt
@@ -135,6 +137,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         displayName: String? = nil,
         discovered: Bool = false,
         discoveredSessionCount: Int = 0,
+        archivedSessionCount: Int = 0,
         activeChatCount: Int = 0,
         lastDiscoveredAt: Date? = nil,
         lastActiveChatAt: Date? = nil,
@@ -146,6 +149,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         self.displayName = displayName ?? URL(fileURLWithPath: path).lastPathComponent.nonEmpty ?? path
         self.discovered = discovered
         self.discoveredSessionCount = discoveredSessionCount
+        self.archivedSessionCount = archivedSessionCount
         self.activeChatCount = activeChatCount
         self.lastDiscoveredAt = lastDiscoveredAt
         self.lastActiveChatAt = lastActiveChatAt
@@ -163,6 +167,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         displayName = try container.decode(String.self, forKey: .displayName)
         discovered = try container.decode(Bool.self, forKey: .discovered)
         discoveredSessionCount = try container.decode(Int.self, forKey: .discoveredSessionCount)
+        archivedSessionCount = try container.decodeIfPresent(Int.self, forKey: .archivedSessionCount) ?? 0
         activeChatCount = try container.decode(Int.self, forKey: .activeChatCount)
         lastDiscoveredAt = try container.decodeIfPresent(Date.self, forKey: .lastDiscoveredAt)
         lastActiveChatAt = try container.decodeIfPresent(Date.self, forKey: .lastActiveChatAt)

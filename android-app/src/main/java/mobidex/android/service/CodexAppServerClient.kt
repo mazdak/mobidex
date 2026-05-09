@@ -65,11 +65,19 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
         transport.sendLine(rpcCore.notificationLine("initialized"))
     }
 
-    suspend fun listThreads(cwd: String?, limit: Int = 80): List<CodexThread> {
+    suspend fun listThreads(cwd: String?, limit: Int = 80, includeArchived: Boolean = false): List<CodexThread> {
+        val activeThreads = listThreadsPage(cwd, limit, archived = false)
+        if (!includeArchived) return activeThreads
+        return (activeThreads + listThreadsPage(cwd, limit, archived = true))
+            .distinctBy { it.id }
+            .sortedByDescending { it.updatedAtEpochSeconds }
+    }
+
+    private suspend fun listThreadsPage(cwd: String?, limit: Int, archived: Boolean): List<CodexThread> {
         var cursor: String? = null
         val threads = mutableListOf<CodexThread>()
         do {
-            val result = request("thread/list", CodexRpcRequests.threadList(0, cwd, limit, cursor).params?.toJsonElement())
+            val result = request("thread/list", CodexRpcRequests.threadList(0, cwd, limit, cursor, archived).params?.toJsonElement())
             val obj = result.jsonObject
             threads += obj["data"]?.let { array ->
                 array as? JsonArray

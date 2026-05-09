@@ -256,12 +256,18 @@ object CodexRpcRequests {
         listOf("cli", "vscode", "exec", "appServer").map(::jsonString)
     )
 
-    fun threadList(id: Long, cwd: String? = null, limit: Int = 80, cursor: String? = null): CodexRpcRequest {
+    fun threadList(
+        id: Long,
+        cwd: String? = null,
+        limit: Int = 80,
+        cursor: String? = null,
+        archived: Boolean = false,
+    ): CodexRpcRequest {
         val params = linkedMapOf<String, JsonValue>(
             "limit" to jsonInt(limit.toLong()),
             "sortKey" to jsonString("updated_at"),
             "sortDirection" to jsonString("desc"),
-            "archived" to jsonBool(false),
+            "archived" to jsonBool(archived),
             "sourceKinds" to userFacingThreadSourceKinds,
         )
         if (!cwd.isNullOrEmpty()) params["cwd"] = jsonString(cwd)

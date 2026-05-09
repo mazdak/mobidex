@@ -218,6 +218,12 @@ struct ProjectSessionListView: View {
                                     .font(.subheadline)
                             }
                         }
+                        if sections.showArchivedSessionFilter {
+                            Section {
+                                Toggle("Show archived sessions", isOn: $model.showsArchivedSessions)
+                                    .font(.subheadline)
+                            }
+                        }
 
                         if !sections.favorites.isEmpty {
                             Section("Favorites") {
@@ -246,7 +252,7 @@ struct ProjectSessionListView: View {
                         if sections.isEmpty {
                             Section {
                                 ContentUnavailableView(
-                                    trimmedProjectSearch.isEmpty ? "No Projects" : "No Matching Projects",
+                                    projectsUnavailableTitle(server: server, sections: sections),
                                     systemImage: "folder"
                                 )
                                 .frame(maxWidth: .infinity, minHeight: 260)
@@ -291,6 +297,14 @@ struct ProjectSessionListView: View {
                     isSessionRefreshRequested = true
                     Task {
                         await model.selectAllSessionsAndRefresh()
+                        isSessionRefreshRequested = false
+                    }
+                }
+                .onChange(of: model.showsArchivedSessions) { _, _ in
+                    guard model.isAppServerConnected else { return }
+                    isSessionRefreshRequested = true
+                    Task {
+                        await model.refreshThreads()
                         isSessionRefreshRequested = false
                     }
                 }
@@ -354,8 +368,22 @@ struct ProjectSessionListView: View {
         ProjectListSections(
             projects: projects,
             searchText: trimmedProjectSearch,
-            showInactiveDiscoveredProjects: showInactiveDiscoveredProjects
+            showInactiveDiscoveredProjects: showInactiveDiscoveredProjects,
+            showArchivedSessionProjects: model.showsArchivedSessions
         )
+    }
+
+    private func projectsUnavailableTitle(server: ServerRecord, sections: ProjectListSections) -> String {
+        if !trimmedProjectSearch.isEmpty {
+            return "No Matching Projects"
+        }
+        if model.isDiscoveringProjects {
+            return "Loading Projects"
+        }
+        if !server.projects.isEmpty && sections.showArchivedSessionFilter && !model.showsArchivedSessions {
+            return "No Active Projects"
+        }
+        return "No Projects"
     }
 
     private func projectRow(_ project: ProjectRecord) -> some View {
@@ -424,6 +452,11 @@ struct ProjectRow: View {
                     )
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                    if project.archivedSessionCount > 0 {
+                        Text("\(project.archivedSessionCount) archived \(project.archivedSessionCount == 1 ? "session" : "sessions")")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     if project.activeChatCount > 0 {
                         Text("\(project.activeChatCount) loaded in app-server")
                             .font(.caption2)

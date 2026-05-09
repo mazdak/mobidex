@@ -92,6 +92,16 @@ class CodexProtocolWireEncodingTest {
     }
 
     @Test
+    fun threadListRequestCanRequestArchivedThreads() {
+        val line = CodexRpcRequests.threadList(id = 1, cwd = "/srv/app", limit = 20, archived = true).encodeJsonLine()
+
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":true,\"sourceKinds\":[\"cli\",\"vscode\",\"exec\",\"appServer\"],\"cwd\":\"/srv/app\"}}",
+            line,
+        )
+    }
+
+    @Test
     fun lifecycleAndThreadRequestsEncodeCurrentWireShape() {
         assertEquals(
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"mobidex\",\"title\":\"Mobidex\",\"version\":\"0.1.0\"},\"capabilities\":{\"experimentalApi\":true}}}",

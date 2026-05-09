@@ -5,6 +5,7 @@ struct ProjectListSections: Equatable {
     var discovered: [ProjectRecord]
     var added: [ProjectRecord]
     var showInactiveDiscoveredFilter: Bool
+    var showArchivedSessionFilter: Bool
     var discoveredTitle: String
 
     var isEmpty: Bool {
@@ -16,20 +17,23 @@ struct ProjectListSections: Equatable {
         discovered: [ProjectRecord],
         added: [ProjectRecord],
         showInactiveDiscoveredFilter: Bool,
+        showArchivedSessionFilter: Bool,
         discoveredTitle: String
     ) {
         self.favorites = favorites
         self.discovered = discovered
         self.added = added
         self.showInactiveDiscoveredFilter = showInactiveDiscoveredFilter
+        self.showArchivedSessionFilter = showArchivedSessionFilter
         self.discoveredTitle = discoveredTitle
     }
 
-    init(projects: [ProjectRecord], searchText: String, showInactiveDiscoveredProjects: Bool) {
+    init(projects: [ProjectRecord], searchText: String, showInactiveDiscoveredProjects: Bool, showArchivedSessionProjects: Bool) {
         self = SharedKMPBridge.projectListSections(
             projects: projects,
             searchText: searchText,
-            showInactiveDiscoveredProjects: showInactiveDiscoveredProjects
+            showInactiveDiscoveredProjects: showInactiveDiscoveredProjects,
+            showArchivedSessionProjects: showArchivedSessionProjects
         )
     }
 }

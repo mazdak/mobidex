@@ -63,4 +63,18 @@ class CodexSessionProjectionTest {
         assertEquals(listOf("agent", "agent#2", "agent#3", "plan", "plan#2"), sections.map { it.id })
         assertEquals(listOf("First", "Existing suffix", "Second", "Plan", "Updated plan"), sections.map { it.body })
     }
+
+    @Test
+    fun consecutiveDuplicateUserMessagesRemainVisible() {
+        val sections = CodexSessionProjection.sections(
+            listOf(
+                CodexSessionItem.UserMessage(id = "first-user", text = "Start work"),
+                CodexSessionItem.UserMessage(id = "second-user", text = "Start work"),
+                CodexSessionItem.AgentMessage(id = "agent", text = "Working"),
+            )
+        )
+
+        assertEquals(listOf("You", "You", "Codex"), sections.map { it.title })
+        assertEquals(listOf("Start work", "Start work", "Working"), sections.map { it.body })
+    }
 }

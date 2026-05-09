@@ -10,19 +10,22 @@ struct RemoteProject: Identifiable, Codable, Equatable {
     var path: String
     var sessionPaths: [String]
     var discoveredSessionCount: Int
+    var archivedSessionCount: Int
     var lastDiscoveredAt: Date?
 
     private enum CodingKeys: String, CodingKey {
         case path
         case sessionPaths
         case discoveredSessionCount
+        case archivedSessionCount
         case lastDiscoveredAt
     }
 
-    init(path: String, sessionPaths: [String]? = nil, discoveredSessionCount: Int, lastDiscoveredAt: Date?) {
+    init(path: String, sessionPaths: [String]? = nil, discoveredSessionCount: Int, archivedSessionCount: Int = 0, lastDiscoveredAt: Date?) {
         self.path = path
         self.sessionPaths = sessionPaths ?? [path]
         self.discoveredSessionCount = discoveredSessionCount
+        self.archivedSessionCount = archivedSessionCount
         self.lastDiscoveredAt = lastDiscoveredAt
     }
 
@@ -31,13 +34,26 @@ struct RemoteProject: Identifiable, Codable, Equatable {
         path = try container.decode(String.self, forKey: .path)
         sessionPaths = try container.decodeIfPresent([String].self, forKey: .sessionPaths) ?? [path]
         discoveredSessionCount = try container.decode(Int.self, forKey: .discoveredSessionCount)
+        archivedSessionCount = try container.decodeIfPresent(Int.self, forKey: .archivedSessionCount) ?? 0
         lastDiscoveredAt = try container.decodeIfPresent(Date.self, forKey: .lastDiscoveredAt)
     }
+}
+
+struct RemoteDirectoryEntry: Identifiable, Codable, Equatable {
+    var id: String { path }
+    var name: String
+    var path: String
+}
+
+struct RemoteDirectoryListing: Codable, Equatable {
+    var path: String
+    var entries: [RemoteDirectoryEntry]
 }
 
 protocol SSHService: Sendable {
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject]
+    func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String]
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient
 }
@@ -55,6 +71,7 @@ enum SSHServiceError: LocalizedError {
     case connectionFailed(String, Int, String)
     case connectionClosed(String)
     case appServerClosed(command: String, details: String?)
+    case remoteDirectoryBrowseFailed(String)
     case localFileNotReadable(String)
     case hostKeyChanged(String, Int)
 
@@ -92,6 +109,8 @@ enum SSHServiceError: LocalizedError {
             } else {
                 "SSH connected, but the server closed the app-server session while starting `\(command)`. Check the Codex path and that Codex app-server can run on the server."
             }
+        case .remoteDirectoryBrowseFailed(let details):
+            "Could not browse remote folders: \(details)"
         case .localFileNotReadable(let path):
             "Could not read the local file at \(path)."
         case .hostKeyChanged(let host, let port):
@@ -116,6 +135,18 @@ final class CitadelSSHService: SSHService {
                 inShell: true
             )
             return try RemoteCodexDiscovery.decodeProjects(from: String(buffer: output))
+        }
+    }
+
+    func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        try await withClient(server: server, credential: credential) { client in
+            let output = try await client.executeCommand(
+                SharedKMPBridge.remoteDirectoryBrowserShellCommand(path: path),
+                maxResponseSize: 1_000_000,
+                mergeStreams: false,
+                inShell: true
+            )
+            return try SharedKMPBridge.decodeRemoteDirectoryListing(from: String(buffer: output))
         }
     }
 
@@ -246,19 +277,19 @@ final class CitadelSSHService: SSHService {
 }
 
 private final class PinnedHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
-    private let pinKey: String
+    private let serverID: UUID
     private let host: String
     private let port: Int
 
     init(server: ServerRecord) {
+        serverID = server.id
         host = server.host
         port = server.port
-        pinKey = "mobidex.sshHostKey.\(server.id.uuidString).\(server.host).\(server.port)"
     }
 
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
         let fingerprint = sshHostKeyFingerprint(hostKey)
-        if let pinned = HostKeyPinStore.fingerprint(for: pinKey) {
+        if let pinned = SSHHostKeyPinStore.fingerprint(serverID: serverID, legacyHost: host, legacyPort: port) {
             if pinned == fingerprint {
                 validationCompletePromise.succeed(())
             } else {
@@ -267,24 +298,65 @@ private final class PinnedHostKeyValidator: NIOSSHClientServerAuthenticationDele
             return
         }
 
-        HostKeyPinStore.save(fingerprint, for: pinKey)
+        SSHHostKeyPinStore.save(fingerprint, serverID: serverID)
         validationCompletePromise.succeed(())
     }
 }
 
-private enum HostKeyPinStore {
+enum SSHHostKeyPinStore {
     private static let lock = NSLock()
 
-    static func fingerprint(for key: String) -> String? {
-        lock.withLock {
-            UserDefaults.standard.string(forKey: key)
+    static func fingerprint(serverID: UUID, legacyHost: String, legacyPort: Int) -> String? {
+        let key = pinKey(serverID: serverID)
+        let legacyKey = legacyPinKey(serverID: serverID, host: legacyHost, port: legacyPort)
+        return lock.withLock { () -> String? in
+            if let fingerprint = UserDefaults.standard.string(forKey: key) {
+                return fingerprint
+            }
+            guard let fingerprint = UserDefaults.standard.string(forKey: legacyKey) else {
+                return nil
+            }
+            UserDefaults.standard.set(fingerprint, forKey: key)
+            return fingerprint
         }
     }
 
-    static func save(_ fingerprint: String, for key: String) {
+    static func save(_ fingerprint: String, serverID: UUID) {
         lock.withLock {
+            UserDefaults.standard.set(fingerprint, forKey: pinKey(serverID: serverID))
+        }
+    }
+
+    static func migrateLegacyEndpointPin(serverID: UUID, host: String, port: Int) {
+        let key = pinKey(serverID: serverID)
+        let legacyKey = legacyPinKey(serverID: serverID, host: host, port: port)
+        lock.withLock {
+            guard UserDefaults.standard.string(forKey: key) == nil,
+                  let fingerprint = UserDefaults.standard.string(forKey: legacyKey)
+            else {
+                return
+            }
             UserDefaults.standard.set(fingerprint, forKey: key)
         }
+    }
+
+    static func clear(serverID: UUID, legacyHost: String? = nil, legacyPort: Int? = nil) {
+        lock.withLock {
+            UserDefaults.standard.removeObject(forKey: pinKey(serverID: serverID))
+            if let legacyHost, let legacyPort {
+                UserDefaults.standard.removeObject(
+                    forKey: legacyPinKey(serverID: serverID, host: legacyHost, port: legacyPort)
+                )
+            }
+        }
+    }
+
+    private static func pinKey(serverID: UUID) -> String {
+        "mobidex.sshHostKey.\(serverID.uuidString)"
+    }
+
+    private static func legacyPinKey(serverID: UUID, host: String, port: Int) -> String {
+        "mobidex.sshHostKey.\(serverID.uuidString).\(host).\(port)"
     }
 }
 

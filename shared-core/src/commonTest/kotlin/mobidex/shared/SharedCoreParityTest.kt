@@ -15,6 +15,7 @@ class SharedCoreParityTest {
             projects = listOf(inactiveDiscovered, activeDiscovered, favoriteWithoutChats),
             searchText = "",
             showInactiveDiscoveredProjects = false,
+            showArchivedSessionProjects = false,
         )
 
         assertEquals(listOf("/srv/favorite"), sections.favorites.map { it.path })
@@ -32,6 +33,7 @@ class SharedCoreParityTest {
             projects = listOf(activeDiscovered, inactiveDiscovered),
             searchText = "match",
             showInactiveDiscoveredProjects = false,
+            showArchivedSessionProjects = false,
         )
 
         assertTrue(sections.favorites.isEmpty())
@@ -48,10 +50,60 @@ class SharedCoreParityTest {
             projects = listOf(inactive, historical, loaded),
             searchText = "",
             showInactiveDiscoveredProjects = false,
+            showArchivedSessionProjects = false,
         )
 
         assertEquals(listOf("/srv/loaded", "/srv/historical"), sections.discovered.map { it.path })
         assertTrue(sections.showInactiveDiscoveredFilter)
+    }
+
+    @Test
+    fun archivedSessionProjectsStayHiddenUntilRequested() {
+        val archived = ProjectRecord(path = "/srv/archive", discovered = true, archivedSessionCount = 4)
+        val active = ProjectRecord(path = "/srv/active", discovered = true, discoveredSessionCount = 1)
+
+        val hidden = ProjectListSections.from(
+            projects = listOf(archived, active),
+            searchText = "",
+            showInactiveDiscoveredProjects = false,
+            showArchivedSessionProjects = false,
+        )
+
+        assertEquals(listOf("/srv/active"), hidden.discovered.map { it.path })
+        assertTrue(hidden.showArchivedSessionFilter)
+
+        val shown = ProjectListSections.from(
+            projects = listOf(archived, active),
+            searchText = "",
+            showInactiveDiscoveredProjects = false,
+            showArchivedSessionProjects = true,
+        )
+
+        assertEquals(listOf("/srv/active", "/srv/archive"), shown.discovered.map { it.path })
+    }
+
+    @Test
+    fun searchDoesNotRevealArchivedOnlyProjectsUntilRequested() {
+        val archived = ProjectRecord(path = "/srv/archive-match", displayName = "archive-match", discovered = true, archivedSessionCount = 4)
+        val inactive = ProjectRecord(path = "/srv/inactive-match", displayName = "inactive-match", discovered = true)
+
+        val hidden = ProjectListSections.from(
+            projects = listOf(archived, inactive),
+            searchText = "match",
+            showInactiveDiscoveredProjects = false,
+            showArchivedSessionProjects = false,
+        )
+
+        assertEquals(listOf("/srv/inactive-match"), hidden.discovered.map { it.path })
+
+        val shown = ProjectListSections.from(
+            projects = listOf(archived, inactive),
+            searchText = "match",
+            showInactiveDiscoveredProjects = false,
+            showArchivedSessionProjects = true,
+        )
+
+        assertEquals(listOf("/srv/archive-match", "/srv/inactive-match"), shown.discovered.map { it.path })
     }
 
     @Test

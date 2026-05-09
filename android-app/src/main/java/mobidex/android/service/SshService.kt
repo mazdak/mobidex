@@ -23,6 +23,8 @@ import mobidex.android.model.SSHCredential
 import mobidex.android.model.ServerAuthMethod
 import mobidex.android.model.ServerRecord
 import mobidex.shared.RemoteCodexDiscovery
+import mobidex.shared.RemoteDirectoryBrowser
+import mobidex.shared.RemoteDirectoryListing
 import mobidex.shared.RemoteProject
 import mobidex.shared.WebSocketFrameCodec
 import mobidex.shared.WebSocketFrameParser
@@ -40,6 +42,7 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider
 interface MobidexSshService {
     suspend fun testConnection(server: ServerRecord, credential: SSHCredential)
     suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject>
+    suspend fun listDirectories(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
     suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String>
     suspend fun openAppServer(server: ServerRecord, credential: SSHCredential): CodexAppServerClient
 }
@@ -56,6 +59,11 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
             RemoteCodexDiscovery.decodeProjects(
                 client.execString(RemoteCodexDiscovery.shellCommand(targetShellRCFile = server.targetShellRCFile))
             )
+        }
+
+    override suspend fun listDirectories(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =
+        withClient(server, credential) { client ->
+            RemoteDirectoryBrowser.decodeListing(client.execString(RemoteDirectoryBrowser.shellCommand(path)))
         }
 
     override suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String> =

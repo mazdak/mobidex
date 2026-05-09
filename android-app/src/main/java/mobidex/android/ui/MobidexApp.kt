@@ -79,6 +79,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +97,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
+import kotlinx.coroutines.launch
+import mobidex.android.AndroidProjectListSections
 import mobidex.android.AppViewModel
 import mobidex.android.MobidexUiState
 import mobidex.android.model.CodexThread
@@ -110,6 +113,7 @@ import mobidex.shared.CodexReasoningEffortOption
 import mobidex.shared.ConversationSection
 import mobidex.shared.ConversationSectionKind
 import mobidex.shared.GitDiffSnapshot
+import mobidex.shared.RemoteDirectoryEntry
 import mobidex.shared.RemoteServerLaunchDefaults
 
 @Composable
@@ -154,6 +158,7 @@ fun MobidexApp(model: AppViewModel) {
     }
     if (showProjectAdd) {
         ProjectAddDialog(
+            model = model,
             onDismiss = { showProjectAdd = false },
             onAdd = { path ->
                 model.addProject(path)
@@ -340,7 +345,7 @@ private fun ProjectList(
     onShowInactiveChange: (Boolean) -> Unit,
     onOpenDetail: () -> Unit,
 ) {
-    val sections = model.projectSections(search, showInactive)
+    val sections = model.projectSections(search, showInactive, state.showsArchivedSessions)
 
     Column {
         OutlinedTextField(
@@ -359,16 +364,32 @@ private fun ProjectList(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
         }
+        if (sections.showArchivedSessionFilter) {
+            FilterChip(
+                selected = state.showsArchivedSessions,
+                onClick = { model.setShowsArchivedSessions(!state.showsArchivedSessions) },
+                label = { Text("Show archived sessions") },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
         LazyColumn(Modifier.weight(1f, fill = true)) {
             section("Favorites", sections.favorites) { ProjectRow(it, state, model, onOpenDetail) }
             section(sections.discoveredTitle, sections.discovered) { ProjectRow(it, state, model, onOpenDetail) }
             section("Added", sections.added) { ProjectRow(it, state, model, onOpenDetail) }
             if (sections.isEmpty) {
-                item { EmptyState("No Projects", "Connect or add a project path.", Icons.Default.Folder) }
+                item { EmptyState(projectEmptyTitle(state, sections, search), "Connect or add a project path.", Icons.Default.Folder) }
             }
         }
     }
 }
+
+internal fun projectEmptyTitle(state: MobidexUiState, sections: AndroidProjectListSections, search: String): String =
+    when {
+        search.trim().isNotEmpty() -> "No Matching Projects"
+        state.isDiscoveringProjects -> "Loading Projects"
+        state.selectedServer?.projects?.isNotEmpty() == true && sections.showArchivedSessionFilter && !state.showsArchivedSessions -> "No Active Projects"
+        else -> "No Projects"
+    }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.section(
     title: String,
@@ -432,7 +453,10 @@ internal fun projectSupportingLabels(project: ProjectRecord): List<String> {
         if (project.discoveredSessionCount > 0) {
             add(if (project.discoveredSessionCount == 1) "1 discovered session" else "${project.discoveredSessionCount} discovered sessions")
         }
-        if (project.activeChatCount == 0 && project.discoveredSessionCount == 0) {
+        if (project.archivedSessionCount > 0) {
+            add(if (project.archivedSessionCount == 1) "1 archived session" else "${project.archivedSessionCount} archived sessions")
+        }
+        if (project.activeChatCount == 0 && project.discoveredSessionCount == 0 && project.archivedSessionCount == 0) {
             add("No loaded sessions")
         }
         if (project.sessionPaths.size > 1) {
@@ -892,23 +916,121 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
 }
 
 @Composable
-private fun ProjectAddDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+private fun ProjectAddDialog(model: AppViewModel, onDismiss: () -> Unit, onAdd: (String) -> Unit) {
     var path by remember { mutableStateOf("") }
+    var showingBrowser by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Project") },
         text = {
-            OutlinedTextField(
-                value = path,
-                onValueChange = { path = it },
-                label = { Text("Remote Path") },
-                placeholder = { Text("/home/user/project") },
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = path,
+                    onValueChange = { path = it },
+                    label = { Text("Remote Path") },
+                    placeholder = { Text("/home/user/project") },
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { showingBrowser = true }) {
+                    Icon(Icons.Default.Folder, contentDescription = "Browse Remote Folders")
+                }
+            }
         },
         confirmButton = { Button(onClick = { onAdd(path) }) { Text("Add") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+    if (showingBrowser) {
+        RemoteDirectoryBrowserDialog(
+            model = model,
+            initialPath = path.trim().ifEmpty { "/" },
+            onDismiss = { showingBrowser = false },
+            onChoose = { selectedPath ->
+                path = selectedPath
+                showingBrowser = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun RemoteDirectoryBrowserDialog(
+    model: AppViewModel,
+    initialPath: String,
+    onDismiss: () -> Unit,
+    onChoose: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var currentPath by remember { mutableStateOf(initialPath) }
+    var entries by remember { mutableStateOf<List<RemoteDirectoryEntry>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    fun load(path: String) {
+        scope.launch {
+            isLoading = true
+            errorMessage = null
+            runCatching { model.listRemoteDirectories(path) }
+                .onSuccess { listing ->
+                    currentPath = listing.path
+                    entries = listing.entries
+                }
+                .onFailure { error ->
+                    entries = emptyList()
+                    errorMessage = error.message ?: "Could not browse remote folders."
+                }
+            isLoading = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        load(initialPath)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Browse") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(currentPath, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                if (currentPath != "/") {
+                    TextButton(onClick = { load(parentPath(currentPath)) }) {
+                        Icon(Icons.Default.ArrowUpward, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Parent Folder")
+                    }
+                }
+                if (isLoading) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text("Loading Folders")
+                    }
+                } else {
+                    LazyColumn(Modifier.height(320.dp)) {
+                        items(entries, key = { it.path }) { entry ->
+                            ListItem(
+                                headlineContent = { Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            TextButton(onClick = { load(entry.path) }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Open")
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+                errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = { Button(onClick = { onChoose(currentPath) }, enabled = !isLoading) { Text("Choose") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private fun parentPath(path: String): String {
+    val trimmed = path.trimEnd('/')
+    if (trimmed.isEmpty()) return "/"
+    return trimmed.substringBeforeLast('/', missingDelimiterValue = "").ifEmpty { "/" }
 }
 
 @Composable

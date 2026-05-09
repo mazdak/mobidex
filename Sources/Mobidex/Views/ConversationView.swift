@@ -1036,7 +1036,7 @@ private final class ConversationMarkdownRenderCache {
             return ConversationMarkdownSegment(
                 id: segmentID,
                 text: block,
-                attributed: try? AttributedString(markdown: block)
+                attributed: try? AttributedString(markdown: ConversationTextPresentation.markdownForRendering(from: block))
             )
         }
     }
@@ -1099,6 +1099,31 @@ enum ConversationTextPresentation {
         return blocks
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    static func markdownForRendering(from block: String) -> String {
+        var renderedLines: [String] = []
+        var isInFence = false
+        let lines = block
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+
+        for line in lines {
+            let text = String(line)
+            let trimmedLine = text.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
+            let isFence = trimmedLine.hasPrefix("```") || trimmedLine.hasPrefix("~~~")
+            if isFence {
+                renderedLines.append(text)
+                isInFence.toggle()
+            } else if isInFence || trimmedLine.isEmpty {
+                renderedLines.append(text)
+            } else {
+                renderedLines.append(text + "  ")
+            }
+        }
+
+        return renderedLines.joined(separator: "\n")
     }
 
     private static func stripCodexAppDirectives(from body: String) -> String {

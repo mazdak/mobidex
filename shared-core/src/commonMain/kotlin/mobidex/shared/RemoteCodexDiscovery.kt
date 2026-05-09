@@ -19,7 +19,12 @@ USER_FACING_SOURCES = ("cli", "vscode", "exec", "appServer")
 
 
 home = os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex"))
-paths = defaultdict(lambda: {"discoveredSessionCount": 0, "lastDiscoveredAt": None, "sessionPaths": set()})
+paths = defaultdict(lambda: {
+    "discoveredSessionCount": 0,
+    "archivedSessionCount": 0,
+    "lastDiscoveredAt": None,
+    "sessionPaths": set(),
+})
 
 
 def existing_directory(path):
@@ -78,14 +83,15 @@ def main_worktree(path):
     return path
 
 
-def add_project_path(path, thread_count=0, last_seen_at=None):
+def add_project_path(path, active_thread_count=0, archived_thread_count=0, last_seen_at=None):
     existing = existing_directory(path)
     if not existing:
         return
     canonical = main_worktree(existing)
     paths[canonical]["sessionPaths"].add(canonical)
     paths[canonical]["sessionPaths"].add(existing)
-    paths[canonical]["discoveredSessionCount"] += thread_count
+    paths[canonical]["discoveredSessionCount"] += active_thread_count
+    paths[canonical]["archivedSessionCount"] += archived_thread_count
     if last_seen_at is not None:
         paths[canonical]["lastDiscoveredAt"] = max(paths[canonical]["lastDiscoveredAt"] or 0, last_seen_at)
 
@@ -136,9 +142,9 @@ def top_level_threads(db_path):
         connection.row_factory = sqlite3.Row
         return connection.execute(
             '''
-            select id, cwd, title, updated_at
+            select id, cwd, title, updated_at, archived
             from threads
-            where archived = 0 and source in (?, ?, ?, ?)
+            where source in (?, ?, ?, ?)
             order by updated_at desc
             limit 5000
             ''',
@@ -186,7 +192,10 @@ def discover_from_official_state():
             continue
         paths[root]["sessionPaths"].add(root)
         paths[root]["sessionPaths"].add(cwd)
-        paths[root]["discoveredSessionCount"] += 1
+        if int(row["archived"] or 0) == 0:
+            paths[root]["discoveredSessionCount"] += 1
+        else:
+            paths[root]["archivedSessionCount"] += 1
         paths[root]["lastDiscoveredAt"] = max(paths[root]["lastDiscoveredAt"] or 0, int(row["updated_at"]))
     return bool(official_roots)
 
@@ -202,7 +211,10 @@ def discover_from_thread_database():
         cwd = existing_directory(row["cwd"])
         if not cwd or is_hidden_project_path(cwd):
             continue
-        add_project_path(cwd, thread_count=1, last_seen_at=int(row["updated_at"]))
+        if int(row["archived"] or 0) == 0:
+            add_project_path(cwd, active_thread_count=1, last_seen_at=int(row["updated_at"]))
+        else:
+            add_project_path(cwd, archived_thread_count=1, last_seen_at=int(row["updated_at"]))
         found = True
     return found
 
@@ -226,6 +238,7 @@ result = [
         "path": path,
         "sessionPaths": sorted(value["sessionPaths"]),
         "discoveredSessionCount": value["discoveredSessionCount"],
+        "archivedSessionCount": value["archivedSessionCount"],
         "lastDiscoveredAt": value["lastDiscoveredAt"],
     }
     for path, value in paths.items()
@@ -251,6 +264,7 @@ print(json.dumps(result[:MAX_PROJECTS]))
                     path = project.path,
                     sessionPaths = project.sessionPaths ?: listOf(project.path),
                     discoveredSessionCount = project.discoveredSessionCount,
+                    archivedSessionCount = project.archivedSessionCount,
                     lastDiscoveredAtEpochSeconds = project.lastDiscoveredAt,
                 )
             }
@@ -274,6 +288,7 @@ private data class RemoteProjectWire(
     val path: String,
     val sessionPaths: List<String>? = null,
     val discoveredSessionCount: Int,
+    val archivedSessionCount: Int = 0,
     val lastDiscoveredAt: Long? = null,
 )
 
