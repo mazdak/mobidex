@@ -1,13 +1,15 @@
 package mobidex.android.service
 
-import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.io.StringReader
 import java.security.MessageDigest
 import java.security.PublicKey
+import java.security.SecureRandom
 import java.security.Security
-import java.util.EnumSet
 import java.util.Base64
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -24,7 +26,6 @@ import net.schmizz.sshj.AndroidConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.IOUtils
 import net.schmizz.sshj.connection.channel.direct.Session
-import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile
 import net.schmizz.sshj.userauth.password.PasswordUtils
@@ -65,8 +66,8 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
             val client = connect(server, credential)
             try {
                 val session = client.startSession()
-                val command = session.exec(server.appServerCommand)
-                val transport = SshjLineTransport(client, session, command)
+                val command = session.exec(server.appServerProxyCommand)
+                val transport = SshjWebSocketProxyTransport.open(client, session, command)
                 CodexAppServerClient(transport).also { it.initialize() }
             } catch (error: Throwable) {
                 client.close()
@@ -164,7 +165,7 @@ private fun PublicKey.sha256Fingerprint(): String {
     return "SHA256:${Base64.getEncoder().withoutPadding().encodeToString(digest)}"
 }
 
-private class SshjLineTransport(
+private class SshjWebSocketProxyTransport private constructor(
     private val client: SSHClient,
     private val session: Session,
     private val command: Session.Command,
@@ -173,11 +174,141 @@ private class SshjLineTransport(
 
     override val inboundLines: Flow<String> = inboundChannel.receiveAsFlow()
 
-    init {
-        Thread {
+    companion object {
+        fun open(client: SSHClient, session: Session, command: Session.Command): SshjWebSocketProxyTransport {
+            val transport = SshjWebSocketProxyTransport(client, session, command)
+            transport.startStderrDrainer()
             try {
-                BufferedReader(command.inputStream.reader()).useLines { lines ->
-                    lines.forEach { inboundChannel.trySend(it) }
+                val key = webSocketKey()
+                command.outputStream.write(upgradeRequest(key))
+                command.outputStream.flush()
+                val response = CompletableFuture.supplyAsync { readUpgradeResponse(command.inputStream) }
+                    .get(15, TimeUnit.SECONDS)
+                validateUpgradeResponse(response.headers, key)
+                transport.startReader(response.leftover)
+                return transport
+            } catch (error: Throwable) {
+                transport.closeBlocking()
+                throw error
+            }
+        }
+
+        private fun upgradeRequest(key: String): ByteArray =
+            listOf(
+                "GET / HTTP/1.1",
+                "Host: localhost",
+                "Upgrade: websocket",
+                "Connection: Upgrade",
+                "Sec-WebSocket-Key: $key",
+                "Sec-WebSocket-Version: 13",
+                "",
+                "",
+            ).joinToString("\r\n").toByteArray(Charsets.UTF_8)
+
+        private fun webSocketKey(): String {
+            val bytes = ByteArray(16)
+            secureRandom.nextBytes(bytes)
+            return Base64.getEncoder().encodeToString(bytes)
+        }
+
+        private fun readUpgradeResponse(input: InputStream): UpgradeResponse {
+            val buffer = ByteArrayOutputStream()
+            while (true) {
+                val next = input.read()
+                if (next < 0) error("The app-server proxy closed before websocket upgrade completed.")
+                buffer.write(next)
+                val bytes = buffer.toByteArray()
+                if (bytes.endsWith(httpHeaderSeparator)) {
+                    return UpgradeResponse(String(bytes, Charsets.UTF_8), ByteArray(0))
+                }
+                if (bytes.size > 65_536) error("The app-server websocket upgrade response was too large.")
+            }
+        }
+
+        private fun validateUpgradeResponse(headers: String, key: String) {
+            val lines = headers.split("\r\n")
+            val statusLine = lines.firstOrNull().orEmpty()
+            require(statusLine.contains(" 101 ") || statusLine.endsWith(" 101")) {
+                "The app-server websocket upgrade failed: ${statusLine.ifEmpty { "missing status line" }}"
+            }
+            val fields = lines.drop(1)
+                .mapNotNull { line ->
+                    val separator = line.indexOf(':')
+                    if (separator < 0) return@mapNotNull null
+                    line.substring(0, separator).trim().lowercase(Locale.US) to line.substring(separator + 1).trim()
+                }
+                .toMap()
+            require(fields["upgrade"]?.lowercase(Locale.US) == "websocket") {
+                "The app-server websocket upgrade response was missing the Upgrade header."
+            }
+            val connectionValues = fields["connection"]
+                ?.lowercase(Locale.US)
+                ?.split(',')
+                ?.map { it.trim() }
+                .orEmpty()
+            require("upgrade" in connectionValues) {
+                "The app-server websocket upgrade response was missing the Connection header."
+            }
+            require(fields["sec-websocket-accept"] == expectedAccept(key)) {
+                "The app-server websocket upgrade response had an invalid Sec-WebSocket-Accept header."
+            }
+        }
+
+        private fun expectedAccept(key: String): String {
+            val digest = MessageDigest.getInstance("SHA-1")
+                .digest("$key$webSocketGuid".toByteArray(Charsets.UTF_8))
+            return Base64.getEncoder().encodeToString(digest)
+        }
+
+        private val secureRandom = SecureRandom()
+        private val httpHeaderSeparator = byteArrayOf(13, 10, 13, 10)
+        private const val webSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+        private const val opcodeContinuation = 0x0
+        private const val opcodeText = 0x1
+        private const val opcodeBinary = 0x2
+        private const val opcodeClose = 0x8
+        private const val opcodePing = 0x9
+        private const val opcodePong = 0xA
+    }
+
+    private fun startReader(initialData: ByteArray) {
+        Thread {
+            var buffer = initialData
+            var fragmentedPayload: ByteArrayOutputStream? = null
+            try {
+                while (true) {
+                    val chunk = ByteArray(8_192)
+                    val read = command.inputStream.read(chunk)
+                    if (read < 0) break
+                    buffer += chunk.copyOf(read)
+                    while (true) {
+                        val result = parseWebSocketFrame(buffer) ?: break
+                        buffer = result.remaining
+                        when (result.frame.opcode) {
+                            opcodeText, opcodeBinary -> {
+                                if (result.frame.fin) {
+                                    inboundChannel.trySend(String(result.frame.payload, Charsets.UTF_8))
+                                } else {
+                                    fragmentedPayload = ByteArrayOutputStream().apply { write(result.frame.payload) }
+                                }
+                            }
+                            opcodeContinuation -> {
+                                val payload = fragmentedPayload ?: error("Received websocket continuation without an initial frame.")
+                                payload.write(result.frame.payload)
+                                if (result.frame.fin) {
+                                    inboundChannel.trySend(String(payload.toByteArray(), Charsets.UTF_8))
+                                    fragmentedPayload = null
+                                }
+                            }
+                            opcodePing -> writeFrame(opcodePong, result.frame.payload)
+                            opcodePong -> Unit
+                            opcodeClose -> {
+                                inboundChannel.close()
+                                return@Thread
+                            }
+                            else -> error("Received unsupported websocket opcode ${result.frame.opcode}.")
+                        }
+                    }
                 }
             } catch (error: Throwable) {
                 inboundChannel.close(error)
@@ -185,10 +316,13 @@ private class SshjLineTransport(
             }
             inboundChannel.close()
         }.apply {
-            name = "mobidex-app-server-reader"
+            name = "mobidex-app-server-websocket-reader"
             isDaemon = true
             start()
         }
+    }
+
+    private fun startStderrDrainer() {
         Thread {
             runCatching { IOUtils.readFully(command.errorStream) }
         }.apply {
@@ -199,20 +333,113 @@ private class SshjLineTransport(
     }
 
     override suspend fun sendLine(line: String) = withContext(Dispatchers.IO) {
-        command.outputStream.write(line.toByteArray(Charsets.UTF_8))
-        command.outputStream.write('\n'.code)
-        command.outputStream.flush()
+        writeFrame(opcodeText, line.toByteArray(Charsets.UTF_8))
     }
 
     override suspend fun close(): Unit = withContext(Dispatchers.IO) {
+        runCatching { writeFrame(opcodeClose, ByteArray(0)) }
+        closeBlocking()
+        Unit
+    }
+
+    private fun writeFrame(opcode: Int, payload: ByteArray) {
+        val frame = encodeWebSocketFrame(opcode, payload)
+        synchronized(command.outputStream) {
+            command.outputStream.write(frame)
+            command.outputStream.flush()
+        }
+    }
+
+    private fun closeBlocking() {
         runCatching { command.close() }
         runCatching { command.join(1, TimeUnit.SECONDS) }
         runCatching { session.close() }
         runCatching { client.close() }
         inboundChannel.close()
-        Unit
     }
 }
+
+private data class UpgradeResponse(val headers: String, val leftover: ByteArray)
+
+internal data class WebSocketFrame(val fin: Boolean, val opcode: Int, val payload: ByteArray)
+
+internal data class WebSocketFrameParseResult(val frame: WebSocketFrame, val remaining: ByteArray)
+
+internal fun parseWebSocketFrame(buffer: ByteArray): WebSocketFrameParseResult? {
+    if (buffer.size < 2) return null
+    val first = buffer[0].toInt() and 0xFF
+    val second = buffer[1].toInt() and 0xFF
+    val fin = first and 0x80 != 0
+    val opcode = first and 0x0F
+    var offset = 2
+    var length = second and 0x7F
+    if (length == 126) {
+        if (buffer.size < 4) return null
+        length = ((buffer[2].toInt() and 0xFF) shl 8) or (buffer[3].toInt() and 0xFF)
+        offset = 4
+    } else if (length == 127) {
+        if (buffer.size < 10) return null
+        var length64 = 0L
+        for (index in 0 until 8) {
+            length64 = (length64 shl 8) or (buffer[2 + index].toLong() and 0xFF)
+        }
+        require(length64 <= Int.MAX_VALUE) { "Websocket frame payload is too large." }
+        length = length64.toInt()
+        offset = 10
+    }
+    val masked = second and 0x80 != 0
+    val mask = if (masked) {
+        if (buffer.size < offset + 4) return null
+        buffer.copyOfRange(offset, offset + 4).also { offset += 4 }
+    } else {
+        ByteArray(0)
+    }
+    if (buffer.size < offset + length) return null
+    val payload = buffer.copyOfRange(offset, offset + length)
+    if (masked) {
+        for (index in payload.indices) {
+            payload[index] = ((payload[index].toInt() and 0xFF) xor (mask[index % 4].toInt() and 0xFF)).toByte()
+        }
+    }
+    return WebSocketFrameParseResult(
+        frame = WebSocketFrame(fin = fin, opcode = opcode, payload = payload),
+        remaining = buffer.copyOfRange(offset + length, buffer.size),
+    )
+}
+
+internal fun encodeWebSocketFrame(opcode: Int, payload: ByteArray): ByteArray {
+    val output = ByteArrayOutputStream()
+    output.write(0x80 or opcode)
+    val mask = ByteArray(4)
+    frameMaskRandom.nextBytes(mask)
+    when {
+        payload.size < 126 -> output.write(0x80 or payload.size)
+        payload.size <= UShort.MAX_VALUE.toInt() -> {
+            output.write(0x80 or 126)
+            output.write((payload.size shr 8) and 0xFF)
+            output.write(payload.size and 0xFF)
+        }
+        else -> {
+            output.write(0x80 or 127)
+            val length = payload.size.toLong()
+            for (shift in 56 downTo 0 step 8) {
+                output.write(((length shr shift) and 0xFF).toInt())
+            }
+        }
+    }
+    output.write(mask)
+    payload.forEachIndexed { index, byte ->
+        output.write((byte.toInt() and 0xFF) xor (mask[index % 4].toInt() and 0xFF))
+    }
+    return output.toByteArray()
+}
+
+private fun ByteArray.endsWith(suffix: ByteArray): Boolean {
+    if (size < suffix.size) return false
+    return suffix.indices.all { index -> this[size - suffix.size + index] == suffix[index] }
+}
+
+private val frameMaskRandom = SecureRandom()
 
 private fun SSHClient.execString(command: String): String =
     startSession().use { session ->

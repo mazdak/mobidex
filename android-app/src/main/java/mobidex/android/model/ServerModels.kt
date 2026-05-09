@@ -3,6 +3,7 @@ package mobidex.android.model
 import java.time.Instant
 import java.util.UUID
 import kotlinx.serialization.Serializable
+import mobidex.shared.RemoteCodexAppServerCommand
 
 @Serializable
 enum class ServerAuthMethod(val label: String) {
@@ -37,14 +38,11 @@ data class ServerRecord(
             updatedAtEpochSeconds = Instant.now().epochSecond,
         )
 
-    val appServerCommand: String
-        get() {
-            val executable = if (codexPath.trim() == "codex") "codex" else codexPath.shellQuotedExecutablePath()
-            return listOf(
-                shellEnvironmentBootstrapCommand(),
-                "exec $executable app-server --listen stdio://",
-            ).joinToString("; ")
-        }
+    val appServerProxyCommand: String
+        get() = RemoteCodexAppServerCommand.proxyCommand(
+            codexPath = codexPath,
+            targetShellRCFile = targetShellRCFile,
+        )
 }
 
 @Serializable
@@ -81,33 +79,3 @@ enum class ServerConnectionState(val label: String) {
     Connected("App-server connected"),
     Failed("Connection failed"),
 }
-
-private fun ServerRecord.shellEnvironmentBootstrapCommand(): String =
-    listOf(
-        targetShellRCBootstrapCommand(),
-        "export PATH=\"${'$'}HOME/.bun/bin:${'$'}HOME/.local/bin:${'$'}HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${'$'}PATH\"",
-    ).joinToString("; ")
-
-private fun ServerRecord.targetShellRCBootstrapCommand(): String {
-    val rcFile = targetShellRCFile.trim()
-    if (rcFile.isEmpty()) return "true"
-    return "mobidex_shell_rc=${rcFile.shellQuotedRemotePath()}; if [ -f \"${'$'}mobidex_shell_rc\" ]; then . \"${'$'}mobidex_shell_rc\" 1>&2; fi"
-}
-
-private fun String.shellQuoted(): String = "'${replace("'", "'\"'\"'")}'"
-
-private fun String.shellQuotedExecutablePath(): String =
-    when {
-        this == "~" -> "\"\${HOME}\""
-        startsWith("~/") -> "\"\${HOME}\"/${drop(2).shellQuoted()}"
-        else -> shellQuoted()
-    }
-
-private fun String.shellQuotedRemotePath(): String =
-    when {
-        this == "\$HOME" || this == "\${HOME}" || this == "~" -> "\"\${HOME}\""
-        startsWith("\$HOME/") -> "\"\${HOME}\"/${drop(6).shellQuoted()}"
-        startsWith("\${HOME}/") -> "\"\${HOME}\"/${drop(8).shellQuoted()}"
-        startsWith("~/") -> "\"\${HOME}\"/${drop(2).shellQuoted()}"
-        else -> shellQuoted()
-    }
