@@ -1,10 +1,14 @@
 package mobidex.android
 
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import java.io.File
 import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +17,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -51,12 +56,14 @@ import mobidex.android.service.turnOptions
 import mobidex.shared.CodexAccessMode
 import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
+import mobidex.shared.CodexThreadSummary
 import mobidex.shared.GitDiffSnapshot
 import mobidex.shared.JsonValue
 import mobidex.shared.ProjectCatalog
 import mobidex.shared.ProjectListSections
 import mobidex.shared.RemoteDirectoryListing
 import mobidex.shared.RemoteProject
+import mobidex.shared.SessionListSections
 import mobidex.shared.jsonArray
 import mobidex.shared.jsonNull
 import mobidex.shared.jsonObject
@@ -126,6 +133,7 @@ class AppViewModel(
     private var diffSnapshotRequestID = 0L
     private var activeSessionRefreshes = 0
     private var sessionRefreshGeneration = 0L
+    private val appContext = context.applicationContext
 
     init {
         viewModelScope.launch { loadServers() }
@@ -190,6 +198,12 @@ class AppViewModel(
             )
         }
         refreshThreads(refreshGeneration = refreshGeneration)
+    }
+
+    fun showTerminalPlaceholder() {
+        _state.update {
+            it.copy(statusMessage = "Terminal entry point is in place. PTY transport and WebView rendering are not wired yet.")
+        }
     }
 
     suspend fun listRemoteDirectories(path: String): RemoteDirectoryListing {
@@ -402,8 +416,24 @@ class AppViewModel(
                     val loaded = if (sessionPaths.isEmpty()) {
                         client.listThreads(cwd, includeArchived = includeArchived)
                     } else {
-                        sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived) }
-                            .distinctBy { it.id }
+                        val exactMatches = sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived) }
+                        if (exactMatches.isNotEmpty()) {
+                            exactMatches.distinctBy { it.id }
+                        } else {
+                            val unscoped = client.listThreads(null, includeArchived = includeArchived)
+                            val groupedSessionIDs = SessionListSections.sessionIdsForProject(
+                                sessions = unscoped.map { thread ->
+                                    CodexThreadSummary(
+                                        id = thread.id,
+                                        cwd = thread.cwd,
+                                        updatedAtEpochSeconds = thread.updatedAtEpochSeconds,
+                                    )
+                                },
+                                projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+                                projectPath = cwd.orEmpty(),
+                            )
+                            unscoped.filter { it.id in groupedSessionIDs }.distinctBy { it.id }
+                        }
                     }
                     _state.update { current ->
                         if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID) {
@@ -486,10 +516,18 @@ class AppViewModel(
     }
 
     fun sendComposerText(text: String) {
+        sendComposerInput(text, emptyList(), onComplete = {})
+    }
+
+    fun sendComposerInput(text: String, attachmentUris: List<Uri>, onComplete: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             val trimmed = text.trim()
-            if (trimmed.isEmpty()) return@launch
-            runBusy("Sending") {
+            if (trimmed.isEmpty() && attachmentUris.isEmpty()) {
+                onComplete(false)
+                return@launch
+            }
+            var didSubmitInput = false
+            runBusy(if (attachmentUris.isEmpty()) "Sending" else "Uploading attachments") {
                 val client = appServer ?: error("Connect to the app-server before sending a message.")
                 val requestState = _state.value
                 val requestServerID = requestState.selectedServerID
@@ -505,7 +543,11 @@ class AppViewModel(
                 if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                     return@runBusy
                 }
-                val input = listOf(CodexInputItem.Text(trimmed))
+                val input = buildList {
+                    if (trimmed.isNotEmpty()) add(CodexInputItem.Text(trimmed))
+                    addAll(stageAttachmentInputs(attachmentUris, requestState.selectedServer ?: error("Select a server before uploading attachments.")))
+                }
+                if (input.isEmpty()) return@runBusy
                 val activeTurnID = _state.value.activeTurnID
                 if (thread.status.isActive && activeTurnID != null) {
                     client.steer(thread.id, activeTurnID, input)
@@ -516,6 +558,7 @@ class AppViewModel(
                             it
                         }
                     }
+                    didSubmitInput = true
                 } else {
                     val turn = client.startTurn(
                         threadID = thread.id,
@@ -526,11 +569,48 @@ class AppViewModel(
                         return@runBusy
                     }
                     hydrateConversation(thread.copy(status = thread.status.copy(type = if (turn.status == "inProgress") "active" else "idle"), turns = thread.turns.upsert(turn)))
+                    didSubmitInput = true
                 }
                 refreshThreads()
                 if (createdThread) refreshProjectsForCurrentScope(client, requestServerID)
             }
+            onComplete(didSubmitInput)
         }
+    }
+
+    private suspend fun stageAttachmentInputs(uris: List<Uri>, server: ServerRecord): List<CodexInputItem> {
+        if (uris.isEmpty()) return emptyList()
+        val attachments = withContext(Dispatchers.IO) {
+            uris.map { uri -> CachedAttachment(copyAttachmentToCache(uri), appContext.contentResolver.getType(uri)) }
+        }
+        val remotePaths = sshService.stageLocalFiles(attachments.map { it.localPath }, server, credentialStore.loadCredential(server.id))
+        return attachments.zip(remotePaths).map { (attachment, remotePath) ->
+            if (attachment.isImage) {
+                CodexInputItem.LocalImage(remotePath)
+            } else {
+                CodexInputItem.Mention(File(attachment.localPath).name, remotePath)
+            }
+        }
+    }
+
+    private fun copyAttachmentToCache(uri: Uri): String {
+        val name = attachmentDisplayName(uri).sanitizedAttachmentName()
+        val directory = File(appContext.cacheDir, "mobidex-attachments/${UUID.randomUUID()}").also { it.mkdirs() }
+        val destination = File(directory, name)
+        appContext.contentResolver.openInputStream(uri)?.use { input ->
+            destination.outputStream().use { output -> input.copyTo(output) }
+        } ?: error("Could not read the selected attachment.")
+        return destination.absolutePath
+    }
+
+    private fun attachmentDisplayName(uri: Uri): String {
+        appContext.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (index >= 0 && cursor.moveToFirst()) {
+                cursor.getString(index)?.takeIf { it.isNotBlank() }?.let { return it }
+            }
+        }
+        return uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: "attachment"
     }
 
     fun interruptActiveTurn() {
@@ -946,8 +1026,15 @@ class AppViewModel(
         val state = _state.value
         if (state.selectedThreadID == thread.id) return true
         if (state.selectedThreadID != null) return false
-        val paths = state.selectedProject?.sessionPaths.orEmpty()
-        return paths.isEmpty() || thread.cwd in paths
+        val project = state.selectedProject
+        val paths = project?.sessionPaths.orEmpty()
+        if (paths.isEmpty() || thread.cwd in paths) return true
+        val projectPath = project?.path ?: return false
+        return thread.id in SessionListSections.sessionIdsForProject(
+            sessions = listOf(CodexThreadSummary(thread.id, thread.cwd, thread.updatedAtEpochSeconds)),
+            projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+            projectPath = projectPath,
+        )
     }
 
     private fun upsertItem(item: CodexThreadItem) {
@@ -1218,3 +1305,16 @@ private fun List<CodexThreadItem>.upsert(item: CodexThreadItem): List<CodexThrea
 
 private fun CodexThread.mapItems(transform: (CodexThreadItem) -> CodexThreadItem): CodexThread =
     copy(turns = turns.map { turn -> turn.copy(items = turn.items.map(transform)) })
+
+private data class CachedAttachment(val localPath: String, val mimeType: String?) {
+    val isImage: Boolean
+        get() = mimeType?.startsWith("image/") == true || localPath.isImageAttachmentPath()
+}
+
+private fun String.isImageAttachmentPath(): Boolean =
+    substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp")
+
+private fun String.sanitizedAttachmentName(): String {
+    val sanitized = replace(Regex("""[^A-Za-z0-9._-]"""), "_").trim('_')
+    return sanitized.ifEmpty { "attachment" }
+}

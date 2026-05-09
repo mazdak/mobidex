@@ -787,6 +787,28 @@ final class AppViewModelTests: XCTestCase {
         viewModel.selectProject(toolsProject.id)
         XCTAssertNil(viewModel.selectedThreadID)
         cursor = transport.sentLinesSnapshot.count
+        let projectRefreshTask = Task { await viewModel.refreshThreads() }
+        let scopedToolsList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = scopedToolsList.nextCursor
+        params = try requestParams(for: scopedToolsList, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/srv/tools")
+        transport.receive("""
+        {"id":\(scopedToolsList.id),"result":{"data":[],"nextCursor":null}}
+        """)
+        let groupedToolsList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = groupedToolsList.nextCursor
+        params = try requestParams(for: groupedToolsList, in: transport)
+        XCTAssertNil(params["cwd"])
+        transport.receive("""
+        {"id":\(groupedToolsList.id),"result":{"data":[
+          {"id":"thread-tools-worktree","preview":"Tools worktree","cwd":"/srv/.codex/worktrees/a/tools","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-app","preview":"App work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        await projectRefreshTask.value
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-tools-worktree"])
+        XCTAssertNil(viewModel.selectedThreadID)
+
         let refreshTask = Task { await viewModel.selectAllSessionsAndRefresh() }
         let toolsList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         XCTAssertTrue(viewModel.isShowingAllSessions)

@@ -1747,7 +1747,17 @@ final class AppViewModel: ObservableObject {
         guard !scope.sessionPaths.isEmpty else {
             return true
         }
-        return scope.sessionPaths.contains(thread.cwd)
+        if scope.sessionPaths.contains(thread.cwd) {
+            return true
+        }
+        guard let projectPath = scope.cwd, let selectedServer else {
+            return false
+        }
+        return SharedKMPBridge.sessionIDsForProject(
+            threads: [thread],
+            projects: selectedServer.projects,
+            projectPath: projectPath
+        ).contains(thread.id)
     }
 
     private func listThreads(matching scope: ThreadLoadScope) async throws -> [CodexThread] {
@@ -1757,14 +1767,22 @@ final class AppViewModel: ObservableObject {
         guard !scope.sessionPaths.isEmpty else {
             return try await appServer.listThreads(cwd: nil, includeArchived: scope.includeArchivedSessions)
         }
-        guard scope.sessionPaths.count > 1 else {
-            return try await appServer.listThreads(cwd: scope.cwd, includeArchived: scope.includeArchivedSessions)
-        }
         var merged: [CodexThread] = []
         var seen = Set<String>()
         for cwd in scope.sessionPaths.sorted() {
             let loaded = try await appServer.listThreads(cwd: cwd, includeArchived: scope.includeArchivedSessions)
             for thread in loaded where seen.insert(thread.id).inserted {
+                merged.append(thread)
+            }
+        }
+        if merged.isEmpty, let projectPath = scope.cwd, let selectedServer {
+            let unscopedThreads = try await appServer.listThreads(cwd: nil, includeArchived: scope.includeArchivedSessions)
+            let groupedSessionIDs = SharedKMPBridge.sessionIDsForProject(
+                threads: unscopedThreads,
+                projects: selectedServer.projects,
+                projectPath: projectPath
+            )
+            for thread in unscopedThreads where groupedSessionIDs.contains(thread.id) && seen.insert(thread.id).inserted {
                 merged.append(thread)
             }
         }

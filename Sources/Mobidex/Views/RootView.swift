@@ -185,17 +185,20 @@ struct ProjectSessionListView: View {
                         }
                         HStack {
                             Button {
-                                Task { await model.testSelectedConnection() }
-                            } label: {
-                                Label("Test", systemImage: "checkmark.circle")
-                            }
-                            .accessibilityIdentifier("testConnectionButton")
-                            Button {
                                 Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
                             } label: {
                                 Text(model.isAppServerConnected ? "Reconnect Codex" : "Connect Codex")
                             }
                             .accessibilityIdentifier("connectButton")
+                            Button {
+                                model.statusAlert = StatusAlert(
+                                    title: "Terminal Coming Soon",
+                                    message: "The terminal entry point is in place. The PTY transport and WebView terminal renderer are not wired yet."
+                                )
+                            } label: {
+                                Label("Terminal", systemImage: "terminal")
+                            }
+                            .accessibilityIdentifier("terminalButton")
                         }
                         .buttonStyle(.bordered)
                     }
