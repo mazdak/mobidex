@@ -41,6 +41,7 @@ import mobidex.android.model.conversationSections
 import mobidex.android.service.CodexAppServerClient
 import mobidex.android.service.CodexAppServerEvent
 import mobidex.android.service.MobidexSshService
+import mobidex.android.service.RemoteTerminalSession
 import mobidex.android.service.SshjMobidexSshService
 import mobidex.android.service.array
 import mobidex.android.service.long
@@ -201,10 +202,23 @@ class AppViewModel(
         refreshThreads(refreshGeneration = refreshGeneration)
     }
 
-    fun showTerminalPlaceholder() {
-        _state.update {
-            it.copy(statusMessage = "Terminal entry point is in place. PTY transport and WebView rendering are not wired yet.")
-        }
+    suspend fun openTerminalSession(columns: Int = 80, rows: Int = 24): RemoteTerminalSession {
+        val state = _state.value
+        val server = state.selectedServer ?: error("Select a server before opening a terminal.")
+        return runCatching {
+            _state.update { it.copy(statusMessage = "Opening terminal") }
+            sshService.openTerminal(
+                cwd = state.selectedThread?.cwd ?: state.selectedProject?.path,
+                columns = columns,
+                rows = rows,
+                server = server,
+                credential = credentialStore.loadCredential(server.id),
+            )
+        }.onSuccess {
+            _state.update { state -> state.copy(statusMessage = null) }
+        }.onFailure { error ->
+            _state.update { state -> state.copy(statusMessage = error.message) }
+        }.getOrThrow()
     }
 
     suspend fun listRemoteDirectories(path: String): RemoteDirectoryListing {

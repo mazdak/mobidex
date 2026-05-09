@@ -13,8 +13,12 @@ import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.withContext
@@ -33,6 +37,7 @@ import mobidex.shared.WebSocketOpcode
 import net.schmizz.sshj.AndroidConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.IOUtils
+import net.schmizz.sshj.connection.channel.direct.PTYMode
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.keyprovider.OpenSSHKeyFile
@@ -45,6 +50,14 @@ interface MobidexSshService {
     suspend fun listDirectories(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
     suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String>
     suspend fun openAppServer(server: ServerRecord, credential: SSHCredential): CodexAppServerClient
+    suspend fun openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential): RemoteTerminalSession
+}
+
+interface RemoteTerminalSession {
+    val output: Flow<String>
+    suspend fun write(text: String)
+    suspend fun resize(columns: Int, rows: Int)
+    suspend fun close()
 }
 
 class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSshService {
@@ -96,6 +109,49 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
                 throw error
             }
         }
+
+    override suspend fun openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential): RemoteTerminalSession {
+        val openedTerminal = AtomicReference<SshjRemoteTerminalSession?>()
+        return try {
+            val terminal = withContext(Dispatchers.IO) {
+                var client: SSHClient? = null
+                var session: Session? = null
+                try {
+                    currentCoroutineContext().ensureActive()
+                    val connectedClient = connect(server, credential)
+                    client = connectedClient
+                    currentCoroutineContext().ensureActive()
+                    val sshSession = connectedClient.startSession()
+                    session = sshSession
+                    sshSession.allocatePTY("xterm-256color", columns, rows, 0, 0, emptyMap<PTYMode, Int>())
+                    currentCoroutineContext().ensureActive()
+                    val shell = sshSession.startShell()
+                    currentCoroutineContext().ensureActive()
+                    val terminal = SshjRemoteTerminalSession(connectedClient, sshSession, shell)
+                    openedTerminal.set(terminal)
+                    cwd?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        terminal.write("cd ${it.shellQuoted()}\n")
+                    }
+                    currentCoroutineContext().ensureActive()
+                    session = null
+                    client = null
+                    terminal
+                } catch (error: Throwable) {
+                    openedTerminal.getAndSet(null)?.closeBlocking()
+                        ?: run {
+                            runCatching { session?.close() }
+                            runCatching { client?.close() }
+                        }
+                    throw error
+                }
+            }
+            openedTerminal.set(null)
+            terminal
+        } catch (error: Throwable) {
+            openedTerminal.getAndSet(null)?.closeBlocking()
+            throw error
+        }
+    }
 
     private suspend fun <T> withClient(
         server: ServerRecord,
@@ -367,6 +423,70 @@ private class SshjWebSocketProxyTransport private constructor(
     }
 }
 
+private class SshjRemoteTerminalSession(
+    private val client: SSHClient,
+    private val session: Session,
+    private val shell: Session.Shell,
+) : RemoteTerminalSession {
+    private val outputChannel = Channel<String>(Channel.BUFFERED)
+    private val readersRemaining = AtomicInteger(2)
+
+    override val output: Flow<String> = outputChannel.receiveAsFlow()
+
+    init {
+        startReader(shell.inputStream, "mobidex-terminal-stdout")
+        startReader(shell.errorStream, "mobidex-terminal-stderr")
+    }
+
+    override suspend fun write(text: String): Unit = withContext(Dispatchers.IO) {
+        synchronized(shell.outputStream) {
+            shell.outputStream.write(text.toByteArray(Charsets.UTF_8))
+            shell.outputStream.flush()
+        }
+    }
+
+    override suspend fun resize(columns: Int, rows: Int): Unit = withContext(Dispatchers.IO) {
+        shell.changeWindowDimensions(columns, rows, 0, 0)
+    }
+
+    override suspend fun close(): Unit = withContext(Dispatchers.IO) {
+        closeBlocking()
+    }
+
+    private fun startReader(input: InputStream, name: String) {
+        Thread {
+            val buffer = ByteArray(8_192)
+            try {
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read > 0) {
+                        outputChannel.trySend(String(buffer, 0, read, Charsets.UTF_8))
+                    }
+                }
+            } catch (error: Throwable) {
+                outputChannel.close(error)
+                return@Thread
+            }
+            if (readersRemaining.decrementAndGet() == 0) {
+                outputChannel.close()
+            }
+        }.apply {
+            this.name = name
+            isDaemon = true
+            start()
+        }
+    }
+
+    fun closeBlocking() {
+        runCatching { shell.close() }
+        runCatching { shell.join(1, TimeUnit.SECONDS) }
+        runCatching { session.close() }
+        runCatching { client.close() }
+        outputChannel.close()
+    }
+}
+
 private data class UpgradeResponse(val headers: String, val leftover: ByteArray)
 
 private fun ByteArray.endsWith(suffix: ByteArray): Boolean {
@@ -400,3 +520,6 @@ private fun String.sanitizedFilename(): String {
         .trim('.', '_', '-')
     return sanitized.ifEmpty { "attachment" }
 }
+
+private fun String.shellQuoted(): String =
+    "'${replace("'", "'\"'\"'")}'"
