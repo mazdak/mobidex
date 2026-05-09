@@ -1,7 +1,6 @@
 package mobidex.android.service
 
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,10 +9,11 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -22,13 +22,14 @@ import mobidex.android.model.CodexTurn
 import mobidex.shared.CodexAccessMode
 import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
+import mobidex.shared.CodexRpcClientCore
+import mobidex.shared.CodexRpcErrorInfo
+import mobidex.shared.CodexRpcInboundEnvelope
 import mobidex.shared.CodexRpcRequests
-import mobidex.shared.CodexRpcResultResponse
 import mobidex.shared.CodexTurnOptions
 import mobidex.shared.GitDiffFileParser
 import mobidex.shared.GitDiffSnapshot
 import mobidex.shared.JsonValue
-import mobidex.shared.encodeJsonLine
 import mobidex.shared.jsonBool
 import mobidex.shared.jsonObject
 import mobidex.shared.jsonString
@@ -48,7 +49,8 @@ sealed interface CodexAppServerEvent {
 class CodexAppServerClient(private val transport: CodexLineTransport) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventsChannel = Channel<CodexAppServerEvent>(Channel.BUFFERED)
-    private val nextID = AtomicLong(1)
+    private val rpcCore = CodexRpcClientCore()
+    private val rpcCoreMutex = Mutex()
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
     private var closed = false
 
@@ -60,7 +62,7 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
 
     suspend fun initialize() {
         request("initialize", CodexRpcRequests.initialize(0, "mobidex-android", "Mobidex Android", "0.1.0").params?.toJsonElement())
-        transport.sendLine("""{"jsonrpc":"2.0","method":"initialized"}""")
+        transport.sendLine(rpcCore.notificationLine("initialized"))
     }
 
     suspend fun listThreads(cwd: String?, limit: Int = 80): List<CodexThread> {
@@ -126,7 +128,7 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
     }
 
     suspend fun respondToServerRequest(id: JsonElement, result: JsonValue) {
-        transport.sendLine(CodexRpcResultResponse(id = id.toSharedJsonValue(), result = result).encodeJsonLine())
+        transport.sendLine(rpcCore.resultLine(id.toSharedJsonValue(), result))
     }
 
     suspend fun close() {
@@ -139,16 +141,18 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
 
     private suspend fun request(method: String, params: JsonElement?): JsonElement {
         check(!closed) { "The app-server connection is closed." }
-        val id = nextID.getAndIncrement()
         val waiter = CompletableDeferred<JsonElement>()
-        pending[id] = waiter
-        val fields = buildMap<String, JsonElement> {
-            put("jsonrpc", JsonPrimitive("2.0"))
-            put("id", JsonPrimitive(id))
-            put("method", JsonPrimitive(method))
-            if (params != null) put("params", params)
+        val request = rpcCoreMutex.withLock {
+            val next = rpcCore.nextRequest(method, params?.toSharedJsonValue())
+            pending[next.id] = waiter
+            next
         }
-        transport.sendLine(JsonObject(fields).toString())
+        try {
+            transport.sendLine(request.line)
+        } catch (error: Throwable) {
+            pending.remove(request.id)?.completeExceptionally(error)
+            throw error
+        }
         return waiter.await()
     }
 
@@ -156,15 +160,27 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
         try {
             transport.inboundLines.collect { line ->
                 val message = AppJson.parseToJsonElement(line).jsonObject
-                val id = message["id"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
-                val method = message["method"]?.jsonPrimitive?.contentOrNull
-                val result = message["result"]
-                val error = message["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
-                when {
-                    id != null && error != null -> pending.remove(id)?.completeExceptionally(IllegalStateException(error))
-                    id != null && result != null -> pending.remove(id)?.complete(result)
-                    method != null && message["id"] != null -> eventsChannel.trySend(CodexAppServerEvent.ServerRequest(message["id"]!!, method, message["params"]))
-                    method != null -> eventsChannel.trySend(CodexAppServerEvent.Notification(method, message["params"]))
+                val action = rpcCore.classifyInbound(message.toSharedEnvelope()) ?: return@collect
+                when (action.kind) {
+                    "errorResponse" -> {
+                        val id = action.numericId ?: return@collect
+                        val error = action.error?.message ?: "The app-server returned an error."
+                        pending.remove(id)?.completeExceptionally(IllegalStateException(error))
+                    }
+                    "resultResponse" -> {
+                        val id = action.numericId ?: return@collect
+                        val result = action.result?.toJsonElement() ?: return@collect
+                        pending.remove(id)?.complete(result)
+                    }
+                    "serverRequest" -> {
+                        val id = action.id?.toJsonElement() ?: return@collect
+                        val method = action.method ?: return@collect
+                        eventsChannel.trySend(CodexAppServerEvent.ServerRequest(id, method, action.params?.toJsonElement()))
+                    }
+                    "notification" -> {
+                        val method = action.method ?: return@collect
+                        eventsChannel.trySend(CodexAppServerEvent.Notification(method, action.params?.toJsonElement()))
+                    }
                 }
             }
             disconnectFromReader(IllegalStateException("The app-server stream ended."))
@@ -188,6 +204,20 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
         pending.clear()
     }
 }
+
+private fun JsonObject.toSharedEnvelope(): CodexRpcInboundEnvelope =
+    CodexRpcInboundEnvelope(
+        id = get("id")?.toSharedJsonValue(),
+        method = get("method")?.jsonPrimitive?.contentOrNull,
+        params = get("params")?.toSharedJsonValue(),
+        result = get("result")?.toSharedJsonValue(),
+        error = get("error")?.jsonObject?.let { error ->
+            CodexRpcErrorInfo(
+                code = error["code"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0,
+                message = error["message"]?.jsonPrimitive?.contentOrNull ?: "The app-server returned an error.",
+            )
+        },
+    )
 
 fun turnOptions(effort: CodexReasoningEffortOption, accessMode: CodexAccessMode, cwd: String?): CodexTurnOptions =
     CodexTurnOptions(reasoningEffort = effort, accessMode = accessMode, cwd = cwd)

@@ -55,6 +55,7 @@ import mobidex.shared.GitDiffSnapshot
 import mobidex.shared.JsonValue
 import mobidex.shared.ProjectCatalog
 import mobidex.shared.ProjectListSections
+import mobidex.shared.RemoteProject
 import mobidex.shared.jsonArray
 import mobidex.shared.jsonNull
 import mobidex.shared.jsonObject
@@ -93,6 +94,17 @@ data class MobidexUiState(
 
     val activeTurnID: String?
         get() = selectedThread?.turns?.lastOrNull { it.status == "inProgress" }?.id
+}
+
+data class AndroidProjectListSections(
+    val favorites: List<ProjectRecord>,
+    val discovered: List<ProjectRecord>,
+    val added: List<ProjectRecord>,
+    val showInactiveDiscoveredFilter: Boolean,
+    val discoveredTitle: String,
+) {
+    val isEmpty: Boolean
+        get() = favorites.isEmpty() && discovered.isEmpty() && added.isEmpty()
 }
 
 class AppViewModel(
@@ -306,7 +318,7 @@ class AppViewModel(
                 appServer = client
                 startEventLoop(client)
                 _state.update { it.copy(connectionState = ServerConnectionState.Connected, statusMessage = "App-server connected.") }
-                refreshProjectsFromAppServer(server, client)
+                refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = false)
                 refreshThreads()
             }
         }
@@ -321,7 +333,7 @@ class AppViewModel(
             runBusy("Syncing projects") {
                 val server = _state.value.selectedServer ?: return@runBusy
                 val client = appServer ?: error("Connect to the app-server before syncing projects.")
-                refreshProjectsFromAppServer(server, client)
+                refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = true)
             }
         }
     }
@@ -535,12 +547,21 @@ class AppViewModel(
         }
     }
 
-    private suspend fun refreshProjectsFromAppServer(server: ServerRecord, client: CodexAppServerClient) {
+    private suspend fun refreshProjectsFromAppServer(
+        server: ServerRecord,
+        client: CodexAppServerClient,
+        includeRemoteDiscovery: Boolean,
+    ) {
         val openSessions = listOpenSessionSummaries(client)
+        val discoveredProjects = if (includeRemoteDiscovery) {
+            sshService.discoverProjects(server, credentialStore.loadCredential(server.id))
+        } else {
+            null
+        }
         val current = _state.value
         if (!projectSyncStillCurrent(server.id, client)) return
         val currentServer = current.servers.firstOrNull { it.id == server.id } ?: return
-        val refreshed = refreshedProjects(currentServer.projects, openSessions)
+        val refreshed = refreshedProjects(currentServer.projects, discoveredProjects, openSessions)
         val updatedServer = currentServer.copy(projects = refreshed, updatedAtEpochSeconds = Instant.now().epochSecond)
         val updatedServers = current.servers.upsert(updatedServer)
         repository.saveServers(updatedServers)
@@ -570,7 +591,9 @@ class AppViewModel(
 
     private suspend fun refreshProjectsForCurrentScope(client: CodexAppServerClient, serverID: String?) {
         val server = _state.value.servers.firstOrNull { it.id == serverID } ?: return
-        if (projectSyncStillCurrent(server.id, client)) refreshProjectsFromAppServer(server, client)
+        if (projectSyncStillCurrent(server.id, client)) {
+            refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = false)
+        }
     }
 
     private fun projectSyncStillCurrent(serverID: String, client: CodexAppServerClient): Boolean {
@@ -608,12 +631,13 @@ class AppViewModel(
 
     private fun refreshedProjects(
         existing: List<ProjectRecord>,
+        discoveredProjects: List<RemoteProject>?,
         openSessions: List<CodexThread>,
     ): List<ProjectRecord> {
         val existingByPath = existing.associateBy { it.path }
         return ProjectCatalog.refreshedProjects(
             existingProjects = existing.map { it.toSharedProject() },
-            discoveredProjects = emptyList(),
+            discoveredProjects = discoveredProjects ?: existing.discoveredRemoteProjects(),
             openSessions = openSessions.map {
                 mobidex.shared.CodexThreadSummary(it.id, it.cwd, it.updatedAtEpochSeconds)
             },
@@ -634,6 +658,16 @@ class AppViewModel(
         }
     }
 
+    private fun List<ProjectRecord>.discoveredRemoteProjects(): List<RemoteProject> =
+        filter { it.discovered }.map { project ->
+            RemoteProject(
+                path = project.path,
+                sessionPaths = project.sessionPaths,
+                discoveredSessionCount = project.discoveredSessionCount,
+                lastDiscoveredAtEpochSeconds = project.lastDiscoveredAtEpochSeconds,
+            )
+        }
+
     private fun repairedSelectedProjectID(selectedProjectID: String?, projects: List<ProjectRecord>): String? = when {
         selectedProjectID != null && projects.any { it.id == selectedProjectID } -> selectedProjectID
         else -> projects.firstOrNull()?.id
@@ -652,12 +686,22 @@ class AppViewModel(
             isFavorite = isFavorite,
         )
 
-    fun projectSections(searchText: String, showInactive: Boolean): ProjectListSections =
-        ProjectListSections.from(
-            projects = _state.value.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+    fun projectSections(searchText: String, showInactive: Boolean): AndroidProjectListSections {
+        val projects = _state.value.selectedServer?.projects.orEmpty()
+        val projectsByPath = projects.associateBy { it.path }
+        val sections = ProjectListSections.from(
+            projects = projects.map { it.toSharedProject() },
             searchText = searchText,
             showInactiveDiscoveredProjects = showInactive,
         )
+        return AndroidProjectListSections(
+            favorites = sections.favorites.mapNotNull { projectsByPath[it.path] },
+            discovered = sections.discovered.mapNotNull { projectsByPath[it.path] },
+            added = sections.added.mapNotNull { projectsByPath[it.path] },
+            showInactiveDiscoveredFilter = sections.showInactiveDiscoveredFilter,
+            discoveredTitle = sections.discoveredTitle,
+        )
+    }
 
     private fun startEventLoop(client: CodexAppServerClient) {
         eventJob?.cancel()

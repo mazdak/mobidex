@@ -4,6 +4,7 @@ import java.time.Instant
 import java.util.UUID
 import kotlinx.serialization.Serializable
 import mobidex.shared.RemoteCodexAppServerCommand
+import mobidex.shared.RemoteServerLaunchDefaults
 
 @Serializable
 enum class ServerAuthMethod(val label: String) {
@@ -18,8 +19,8 @@ data class ServerRecord(
     val host: String,
     val port: Int = 22,
     val username: String,
-    val codexPath: String = "codex",
-    val targetShellRCFile: String = "\$HOME/.zshrc",
+    val codexPath: String = RemoteServerLaunchDefaults.codexPath,
+    val targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile,
     val authMethod: ServerAuthMethod,
     val projects: List<ProjectRecord> = emptyList(),
     val createdAtEpochSeconds: Long = Instant.now().epochSecond,
@@ -29,14 +30,17 @@ data class ServerRecord(
         get() = "$username@$host:$port"
 
     val normalized: ServerRecord
-        get() = copy(
-            displayName = displayName.trim().ifEmpty { host.trim() },
-            host = host.trim(),
-            username = username.trim(),
-            codexPath = codexPath.trim().ifEmpty { "codex" },
-            targetShellRCFile = targetShellRCFile.trim().ifEmpty { "\$HOME/.zshrc" },
-            updatedAtEpochSeconds = Instant.now().epochSecond,
-        )
+        get() {
+            val launchConfig = RemoteServerLaunchDefaults.normalize(codexPath, targetShellRCFile)
+            return copy(
+                displayName = displayName.trim().ifEmpty { host.trim() },
+                host = host.trim(),
+                username = username.trim(),
+                codexPath = launchConfig.codexPath,
+                targetShellRCFile = launchConfig.targetShellRCFile,
+                updatedAtEpochSeconds = Instant.now().epochSecond,
+            )
+        }
 
     val appServerProxyCommand: String
         get() = RemoteCodexAppServerCommand.proxyCommand(

@@ -110,6 +110,7 @@ import mobidex.shared.CodexReasoningEffortOption
 import mobidex.shared.ConversationSection
 import mobidex.shared.ConversationSectionKind
 import mobidex.shared.GitDiffSnapshot
+import mobidex.shared.RemoteServerLaunchDefaults
 
 @Composable
 fun MobidexApp(model: AppViewModel) {
@@ -339,19 +340,7 @@ private fun ProjectList(
     onShowInactiveChange: (Boolean) -> Unit,
     onOpenDetail: () -> Unit,
 ) {
-    val projects = state.selectedServer?.projects.orEmpty()
-    val filtered = projects
-        .filter { search.isBlank() || it.displayName.contains(search, true) || it.path.contains(search, true) }
-        .sortedWith(
-            compareByDescending<ProjectRecord> { it.isFavorite }
-                .thenByDescending { it.activeChatCount }
-                .thenByDescending { it.discoveredSessionCount }
-                .thenBy { it.displayName.lowercase() }
-        )
-    val favorites = filtered.filter { it.isFavorite }
-    val discovered = filtered.filter { it.discovered && !it.isFavorite && (it.activeChatCount > 0 || it.discoveredSessionCount > 0 || showInactive || search.isNotBlank()) }
-    val added = filtered.filter { !it.discovered && !it.isFavorite }
-    val showInactiveToggle = projects.any { it.discovered && !it.isFavorite && it.discoveredSessionCount == 0 && it.activeChatCount == 0 }
+    val sections = model.projectSections(search, showInactive)
 
     Column {
         OutlinedTextField(
@@ -362,7 +351,7 @@ private fun ProjectList(
             modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
             singleLine = true,
         )
-        if (showInactiveToggle) {
+        if (sections.showInactiveDiscoveredFilter) {
             FilterChip(
                 selected = showInactive,
                 onClick = { onShowInactiveChange(!showInactive) },
@@ -371,10 +360,10 @@ private fun ProjectList(
             )
         }
         LazyColumn(Modifier.weight(1f, fill = true)) {
-            section("Favorites", favorites) { ProjectRow(it, state, model, onOpenDetail) }
-            section("Discovered", discovered) { ProjectRow(it, state, model, onOpenDetail) }
-            section("Added", added) { ProjectRow(it, state, model, onOpenDetail) }
-            if (favorites.isEmpty() && discovered.isEmpty() && added.isEmpty()) {
+            section("Favorites", sections.favorites) { ProjectRow(it, state, model, onOpenDetail) }
+            section(sections.discoveredTitle, sections.discovered) { ProjectRow(it, state, model, onOpenDetail) }
+            section("Added", sections.added) { ProjectRow(it, state, model, onOpenDetail) }
+            if (sections.isEmpty) {
                 item { EmptyState("No Projects", "Connect or add a project path.", Icons.Default.Folder) }
             }
         }
@@ -785,8 +774,8 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
     var host by remember(original?.id) { mutableStateOf(original?.host ?: "") }
     var port by remember(original?.id) { mutableStateOf((original?.port ?: 22).toString()) }
     var username by remember(original?.id) { mutableStateOf(original?.username ?: "") }
-    var codexPath by remember(original?.id) { mutableStateOf(original?.codexPath ?: "codex") }
-    var shellRc by remember(original?.id) { mutableStateOf(original?.targetShellRCFile ?: "\$HOME/.zshrc") }
+    var codexPath by remember(original?.id) { mutableStateOf(original?.codexPath ?: RemoteServerLaunchDefaults.codexPath) }
+    var shellRc by remember(original?.id) { mutableStateOf(original?.targetShellRCFile ?: RemoteServerLaunchDefaults.targetShellRCFile) }
     var authMethod by remember(original?.id) { mutableStateOf(original?.authMethod ?: ServerAuthMethod.Password) }
     var password by remember(original?.id) { mutableStateOf("") }
     var privateKey by remember(original?.id) { mutableStateOf("") }

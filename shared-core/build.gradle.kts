@@ -1,6 +1,7 @@
 plugins {
     kotlin("multiplatform")
     id("com.android.library")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
@@ -33,6 +34,10 @@ kotlin {
     }
 
     sourceSets {
+        commonMain.dependencies {
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+        }
+
         commonTest.dependencies {
             implementation(kotlin("test"))
         }

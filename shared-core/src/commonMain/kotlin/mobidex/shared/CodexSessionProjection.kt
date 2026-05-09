@@ -117,12 +117,32 @@ sealed interface CodexSessionItem {
 
 object CodexSessionProjection {
     fun sections(thread: CodexSessionThread): List<ConversationSection> =
-        thread.turns.flatMap { turn ->
+        uniquelyIdentified(thread.turns.flatMap { turn ->
             turn.items.map { item -> section(item, turn.id) }
-        }
+        })
 
     fun sections(items: List<CodexSessionItem>): List<ConversationSection> =
-        items.map { item -> section(item, "live") }
+        uniquelyIdentified(items.map { item -> section(item, "live") })
+
+    private fun uniquelyIdentified(sections: List<ConversationSection>): List<ConversationSection> {
+        val countsByID = mutableMapOf<String, Int>()
+        val emittedIDs = mutableSetOf<String>()
+        return sections.map { section ->
+            val baseID = section.id
+            if (emittedIDs.add(baseID)) {
+                section
+            } else {
+                var count = (countsByID[baseID] ?: 1) + 1
+                var nextID = "$baseID#$count"
+                while (!emittedIDs.add(nextID)) {
+                    count += 1
+                    nextID = "$baseID#$count"
+                }
+                countsByID[baseID] = count
+                section.copy(id = nextID)
+            }
+        }
+    }
 
     private fun section(item: CodexSessionItem, turnId: String): ConversationSection =
         when (item) {

@@ -1,21 +1,71 @@
 package mobidex.shared
 
+data class RemoteServerLaunchConfig(
+    val codexPath: String = RemoteServerLaunchDefaults.codexPath,
+    val targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile,
+)
+
+object RemoteServerLaunchDefaults {
+    const val codexPath: String = "codex"
+    const val targetShellRCFile: String = "\$HOME/.zshrc"
+
+    fun normalize(codexPath: String?, targetShellRCFile: String?): RemoteServerLaunchConfig =
+        RemoteServerLaunchConfig(
+            codexPath = codexPath?.trim().orEmpty().ifEmpty { this.codexPath },
+            targetShellRCFile = targetShellRCFile?.trim().orEmpty().ifEmpty { this.targetShellRCFile },
+        )
+}
+
 object RemoteCodexAppServerCommand {
-    fun proxyCommand(codexPath: String = "codex", targetShellRCFile: String = "\$HOME/.zshrc"): String {
-        val normalizedCodexPath = codexPath.trim().ifEmpty { "codex" }
-        return if (normalizedCodexPath == "codex") {
+    fun environmentBootstrapCommand(targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile): String =
+        shellEnvironmentBootstrapCommand(
+            RemoteServerLaunchDefaults.normalize(
+                codexPath = null,
+                targetShellRCFile = targetShellRCFile,
+            ).targetShellRCFile
+        )
+
+    fun stdioCommand(codexPath: String = RemoteServerLaunchDefaults.codexPath, targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile): String {
+        val config = RemoteServerLaunchDefaults.normalize(codexPath, targetShellRCFile)
+        return if (config.codexPath == RemoteServerLaunchDefaults.codexPath) {
             listOf(
-                shellEnvironmentBootstrapCommand(targetShellRCFile),
+                shellEnvironmentBootstrapCommand(config.targetShellRCFile),
+                defaultStdioCommand(),
+            ).joinToString("; ")
+        } else {
+            listOf(
+                shellEnvironmentBootstrapCommand(config.targetShellRCFile),
+                "${config.codexPath.shellQuotedExecutablePath()} app-server --listen stdio://",
+            ).joinToString("; ")
+        }
+    }
+
+    fun proxyCommand(codexPath: String = RemoteServerLaunchDefaults.codexPath, targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile): String {
+        val config = RemoteServerLaunchDefaults.normalize(codexPath, targetShellRCFile)
+        return if (config.codexPath == RemoteServerLaunchDefaults.codexPath) {
+            listOf(
+                shellEnvironmentBootstrapCommand(config.targetShellRCFile),
                 codexResolutionCommand(),
                 appServerProxyScript(codexExecutable = "\"\$codex_bin\""),
             ).joinToString("; ")
         } else {
             listOf(
-                shellEnvironmentBootstrapCommand(targetShellRCFile),
-                "codex_bin=${normalizedCodexPath.shellQuotedExecutablePath()}",
+                shellEnvironmentBootstrapCommand(config.targetShellRCFile),
+                "codex_bin=${config.codexPath.shellQuotedExecutablePath()}",
                 appServerProxyScript(codexExecutable = "\"\$codex_bin\""),
             ).joinToString("; ")
         }
+    }
+
+    private fun defaultStdioCommand(): String {
+        val candidateList = codexCandidates.joinToString(" ") { "\"$it\"" }
+        return listOf(
+            "if command -v codex >/dev/null 2>&1; then exec codex app-server --listen stdio://; fi",
+            "for candidate in $candidateList; do if [ -x \"\$candidate\" ]; then exec \"\$candidate\" app-server --listen stdio://; fi; done",
+            "for shell in zsh bash; do if command -v \"\$shell\" >/dev/null 2>&1; then resolved=\"\$(\"\$shell\" -lc 'command -v codex' 2>/dev/null || true)\"; if [ -n \"\$resolved\" ] && [ -x \"\$resolved\" ]; then exec \"\$resolved\" app-server --listen stdio://; fi; fi; done",
+            "echo 'codex executable not found. Set Codex Binary Path to the full remote codex executable, for example ~/.bun/bin/codex.' >&2",
+            "exit 127",
+        ).joinToString("; ")
     }
 
     private fun codexResolutionCommand(): String {

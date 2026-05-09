@@ -110,9 +110,9 @@ final class CitadelSSHService: SSHService {
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] {
         try await withClient(server: server, credential: credential) { client in
             let output = try await client.executeCommand(
-                RemoteCodexDiscovery.shellCommand,
+                RemoteCodexDiscovery.shellCommand(targetShellRCFile: server.targetShellRCFile),
                 maxResponseSize: 2_000_000,
-                mergeStreams: true,
+                mergeStreams: false,
                 inShell: true
             )
             return try RemoteCodexDiscovery.decodeProjects(from: String(buffer: output))

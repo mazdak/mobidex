@@ -179,3 +179,53 @@ class CodexProtocolWireEncodingTest {
         assertEquals("2147483648", JsonValueCodec.encode(jsonInt(2_147_483_648L)))
     }
 }
+
+class CodexRpcClientCoreTest {
+    @Test
+    fun clientCoreAllocatesRequestIDsAndEncodesLines() {
+        val core = CodexRpcClientCore()
+
+        val first = core.nextRequest("thread/read", jsonObject(mapOf("threadId" to jsonString("thread-1"))))
+        val second = core.nextRequest("thread/list")
+
+        assertEquals(1, first.id)
+        assertEquals("thread/read", first.method)
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/read\",\"params\":{\"threadId\":\"thread-1\"}}",
+            first.line,
+        )
+        assertEquals(2, second.id)
+        assertEquals("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"thread/list\"}", second.line)
+        assertEquals("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}", core.notificationLine("initialized"))
+    }
+
+    @Test
+    fun clientCoreClassifiesInboundEnvelopes() {
+        val core = CodexRpcClientCore()
+
+        val result = core.classifyInbound(CodexRpcInboundEnvelope(id = jsonInt(1), result = jsonString("ok")))
+        assertEquals("resultResponse", result?.kind)
+        assertEquals(1, result?.numericId)
+        assertEquals(jsonString("ok"), result?.result)
+
+        val stringIDResult = core.classifyInbound(CodexRpcInboundEnvelope(id = jsonString("2147483648"), result = jsonString("ok")))
+        assertEquals("resultResponse", stringIDResult?.kind)
+        assertEquals(2_147_483_648L, stringIDResult?.numericId)
+
+        val error = core.classifyInbound(
+            CodexRpcInboundEnvelope(id = jsonInt(2), error = CodexRpcErrorInfo(code = -1, message = "nope"))
+        )
+        assertEquals("errorResponse", error?.kind)
+        assertEquals(2, error?.numericId)
+        assertEquals("nope", error?.error?.message)
+
+        val serverRequest = core.classifyInbound(
+            CodexRpcInboundEnvelope(id = jsonString("server-1"), method = "permission/request")
+        )
+        assertEquals("serverRequest", serverRequest?.kind)
+        assertEquals(jsonString("server-1"), serverRequest?.id)
+
+        val notification = core.classifyInbound(CodexRpcInboundEnvelope(method = "turn/started"))
+        assertEquals("notification", notification?.kind)
+    }
+}

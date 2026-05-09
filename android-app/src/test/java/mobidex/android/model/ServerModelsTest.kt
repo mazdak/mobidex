@@ -2,9 +2,28 @@ package mobidex.android.model
 
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 
 class ServerModelsTest {
+    @Test
+    fun serverRecordNormalizationUsesSharedLaunchDefaults() {
+        val server = ServerRecord(
+            displayName = "  ",
+            host = " build.example.com ",
+            username = " mazdak ",
+            codexPath = " ",
+            targetShellRCFile = "",
+            authMethod = ServerAuthMethod.Password,
+        ).normalized
+
+        assertEquals("build.example.com", server.displayName)
+        assertEquals("build.example.com", server.host)
+        assertEquals("mazdak", server.username)
+        assertEquals("codex", server.codexPath)
+        assertEquals("\$HOME/.zshrc", server.targetShellRCFile)
+    }
+
     @Test
     fun appServerProxyCommandUsesSharedControlSocketLaunchShape() {
         val server = ServerRecord(

@@ -18,13 +18,13 @@ private extension CodexThreadItem {
             text.count
         case .reasoning(_, let summary, let content):
             (summary + content).reduce(0) { $0 + $1.count }
-        case .command(_, let command, let cwd, let status, let output):
-            command.count + cwd.count + status.count + (output?.count ?? 0)
-        case .fileChange(_, let changes, let status):
-            status.count + changes.reduce(0) { $0 + $1.path.count + $1.diff.count }
-        case .toolCall(_, let label, let status, let detail),
-             .agentEvent(_, let label, let status, let detail):
-            label.count + status.count + (detail?.count ?? 0)
+        case .command(_, let command, let cwd, _, let output):
+            command.count + cwd.count + (output?.count ?? 0)
+        case .fileChange(_, let changes, _):
+            changes.reduce(0) { $0 + $1.path.count + $1.diff.count }
+        case .toolCall(_, let label, _, let detail),
+             .agentEvent(_, let label, _, let detail):
+            label.count + (detail?.count ?? 0)
         case .webSearch(_, let query),
              .image(_, let query),
              .review(_, let query):
@@ -33,6 +33,31 @@ private extension CodexThreadItem {
             1
         case .unknown(_, let type):
             type.count
+        }
+    }
+
+    var mergeStatusRank: Int {
+        switch self {
+        case .command(_, _, _, let status, _),
+             .fileChange(_, _, let status),
+             .toolCall(_, _, let status, _),
+             .agentEvent(_, _, let status, _):
+            status.mergeStatusRank
+        default:
+            0
+        }
+    }
+}
+
+private extension String {
+    var mergeStatusRank: Int {
+        switch lowercased() {
+        case "completed", "failed", "cancelled", "canceled":
+            2
+        case "inprogress", "running":
+            1
+        default:
+            0
         }
     }
 }
@@ -377,14 +402,12 @@ final class AppViewModel: ObservableObject {
         if next.displayName.isEmpty {
             next.displayName = trimmedHost
         }
-        next.codexPath = next.codexPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if next.codexPath.isEmpty {
-            next.codexPath = "codex"
-        }
-        next.targetShellRCFile = next.targetShellRCFile.trimmingCharacters(in: .whitespacesAndNewlines)
-        if next.targetShellRCFile.isEmpty {
-            next.targetShellRCFile = "$HOME/.zshrc"
-        }
+        let launchConfig = SharedKMPBridge.normalizedRemoteLaunchConfig(
+            codexPath: next.codexPath,
+            targetShellRCFile: next.targetShellRCFile
+        )
+        next.codexPath = launchConfig.codexPath
+        next.targetShellRCFile = launchConfig.targetShellRCFile
         next.updatedAt = .now
 
         do {
@@ -1748,23 +1771,53 @@ final class AppViewModel: ObservableObject {
         if let index = threads.firstIndex(where: { $0.id == polledThread.id }) {
             threads[index] = polledThread
         }
-        liveItems = mergedLiveItems(current: liveItems, polled: polledThread.turns.flatMap(\.items))
+        liveItems = Self.mergedLiveItems(current: liveItems, polled: polledThread.turns.flatMap(\.items))
         rebuildConversationFromLiveItems()
         refreshQueuedTurnInputCount()
     }
 
-    private func mergedLiveItems(current: [CodexThreadItem], polled: [CodexThreadItem]) -> [CodexThreadItem] {
-        let currentByID = Dictionary(uniqueKeysWithValues: current.map { ($0.id, $0) })
+    static func mergedLiveItems(current: [CodexThreadItem], polled: [CodexThreadItem]) -> [CodexThreadItem] {
+        let currentByID = bestItemsByID(current)
         var seen = Set<String>()
-        var merged = polled.map { polledItem -> CodexThreadItem in
-            seen.insert(polledItem.id)
-            guard let currentItem = currentByID[polledItem.id] else {
-                return polledItem
+        var indexByID: [String: Int] = [:]
+        var merged: [CodexThreadItem] = []
+        for polledItem in polled {
+            if let index = indexByID[polledItem.id] {
+                merged[index] = bestLiveItem(merged[index], polledItem)
+                continue
             }
-            return currentItem.mergeScore >= polledItem.mergeScore ? currentItem : polledItem
+            seen.insert(polledItem.id)
+            let item = currentByID[polledItem.id].map { bestLiveItem($0, polledItem) } ?? polledItem
+            indexByID[polledItem.id] = merged.count
+            merged.append(item)
         }
-        merged.append(contentsOf: current.filter { seen.insert($0.id).inserted })
+        for currentItem in current {
+            guard seen.insert(currentItem.id).inserted else {
+                continue
+            }
+            let item = currentByID[currentItem.id] ?? currentItem
+            indexByID[currentItem.id] = merged.count
+            merged.append(item)
+        }
         return merged
+    }
+
+    private static func bestItemsByID(_ items: [CodexThreadItem]) -> [String: CodexThreadItem] {
+        var result: [String: CodexThreadItem] = [:]
+        for item in items {
+            result[item.id] = result[item.id].map { bestLiveItem($0, item) } ?? item
+        }
+        return result
+    }
+
+    private static func bestLiveItem(_ lhs: CodexThreadItem, _ rhs: CodexThreadItem) -> CodexThreadItem {
+        if lhs.mergeStatusRank != rhs.mergeStatusRank {
+            return lhs.mergeStatusRank > rhs.mergeStatusRank ? lhs : rhs
+        }
+        if lhs.mergeScore != rhs.mergeScore {
+            return lhs.mergeScore > rhs.mergeScore ? lhs : rhs
+        }
+        return rhs
     }
 
     private func rebuildConversationFromLiveItems() {

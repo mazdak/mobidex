@@ -458,6 +458,30 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testInboundResponseRoutingKeepsLargeIntegerIDs() async throws {
+        let core = SharedKMPBridge.makeRPCClientCore()
+        let id = Int(Int32.max) + 1
+        let result = SharedKMPBridge.classifyInbound(
+            core: core,
+            envelope: CodexRPCInboundEnvelope(id: .int(id), result: .string("ok"))
+        )
+        let error = SharedKMPBridge.classifyInbound(
+            core: core,
+            envelope: CodexRPCInboundEnvelope(id: .int(id), error: CodexRPCErrorInfo(code: -1, message: "nope"))
+        )
+
+        guard case let .resultResponse(responseID, .string(value)) = result else {
+            return XCTFail("Expected large-id result response, got \(String(describing: result))")
+        }
+        XCTAssertEqual(responseID, id)
+        XCTAssertEqual(value, "ok")
+        guard case let .errorResponse(errorID, info) = error else {
+            return XCTFail("Expected large-id error response, got \(String(describing: error))")
+        }
+        XCTAssertEqual(errorID, id)
+        XCTAssertEqual(info.message, "nope")
+    }
+
     func testTransportEOFClosesClientAndFailsLaterRequests() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport)

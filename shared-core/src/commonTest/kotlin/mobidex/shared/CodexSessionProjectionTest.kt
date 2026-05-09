@@ -47,4 +47,20 @@ class CodexSessionProjectionTest {
         assertEquals("futureItem", sections.single().title)
         assertEquals("Unsupported app-server item in turn turn-1.", sections.single().body)
     }
+
+    @Test
+    fun duplicateItemIDsStillProduceUniqueSectionIDs() {
+        val sections = CodexSessionProjection.sections(
+            listOf(
+                CodexSessionItem.AgentMessage(id = "agent", text = "First"),
+                CodexSessionItem.AgentMessage(id = "agent#2", text = "Existing suffix"),
+                CodexSessionItem.AgentMessage(id = "agent", text = "Second"),
+                CodexSessionItem.Plan(id = "plan", text = "Plan"),
+                CodexSessionItem.Plan(id = "plan", text = "Updated plan"),
+            )
+        )
+
+        assertEquals(listOf("agent", "agent#2", "agent#3", "plan", "plan#2"), sections.map { it.id })
+        assertEquals(listOf("First", "Existing suffix", "Second", "Plan", "Updated plan"), sections.map { it.body })
+    }
 }

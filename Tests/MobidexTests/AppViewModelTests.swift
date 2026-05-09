@@ -320,6 +320,47 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testMergedLiveItemsToleratesDuplicateIDs() {
+        let current: [CodexThreadItem] = [
+            .agentMessage(id: "agent", text: "Partial"),
+            .agentMessage(id: "agent", text: "Partial response with more streamed content"),
+            .userMessage(id: "user", text: "Question")
+        ]
+        let polled: [CodexThreadItem] = [
+            .agentMessage(id: "agent", text: "Partial response"),
+            .plan(id: "plan", text: "A"),
+            .plan(id: "plan", text: "A longer plan"),
+            .command(id: "command", command: "test", cwd: "/srv/app", status: "inProgress", output: nil),
+            .command(id: "command", command: "test", cwd: "/srv/app", status: "completed", output: nil)
+        ]
+
+        let merged = AppViewModel.mergedLiveItems(current: current, polled: polled)
+
+        XCTAssertEqual(merged, [
+            .agentMessage(id: "agent", text: "Partial response with more streamed content"),
+            .plan(id: "plan", text: "A longer plan"),
+            .command(id: "command", command: "test", cwd: "/srv/app", status: "completed", output: nil),
+            .userMessage(id: "user", text: "Question")
+        ])
+    }
+
+    @MainActor
+    func testMergedLiveItemsDoesNotRegressCompletedStatusFromStalePoll() {
+        let current: [CodexThreadItem] = [
+            .command(id: "command", command: "test", cwd: "/srv/app", status: "completed", output: nil)
+        ]
+        let polled: [CodexThreadItem] = [
+            .command(id: "command", command: "test", cwd: "/srv/app", status: "inProgress", output: "late streamed output")
+        ]
+
+        let merged = AppViewModel.mergedLiveItems(current: current, polled: polled)
+
+        XCTAssertEqual(merged, [
+            .command(id: "command", command: "test", cwd: "/srv/app", status: "completed", output: nil)
+        ])
+    }
+
+    @MainActor
     func testUnexpectedAppServerDisconnectClearsOpenSessionCountsAfterReconnectFailure() async throws {
         let project = ProjectRecord(path: "/srv/app", discovered: true, discoveredSessionCount: 37)
         let server = ServerRecord(

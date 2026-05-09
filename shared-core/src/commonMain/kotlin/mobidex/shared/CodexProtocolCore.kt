@@ -12,6 +12,13 @@ sealed interface JsonValue {
     val intValue: Long?
         get() = (this as? IntValue)?.value
 
+    val responseIdValue: Long?
+        get() = when (this) {
+            is IntValue -> value
+            is StringValue -> value.toLongOrNull()
+            else -> null
+        }
+
     val stringValue: String?
         get() = (this as? StringValue)?.value
 
@@ -188,6 +195,22 @@ data class CodexRpcInboundEnvelope(
     val error: CodexRpcErrorInfo? = null,
 )
 
+data class CodexRpcOutboundRequest(
+    val id: Long,
+    val method: String,
+    val line: String,
+)
+
+data class CodexRpcInboundClassification(
+    val kind: String,
+    val id: JsonValue? = null,
+    val numericId: Long? = null,
+    val method: String? = null,
+    val params: JsonValue? = null,
+    val result: JsonValue? = null,
+    val error: CodexRpcErrorInfo? = null,
+)
+
 sealed interface CodexAppServerEvent {
     data class Notification(val method: String, val params: JsonValue?) : CodexAppServerEvent
     data class ServerRequest(val id: JsonValue, val method: String, val params: JsonValue?) : CodexAppServerEvent
@@ -344,6 +367,59 @@ object CodexRpcRequests {
 
 object CodexRpcNotifications {
     fun initialized(): CodexRpcNotification = CodexRpcNotification(method = "initialized")
+}
+
+class CodexRpcClientCore(
+    initialRequestId: Long = 1,
+) {
+    private var nextRequestId = initialRequestId
+
+    fun nextRequest(method: String, params: JsonValue? = null): CodexRpcOutboundRequest {
+        val id = nextRequestId
+        nextRequestId += 1
+        return CodexRpcOutboundRequest(
+            id = id,
+            method = method,
+            line = CodexRpcRequest(id = id, method = method, params = params).encodeJsonLine(),
+        )
+    }
+
+    fun notificationLine(method: String, params: JsonValue? = null): String =
+        CodexRpcNotification(method = method, params = params).encodeJsonLine()
+
+    fun resultLine(id: JsonValue, result: JsonValue): String =
+        CodexRpcResultResponse(id = id, result = result).encodeJsonLine()
+
+    fun classifyInbound(envelope: CodexRpcInboundEnvelope): CodexRpcInboundClassification? {
+        val id = envelope.id
+        val numericId = id?.responseIdValue
+        return when {
+            numericId != null && envelope.error != null -> CodexRpcInboundClassification(
+                kind = "errorResponse",
+                id = id,
+                numericId = numericId,
+                error = envelope.error,
+            )
+            numericId != null && envelope.result != null -> CodexRpcInboundClassification(
+                kind = "resultResponse",
+                id = id,
+                numericId = numericId,
+                result = envelope.result,
+            )
+            id != null && envelope.method != null -> CodexRpcInboundClassification(
+                kind = "serverRequest",
+                id = id,
+                method = envelope.method,
+                params = envelope.params,
+            )
+            envelope.method != null -> CodexRpcInboundClassification(
+                kind = "notification",
+                method = envelope.method,
+                params = envelope.params,
+            )
+            else -> null
+        }
+    }
 }
 
 object JsonValueCodec {

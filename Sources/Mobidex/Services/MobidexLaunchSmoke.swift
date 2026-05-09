@@ -310,8 +310,12 @@ private struct SmokeConfig {
         self.host = host
         self.port = environment["MOBIDEX_SMOKE_PORT"].flatMap(Int.init) ?? 22
         self.username = username
-        self.codexPath = environment["MOBIDEX_SMOKE_CODEX_PATH"]?.nonEmpty ?? "codex"
-        self.targetShellRCFile = environment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"]?.nonEmpty ?? "$HOME/.zshrc"
+        let launchConfig = SharedKMPBridge.normalizedRemoteLaunchConfig(
+            codexPath: environment["MOBIDEX_SMOKE_CODEX_PATH"],
+            targetShellRCFile: environment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"]
+        )
+        self.codexPath = launchConfig.codexPath
+        self.targetShellRCFile = launchConfig.targetShellRCFile
         self.authMethod = parsedAuthMethod
         self.mode = parsedMode
         self.cwd = cwd

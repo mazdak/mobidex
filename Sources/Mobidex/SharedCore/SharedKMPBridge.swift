@@ -11,7 +11,12 @@ enum SharedKMPBridge {
     typealias SharedCodexInputItemSkill = MobidexShared.CodexInputItemSkill
     typealias SharedCodexInputItemText = MobidexShared.CodexInputItemText
     typealias SharedCodexReasoningEffortOption = MobidexShared.CodexReasoningEffortOption
+    typealias SharedCodexRpcErrorInfo = MobidexShared.CodexRpcErrorInfo
     typealias SharedCodexRpcNotification = MobidexShared.CodexRpcNotification
+    typealias SharedCodexRpcClientCore = MobidexShared.CodexRpcClientCore
+    typealias SharedCodexRpcInboundClassification = MobidexShared.CodexRpcInboundClassification
+    typealias SharedCodexRpcInboundEnvelope = MobidexShared.CodexRpcInboundEnvelope
+    typealias SharedCodexRpcOutboundRequest = MobidexShared.CodexRpcOutboundRequest
     typealias SharedCodexRpcRequest = MobidexShared.CodexRpcRequest
     typealias SharedCodexRpcResultResponse = MobidexShared.CodexRpcResultResponse
     typealias SharedCodexSessionFileChange = MobidexShared.CodexSessionFileChange
@@ -43,9 +48,115 @@ enum SharedKMPBridge {
     typealias SharedJsonValueNull = MobidexShared.JsonValueNull
     typealias SharedJsonValueObject = MobidexShared.JsonValueObjectValue
     typealias SharedJsonValueString = MobidexShared.JsonValueStringValue
+    typealias SharedKotlinByteArray = MobidexShared.KotlinByteArray
     typealias SharedProjectRecord = MobidexShared.ProjectRecord
     typealias SharedRemoteProject = MobidexShared.RemoteProject
+    typealias SharedRemoteServerLaunchConfig = MobidexShared.RemoteServerLaunchConfig
     typealias SharedSessionListSection = MobidexShared.SessionListSection
+    typealias SharedWebSocketFrame = MobidexShared.WebSocketFrame
+    typealias SharedWebSocketFrameCodec = MobidexShared.WebSocketFrameCodec
+    typealias SharedWebSocketFrameParser = MobidexShared.WebSocketFrameParser
+    typealias SharedWebSocketMessageAssembler = MobidexShared.WebSocketMessageAssembler
+
+    static var defaultCodexPath: String {
+        MobidexShared.RemoteServerLaunchDefaults.shared.codexPath
+    }
+
+    static var defaultTargetShellRCFile: String {
+        MobidexShared.RemoteServerLaunchDefaults.shared.targetShellRCFile
+    }
+
+    static func normalizedRemoteLaunchConfig(codexPath: String?, targetShellRCFile: String?) -> (codexPath: String, targetShellRCFile: String) {
+        let config = MobidexShared.RemoteServerLaunchDefaults.shared.normalize(
+            codexPath: codexPath,
+            targetShellRCFile: targetShellRCFile
+        )
+        return (codexPath: config.codexPath, targetShellRCFile: config.targetShellRCFile)
+    }
+
+    static func appServerCommand(codexPath: String, targetShellRCFile: String) -> String {
+        MobidexShared.RemoteCodexAppServerCommand.shared.stdioCommand(
+            codexPath: codexPath,
+            targetShellRCFile: targetShellRCFile
+        )
+    }
+
+    static func appServerProxyCommand(codexPath: String, targetShellRCFile: String) -> String {
+        MobidexShared.RemoteCodexAppServerCommand.shared.proxyCommand(
+            codexPath: codexPath,
+            targetShellRCFile: targetShellRCFile
+        )
+    }
+
+    static var remoteCodexDiscoveryShellCommand: String {
+        MobidexShared.RemoteCodexDiscovery.shared.shellCommand
+    }
+
+    static func remoteCodexDiscoveryShellCommand(targetShellRCFile: String) -> String {
+        MobidexShared.RemoteCodexDiscovery.shared.shellCommand(targetShellRCFile: targetShellRCFile)
+    }
+
+    static var remoteCodexDiscoveryPythonSource: String {
+        MobidexShared.RemoteCodexDiscovery.shared.pythonSource
+    }
+
+    static func decodeRemoteProjects(from output: String) throws -> [RemoteProject] {
+        try MobidexShared.RemoteCodexDiscovery.shared.decodeProjects(output: output).map(toRemoteProject)
+    }
+
+    static func parseWebSocketFrame(buffer: Data) throws -> SharedWebSocketFrameParseResult? {
+        guard let result = try MobidexShared.WebSocketFrameCodec.shared.parseServerFrame(buffer: toSharedByteArray(buffer)) else {
+            return nil
+        }
+        return SharedWebSocketFrameParseResult(
+            frame: SharedWebSocketFrameData(
+                fin: result.frame.fin,
+                opcode: UInt8(result.frame.opcode),
+                payload: data(from: result.frame.payload)
+            ),
+            remaining: data(from: result.remaining)
+        )
+    }
+
+    static func makeWebSocketFrameParser() -> SharedWebSocketFrameParser {
+        SharedWebSocketFrameParser(requireUnmasked: true)
+    }
+
+    static func appendWebSocketBytes(_ data: Data, parser: SharedWebSocketFrameParser) {
+        parser.append(bytes: toSharedByteArray(data))
+    }
+
+    static func nextWebSocketFrame(parser: SharedWebSocketFrameParser) throws -> SharedWebSocketFrameData? {
+        guard let frame = try parser.nextFrame() else {
+            return nil
+        }
+        return SharedWebSocketFrameData(
+            fin: frame.fin,
+            opcode: UInt8(frame.opcode),
+            payload: data(from: frame.payload)
+        )
+    }
+
+    static func appendWebSocketFrame(_ frame: SharedWebSocketFrameData, assembler: SharedWebSocketMessageAssembler) throws -> Data? {
+        let sharedFrame = SharedWebSocketFrame(
+            fin: frame.fin,
+            opcode: Int32(frame.opcode),
+            payload: toSharedByteArray(frame.payload)
+        )
+        guard let payload = try assembler.append(frame: sharedFrame) else {
+            return nil
+        }
+        return data(from: payload)
+    }
+
+    static func encodeClientWebSocketFrame(opcode: UInt8, payload: Data, mask: [UInt8]) throws -> Data {
+        let encoded = try MobidexShared.WebSocketFrameCodec.shared.encodeClientFrame(
+            opcode: Int32(opcode),
+            payload: toSharedByteArray(payload),
+            mask: toSharedByteArray(Data(mask))
+        )
+        return data(from: encoded)
+    }
 
     static func changedFilePaths(from diff: String) -> [String] {
         MobidexShared.GitDiffChangedFileParser.shared.paths(diff: diff)
@@ -241,6 +352,66 @@ enum SharedKMPBridge {
         ).encodeJsonLine()
     }
 
+    static func makeRPCClientCore() -> SharedCodexRpcClientCore {
+        SharedCodexRpcClientCore(initialRequestId: 1)
+    }
+
+    static func nextRequestLine(core: SharedCodexRpcClientCore, method: String, params: JSONValue?) -> (id: Int, line: String) {
+        let request = core.nextRequest(method: method, params: params.map(toSharedJSONValue))
+        return (id: Int(request.id), line: request.line)
+    }
+
+    static func notificationLine(core: SharedCodexRpcClientCore, method: String, params: JSONValue?) -> String {
+        core.notificationLine(method: method, params: params.map(toSharedJSONValue))
+    }
+
+    static func resultLine(core: SharedCodexRpcClientCore, id: JSONValue, result: JSONValue) -> String {
+        core.resultLine(id: toSharedJSONValue(id), result: toSharedJSONValue(result))
+    }
+
+    static func classifyInbound(core: SharedCodexRpcClientCore, envelope: CodexRPCInboundEnvelope) -> CodexRPCInboundAction? {
+        guard let classification = core.classifyInbound(
+            envelope: SharedCodexRpcInboundEnvelope(
+                id: envelope.id.map(toSharedJSONValue),
+                method: envelope.method,
+                params: envelope.params.map(toSharedJSONValue),
+                result: envelope.result.map(toSharedJSONValue),
+                error: envelope.error.map { SharedCodexRpcErrorInfo(code: Int32($0.code), message: $0.message) }
+            )
+        ) else {
+            return nil
+        }
+
+        switch classification.kind {
+        case "errorResponse":
+            guard let id = swiftInt(from: classification.numericId), let error = classification.error else {
+                return nil
+            }
+            return .errorResponse(id: id, error: CodexRPCErrorInfo(code: Int(error.code), message: error.message))
+        case "resultResponse":
+            guard let id = swiftInt(from: classification.numericId), let result = classification.result else {
+                return nil
+            }
+            return .resultResponse(id: id, result: toJSONValue(result))
+        case "serverRequest":
+            guard let id = classification.id, let method = classification.method else {
+                return nil
+            }
+            return .serverRequest(
+                id: toJSONValue(id),
+                method: method,
+                params: classification.params.map(toJSONValue)
+            )
+        case "notification":
+            guard let method = classification.method else {
+                return nil
+            }
+            return .notification(method: method, params: classification.params.map(toJSONValue))
+        default:
+            return nil
+        }
+    }
+
     private static func toSharedProjectRecord(_ record: ProjectRecord) -> SharedProjectRecord {
         SharedProjectRecord(
             path: record.path,
@@ -280,6 +451,15 @@ enum SharedKMPBridge {
             sessionPaths: project.sessionPaths,
             discoveredSessionCount: Int32(project.discoveredSessionCount),
             lastDiscoveredAtEpochSeconds: kotlinLong(from: project.lastDiscoveredAt)
+        )
+    }
+
+    private static func toRemoteProject(_ project: SharedRemoteProject) -> RemoteProject {
+        RemoteProject(
+            path: project.path,
+            sessionPaths: project.sessionPaths,
+            discoveredSessionCount: Int(project.discoveredSessionCount),
+            lastDiscoveredAt: date(from: project.lastDiscoveredAtEpochSeconds)
         )
     }
 
@@ -443,6 +623,34 @@ enum SharedKMPBridge {
         }
     }
 
+    private static func toSharedByteArray(_ data: Data) -> SharedKotlinByteArray {
+        let array = SharedKotlinByteArray(size: Int32(data.count))
+        for (index, byte) in data.enumerated() {
+            array.set(index: Int32(index), value: Int8(bitPattern: byte))
+        }
+        return array
+    }
+
+    private static func data(from array: SharedKotlinByteArray) -> Data {
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(Int(array.size))
+        for index in 0..<array.size {
+            bytes.append(UInt8(bitPattern: array.get(index: index)))
+        }
+        return Data(bytes)
+    }
+
+    private static func swiftInt(from value: KotlinLong?) -> Int? {
+        guard let value else {
+            return nil
+        }
+        let int64 = value.int64Value
+        guard int64 >= Int64(Int.min), int64 <= Int64(Int.max) else {
+            return nil
+        }
+        return Int(int64)
+    }
+
     private static func kotlinLong(from date: Date?) -> KotlinLong? {
         date.map { KotlinLong(value: Int64($0.timeIntervalSince1970)) }
     }
@@ -450,6 +658,24 @@ enum SharedKMPBridge {
     private static func date(from value: KotlinLong?) -> Date? {
         value.map { Date(timeIntervalSince1970: TimeInterval($0.int64Value)) }
     }
+}
+
+struct SharedWebSocketFrameData {
+    var fin: Bool
+    var opcode: UInt8
+    var payload: Data
+}
+
+struct SharedWebSocketFrameParseResult {
+    var frame: SharedWebSocketFrameData
+    var remaining: Data
+}
+
+enum CodexRPCInboundAction {
+    case errorResponse(id: Int, error: CodexRPCErrorInfo)
+    case resultResponse(id: Int, result: JSONValue)
+    case serverRequest(id: JSONValue, method: String, params: JSONValue?)
+    case notification(method: String, params: JSONValue?)
 }
 
 private extension JSONValue {

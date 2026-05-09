@@ -72,9 +72,9 @@ actor CodexAppServerClient {
     nonisolated let events: AsyncStream<CodexAppServerEvent>
 
     private let transport: CodexLineTransport
+    private let rpcCore = SharedKMPBridge.makeRPCClientCore()
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
-    private var nextID = 1
     private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
     private let eventContinuation: AsyncStream<CodexAppServerEvent>.Continuation
     private var readTask: Task<Void, Never>?
@@ -224,9 +224,8 @@ actor CodexAppServerClient {
 
     func respondToServerRequest(id: JSONValue, result: JSONValue) async throws {
         try ensureOpenAndStartReadLoop()
-        let response = CodexRPCResultResponse(id: id, result: result)
         do {
-            try await transport.sendLine(encodeLine(response))
+            try await transport.sendLine(SharedKMPBridge.resultLine(core: rpcCore, id: id, result: result))
         } catch {
             let clientError = clientFacingError(error)
             await disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
@@ -261,19 +260,16 @@ actor CodexAppServerClient {
 
     private func request(method: String, params: JSONValue?) async throws -> JSONValue {
         try ensureOpenAndStartReadLoop()
-        let id = nextID
-        nextID += 1
-        let request = CodexRPCRequest(id: id, method: method, params: params)
-        let line = try encodeLine(request)
+        let request = SharedKMPBridge.nextRequestLine(core: rpcCore, method: method, params: params)
 
         return try await withCheckedThrowingContinuation { continuation in
-            pending[id] = continuation
+            pending[request.id] = continuation
             Task {
                 do {
-                    try await transport.sendLine(line)
+                    try await transport.sendLine(request.line)
                 } catch {
                     let clientError = clientFacingError(error)
-                    self.resolve(id: id, result: .failure(clientError))
+                    self.resolve(id: request.id, result: .failure(clientError))
                     await self.disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
                 }
             }
@@ -283,7 +279,7 @@ actor CodexAppServerClient {
     private func sendNotification(method: String, params: JSONValue?) async throws {
         try ensureOpenAndStartReadLoop()
         do {
-            try await transport.sendLine(encodeLine(CodexRPCNotification(method: method, params: params)))
+            try await transport.sendLine(SharedKMPBridge.notificationLine(core: rpcCore, method: method, params: params))
         } catch {
             let clientError = clientFacingError(error)
             await disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
@@ -321,14 +317,17 @@ actor CodexAppServerClient {
                         "\(DecodeFailureFormatter.describe(error)). Line: \(DecodeFailureFormatter.preview(line))"
                     )
                 }
-                if let id = envelope.id?.intValue, let error = envelope.error {
+                switch SharedKMPBridge.classifyInbound(core: rpcCore, envelope: envelope) {
+                case .errorResponse(let id, let error):
                     resolve(id: id, result: .failure(CodexAppServerClientError.appServer(error)))
-                } else if let id = envelope.id?.intValue, let result = envelope.result {
+                case .resultResponse(let id, let result):
                     resolve(id: id, result: .success(result))
-                } else if let id = envelope.id, let method = envelope.method {
-                    eventContinuation.yield(.serverRequest(id: id, method: method, params: envelope.params))
-                } else if let method = envelope.method {
-                    eventContinuation.yield(.notification(method: method, params: envelope.params))
+                case .serverRequest(let id, let method, let params):
+                    eventContinuation.yield(.serverRequest(id: id, method: method, params: params))
+                case .notification(let method, let params):
+                    eventContinuation.yield(.notification(method: method, params: params))
+                case nil:
+                    continue
                 }
             }
             await disconnect(error: CodexAppServerClientError.disconnected, message: "The app-server stream ended.", notify: true)
@@ -367,22 +366,6 @@ actor CodexAppServerClient {
         }
     }
 
-    private func encodeLine<T: Encodable>(_ value: T) throws -> String {
-        if let request = value as? CodexRPCRequest {
-            return SharedKMPBridge.encode(request)
-        }
-        if let notification = value as? CodexRPCNotification {
-            return SharedKMPBridge.encode(notification)
-        }
-        if let response = value as? CodexRPCResultResponse {
-            return SharedKMPBridge.encode(response)
-        }
-        let data = try encoder.encode(value)
-        guard let line = String(data: data, encoding: .utf8) else {
-            throw CodexAppServerClientError.invalidResponse
-        }
-        return line
-    }
 }
 
 private func clientFacingError(_ error: Error) -> Error {

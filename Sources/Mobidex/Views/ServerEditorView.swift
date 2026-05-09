@@ -28,8 +28,8 @@ struct ServerEditorView: View {
         _host = State(initialValue: server?.host ?? "")
         _port = State(initialValue: server?.port ?? 22)
         _username = State(initialValue: server?.username ?? "")
-        _codexPath = State(initialValue: server?.codexPath ?? "codex")
-        _targetShellRCFile = State(initialValue: server?.targetShellRCFile ?? "$HOME/.zshrc")
+        _codexPath = State(initialValue: server?.codexPath ?? SharedKMPBridge.defaultCodexPath)
+        _targetShellRCFile = State(initialValue: server?.targetShellRCFile ?? SharedKMPBridge.defaultTargetShellRCFile)
         _authMethod = State(initialValue: server?.authMethod ?? .password)
         _password = State(initialValue: "")
         _privateKey = State(initialValue: "")
@@ -55,7 +55,7 @@ struct ServerEditorView: View {
                 }
 
                 Section {
-                    TextField("Target Shell RC File", text: $targetShellRCFile, prompt: Text("$HOME/.zshrc"))
+                    TextField("Target Shell RC File", text: $targetShellRCFile, prompt: Text(SharedKMPBridge.defaultTargetShellRCFile))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("targetShellRCFileField")

@@ -135,7 +135,7 @@ final class CodexSSHWebSocketTransport: CodexLineTransport, @unchecked Sendable 
     }
 
     private func sendFrame(opcode: WebSocketOpcode, payload: Data) async throws {
-        try await Self.write(WebSocketFrameEncoder.frame(opcode: opcode, payload: payload), to: channel)
+        try await Self.write(try WebSocketFrameEncoder.frame(opcode: opcode, payload: payload), to: channel)
     }
 
     private static func write(_ data: Data, to channel: Channel) async throws {
@@ -397,7 +397,7 @@ final class CodexSSHAppServerProxyTransport: CodexLineTransport, @unchecked Send
     }
 
     private func sendFrame(opcode: WebSocketOpcode, payload: Data) async throws {
-        try await writeBytes(WebSocketFrameEncoder.frame(opcode: opcode, payload: payload))
+        try await writeBytes(try WebSocketFrameEncoder.frame(opcode: opcode, payload: payload))
     }
 
     private func writeBytes(_ data: Data) async throws {
@@ -649,118 +649,42 @@ private struct WebSocketFrame {
 }
 
 private struct WebSocketFrameParser {
-    var buffer = Data()
+    private let parser: SharedKMPBridge.SharedWebSocketFrameParser
+
+    init(buffer: Data = Data()) {
+        parser = SharedKMPBridge.makeWebSocketFrameParser()
+        append(buffer)
+    }
 
     mutating func append(_ data: Data) {
-        buffer.append(data)
+        SharedKMPBridge.appendWebSocketBytes(data, parser: parser)
     }
 
     mutating func nextFrame() throws -> WebSocketFrame? {
-        guard buffer.count >= 2 else { return nil }
-        let first = byte(at: 0)
-        let second = byte(at: 1)
-        let fin = (first & 0x80) != 0
-        guard let opcode = WebSocketOpcode(rawValue: first & 0x0F) else {
+        guard let frame = try SharedKMPBridge.nextWebSocketFrame(parser: parser) else {
+            return nil
+        }
+        guard let opcode = WebSocketOpcode(rawValue: frame.opcode) else {
             throw CodexSSHWebSocketTransportError.unsupportedFrame
         }
-
-        var offset = 2
-        var length = Int(second & 0x7F)
-        if length == 126 {
-            guard buffer.count >= 4 else { return nil }
-            length = (Int(byte(at: 2)) << 8) | Int(byte(at: 3))
-            offset = 4
-        } else if length == 127 {
-            guard buffer.count >= 10 else { return nil }
-            let length64 = (0..<8).reduce(UInt64(0)) { value, index in
-                (value << 8) | UInt64(byte(at: 2 + index))
-            }
-            guard length64 <= UInt64(Int.max) else {
-                throw CodexSSHWebSocketTransportError.unsupportedFrame
-            }
-            length = Int(length64)
-            offset = 10
-        }
-
-        let isMasked = (second & 0x80) != 0
-        var mask: [UInt8] = []
-        if isMasked {
-            guard buffer.count >= offset + 4 else { return nil }
-            mask = (0..<4).map { byte(at: offset + $0) }
-            offset += 4
-        }
-
-        guard buffer.count >= offset + length else { return nil }
-        var payload = Array(buffer[offset..<(offset + length)])
-        if isMasked {
-            for index in payload.indices {
-                payload[index] ^= mask[index % 4]
-            }
-        }
-        buffer.removeSubrange(0..<(offset + length))
-        return WebSocketFrame(fin: fin, opcode: opcode, payload: Data(payload))
-    }
-
-    private func byte(at offset: Int) -> UInt8 {
-        buffer[buffer.index(buffer.startIndex, offsetBy: offset)]
+        return WebSocketFrame(fin: frame.fin, opcode: opcode, payload: frame.payload)
     }
 }
 
 private struct WebSocketMessageAssembler {
-    private var fragmentedOpcode: WebSocketOpcode?
-    private var fragmentedPayload = Data()
+    private let assembler = SharedKMPBridge.SharedWebSocketMessageAssembler()
 
     mutating func append(_ frame: WebSocketFrame) throws -> Data? {
-        switch frame.opcode {
-        case .text, .binary:
-            guard frame.fin else {
-                fragmentedOpcode = frame.opcode
-                fragmentedPayload = frame.payload
-                return nil
-            }
-            return frame.payload
-        case .continuation:
-            guard fragmentedOpcode != nil else {
-                throw CodexSSHWebSocketTransportError.unsupportedFrame
-            }
-            fragmentedPayload.append(frame.payload)
-            guard frame.fin else {
-                return nil
-            }
-            let payload = fragmentedPayload
-            fragmentedOpcode = nil
-            fragmentedPayload = Data()
-            return payload
-        case .close, .ping, .pong:
-            return nil
-        }
+        try SharedKMPBridge.appendWebSocketFrame(
+            SharedWebSocketFrameData(fin: frame.fin, opcode: frame.opcode.rawValue, payload: frame.payload),
+            assembler: assembler
+        )
     }
 }
 
 private enum WebSocketFrameEncoder {
-    static func frame(opcode: WebSocketOpcode, payload: Data) -> Data {
-        var bytes = Data()
-        bytes.append(0x80 | opcode.rawValue)
+    static func frame(opcode: WebSocketOpcode, payload: Data) throws -> Data {
         let maskKey = (0..<4).map { _ in UInt8.random(in: UInt8.min...UInt8.max) }
-        let count = payload.count
-        if count < 126 {
-            bytes.append(0x80 | UInt8(count))
-        } else if count <= UInt16.max {
-            bytes.append(0x80 | 126)
-            bytes.append(UInt8((count >> 8) & 0xFF))
-            bytes.append(UInt8(count & 0xFF))
-        } else {
-            bytes.append(0x80 | 127)
-            let length = UInt64(count)
-            for shift in stride(from: 56, through: 0, by: -8) {
-                bytes.append(UInt8((length >> UInt64(shift)) & 0xFF))
-            }
-        }
-        bytes.append(contentsOf: maskKey)
-        let payloadBytes = Array(payload)
-        for index in payloadBytes.indices {
-            bytes.append(payloadBytes[index] ^ maskKey[index % 4])
-        }
-        return bytes
+        return try SharedKMPBridge.encodeClientWebSocketFrame(opcode: opcode.rawValue, payload: payload, mask: maskKey)
     }
 }
