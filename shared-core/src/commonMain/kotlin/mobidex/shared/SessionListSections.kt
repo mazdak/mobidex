@@ -51,6 +51,16 @@ object SessionListSections {
         )
     }
 
+    fun sessionIdsForProject(
+        sessions: List<CodexThreadSummary>,
+        projects: List<ProjectRecord>,
+        projectPath: String,
+    ): List<String> =
+        from(sessions, projects)
+            .firstOrNull { it.id == projectPath }
+            ?.sessionIds
+            .orEmpty()
+
     private val sessionComparator = compareByDescending<CodexThreadSummary> { it.updatedAtEpochSeconds }
         .thenBy { it.id }
 
