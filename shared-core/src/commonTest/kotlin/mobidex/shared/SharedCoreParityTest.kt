@@ -163,6 +163,19 @@ class SharedCoreParityTest {
 
         assertEquals(listOf("app", "/tmp/loose", "tools"), sections.map { it.title })
         assertEquals(listOf("app-worktree-new", "app-main-old"), sections.first().sessionIds)
+        assertEquals(
+            listOf("app-worktree-new", "app-main-old"),
+            SessionListSections.sessionIdsForProject(
+                sessions = listOf(
+                    CodexThreadSummary(id = "tools-old", cwd = "/srv/tools", updatedAtEpochSeconds = 10),
+                    CodexThreadSummary(id = "app-worktree-new", cwd = "/srv/.codex/worktrees/a/app", updatedAtEpochSeconds = 40),
+                    CodexThreadSummary(id = "unknown", cwd = "/tmp/loose", updatedAtEpochSeconds = 30),
+                    CodexThreadSummary(id = "app-main-old", cwd = "/srv/app", updatedAtEpochSeconds = 20),
+                ),
+                projects = projects,
+                projectPath = "/srv/app",
+            ),
+        )
     }
 
     @Test

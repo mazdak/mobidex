@@ -51,12 +51,14 @@ import mobidex.android.service.turnOptions
 import mobidex.shared.CodexAccessMode
 import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
+import mobidex.shared.CodexThreadSummary
 import mobidex.shared.GitDiffSnapshot
 import mobidex.shared.JsonValue
 import mobidex.shared.ProjectCatalog
 import mobidex.shared.ProjectListSections
 import mobidex.shared.RemoteDirectoryListing
 import mobidex.shared.RemoteProject
+import mobidex.shared.SessionListSections
 import mobidex.shared.jsonArray
 import mobidex.shared.jsonNull
 import mobidex.shared.jsonObject
@@ -402,8 +404,24 @@ class AppViewModel(
                     val loaded = if (sessionPaths.isEmpty()) {
                         client.listThreads(cwd, includeArchived = includeArchived)
                     } else {
-                        sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived) }
-                            .distinctBy { it.id }
+                        val exactMatches = sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived) }
+                        if (exactMatches.isNotEmpty()) {
+                            exactMatches.distinctBy { it.id }
+                        } else {
+                            val unscoped = client.listThreads(null, includeArchived = includeArchived)
+                            val groupedSessionIDs = SessionListSections.sessionIdsForProject(
+                                sessions = unscoped.map { thread ->
+                                    CodexThreadSummary(
+                                        id = thread.id,
+                                        cwd = thread.cwd,
+                                        updatedAtEpochSeconds = thread.updatedAtEpochSeconds,
+                                    )
+                                },
+                                projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+                                projectPath = cwd.orEmpty(),
+                            )
+                            unscoped.filter { it.id in groupedSessionIDs }.distinctBy { it.id }
+                        }
                     }
                     _state.update { current ->
                         if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID) {
@@ -946,8 +964,15 @@ class AppViewModel(
         val state = _state.value
         if (state.selectedThreadID == thread.id) return true
         if (state.selectedThreadID != null) return false
-        val paths = state.selectedProject?.sessionPaths.orEmpty()
-        return paths.isEmpty() || thread.cwd in paths
+        val project = state.selectedProject
+        val paths = project?.sessionPaths.orEmpty()
+        if (paths.isEmpty() || thread.cwd in paths) return true
+        val projectPath = project?.path ?: return false
+        return thread.id in SessionListSections.sessionIdsForProject(
+            sessions = listOf(CodexThreadSummary(thread.id, thread.cwd, thread.updatedAtEpochSeconds)),
+            projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+            projectPath = projectPath,
+        )
     }
 
     private fun upsertItem(item: CodexThreadItem) {

@@ -230,6 +230,18 @@ enum SharedKMPBridge {
         }
     }
 
+    static func sessionIDsForProject(
+        threads: [CodexThread],
+        projects: [ProjectRecord],
+        projectPath: String
+    ) -> Set<String> {
+        Set(MobidexShared.SessionListSections.shared.sessionIdsForProject(
+            sessions: threads.map(toSharedCodexThreadSummary),
+            projects: projects.map(toSharedProjectRecord),
+            projectPath: projectPath
+        ))
+    }
+
     static func normalizedSessionPaths(_ paths: [String], primaryPath: String) -> [String] {
         MobidexShared.ProjectRecord.companion.normalizedSessionPaths(paths: paths, primaryPath: primaryPath)
     }
