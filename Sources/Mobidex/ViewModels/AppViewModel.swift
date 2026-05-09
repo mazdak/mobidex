@@ -258,6 +258,10 @@ final class AppViewModel: ObservableObject {
         isOperationActive(.refreshingChangedFiles)
     }
 
+    var isRefreshingSessions: Bool {
+        isOperationActive(.refreshingSessions)
+    }
+
     func loadCredential(for serverID: UUID) async -> SSHCredential {
         (try? await loadCredentialFromStore(serverID: serverID)) ?? SSHCredential()
     }
@@ -753,6 +757,13 @@ final class AppViewModel: ObservableObject {
 
     func refreshThreads() async {
         await runOperation(.refreshingSessions, status: "Refreshing sessions") {
+            try await loadThreads()
+        }
+    }
+
+    func selectAllSessionsAndRefresh() async {
+        await runOperation(.refreshingSessions, status: "Refreshing sessions") {
+            selectAllSessions()
             try await loadThreads()
         }
     }

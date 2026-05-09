@@ -723,18 +723,22 @@ final class AppViewModelTests: XCTestCase {
         viewModel.selectProject(toolsProject.id)
         XCTAssertNil(viewModel.selectedThreadID)
         cursor = transport.sentLinesSnapshot.count
-        let refreshTask = Task { await viewModel.refreshThreads() }
+        let refreshTask = Task { await viewModel.selectAllSessionsAndRefresh() }
         let toolsList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        XCTAssertTrue(viewModel.isShowingAllSessions)
+        XCTAssertTrue(viewModel.isRefreshingSessions)
         params = try requestParams(for: toolsList, in: transport)
-        XCTAssertEqual(params["cwd"] as? String, "/srv/tools")
+        XCTAssertNil(params["cwd"])
         transport.receive("""
         {"id":\(toolsList.id),"result":{"data":[
-          {"id":"thread-tools","preview":"Tools work","cwd":"/srv/tools","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]}
+          {"id":"thread-tools","preview":"Tools work","cwd":"/srv/tools","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-app","preview":"App work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}
         """)
         await refreshTask.value
 
-        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-tools"])
+        XCTAssertFalse(viewModel.isRefreshingSessions)
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-tools", "thread-app"])
         XCTAssertNil(viewModel.selectedThreadID)
         XCTAssertNil(viewModel.selectedThread)
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
@@ -1451,6 +1455,8 @@ final class AppViewModelTests: XCTestCase {
         let openTask = Task { await viewModel.openThread(thread) }
         let read = try await waitForRequest(method: "thread/resume", in: transport, after: cursor)
         XCTAssertTrue(viewModel.isSelectedThreadLoading)
+        XCTAssertTrue(viewModel.isAppServerConnected)
+        XCTAssertFalse(viewModel.canSendMessage)
         transport.receive("""
         {"id":\(read.id),"result":{"thread":{
           "id":"thread-1",

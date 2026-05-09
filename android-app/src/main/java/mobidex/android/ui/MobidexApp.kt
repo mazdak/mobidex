@@ -445,7 +445,7 @@ internal fun projectSupportingLabels(project: ProjectRecord): List<String> {
 private fun ThreadList(state: MobidexUiState, model: AppViewModel, onOpenDetail: () -> Unit) {
     if (state.threads.isEmpty()) {
         EmptyState(
-            if (state.connectionState == ServerConnectionState.Connected) "No Sessions" else "Connect to Load Sessions",
+            sessionEmptyTitle(state),
             "Sessions from CLI, VS Code, exec, and app-server sources appear here.",
             Icons.Default.Description,
         )
@@ -498,7 +498,7 @@ private fun ConversationPane(state: MobidexUiState, model: AppViewModel, modifie
         } else if (project != null) {
             ProjectHeader(project, state, model)
             EmptyState(
-                if (state.canCreateSession) "No Sessions" else "Connect to Create a Session",
+                projectSessionEmptyTitle(state),
                 "Start a session from this project.",
                 Icons.Default.Description,
                 Modifier.weight(1f),
@@ -508,6 +508,20 @@ private fun ConversationPane(state: MobidexUiState, model: AppViewModel, modifie
         }
     }
 }
+
+internal fun sessionEmptyTitle(state: MobidexUiState): String =
+    when {
+        state.isRefreshingSessions -> "Loading Sessions"
+        state.connectionState == ServerConnectionState.Connected -> "No Sessions"
+        else -> "Connect to Load Sessions"
+    }
+
+internal fun projectSessionEmptyTitle(state: MobidexUiState): String =
+    when {
+        state.isRefreshingSessions -> "Loading Sessions"
+        state.connectionState == ServerConnectionState.Connected -> "No Sessions"
+        else -> "Connect to Create a Session"
+    }
 
 @Composable
 private fun ConversationHeader(thread: CodexThread, state: MobidexUiState, model: AppViewModel) {

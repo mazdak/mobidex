@@ -158,6 +158,7 @@ struct ProjectSessionListView: View {
     @State private var selectedMode: ProjectSessionMode = .projects
     @State private var projectSearchText = ""
     @State private var showInactiveDiscoveredProjects = false
+    @State private var isSessionRefreshRequested = false
 
     var body: some View {
         Group {
@@ -270,7 +271,7 @@ struct ProjectSessionListView: View {
                         if model.threads.isEmpty {
                             Section("Sessions") {
                                 ContentUnavailableView(
-                                    model.connectionState == .connected ? "No Sessions" : "Connect to Load Sessions",
+                                    sessionsUnavailableTitle,
                                     systemImage: "bubble.left.and.bubble.right"
                                 )
                                     .frame(maxWidth: .infinity, minHeight: 260)
@@ -287,8 +288,11 @@ struct ProjectSessionListView: View {
                 }
                 .onChange(of: selectedMode) { _, newValue in
                     guard newValue == .sessions else { return }
-                    model.selectAllSessions()
-                    Task { await model.refreshThreads() }
+                    isSessionRefreshRequested = true
+                    Task {
+                        await model.selectAllSessionsAndRefresh()
+                        isSessionRefreshRequested = false
+                    }
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
@@ -326,6 +330,13 @@ struct ProjectSessionListView: View {
         case .failed: .red
         case .disconnected: .secondary
         }
+    }
+
+    private var sessionsUnavailableTitle: String {
+        if isSessionRefreshRequested || model.isRefreshingSessions {
+            return "Loading Sessions"
+        }
+        return model.connectionState == .connected ? "No Sessions" : "Connect to Load Sessions"
     }
 
     private func promoteDetailIfCompact() {

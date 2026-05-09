@@ -74,6 +74,7 @@ data class MobidexUiState(
     val failureMessage: String? = null,
     val statusMessage: String? = null,
     val isBusy: Boolean = false,
+    val isRefreshingSessions: Boolean = false,
     val selectedReasoningEffort: CodexReasoningEffortOption = CodexReasoningEffortOption.Medium,
     val selectedAccessMode: CodexAccessMode = CodexAccessMode.FullAccess,
     val diffSnapshot: GitDiffSnapshot = GitDiffSnapshot.Empty,
@@ -119,6 +120,8 @@ class AppViewModel(
     private var appServer: CodexAppServerClient? = null
     private var eventJob: Job? = null
     private var diffSnapshotRequestID = 0L
+    private var activeSessionRefreshes = 0
+    private var sessionRefreshGeneration = 0L
 
     init {
         viewModelScope.launch { loadServers() }
@@ -129,6 +132,7 @@ class AppViewModel(
             _state.update { it.copy(statusMessage = "Disconnect before switching servers.") }
             return
         }
+        resetSessionRefreshTracking()
         _state.update { state ->
             val server = state.servers.firstOrNull { it.id == serverID }
             state.copy(
@@ -147,6 +151,7 @@ class AppViewModel(
     }
 
     fun selectProject(projectID: String?) {
+        val refreshGeneration = beginSessionRefresh()
         _state.update {
             it.copy(
                 selectedProjectID = projectID,
@@ -157,7 +162,7 @@ class AppViewModel(
                 diffSnapshot = GitDiffSnapshot.Empty,
             )
         }
-        viewModelScope.launch { refreshThreads() }
+        refreshThreads(refreshGeneration = refreshGeneration)
     }
 
     fun setReasoningEffort(effort: CodexReasoningEffortOption) {
@@ -195,6 +200,9 @@ class AppViewModel(
                 if (editedSelectedServer && current.connectionState != ServerConnectionState.Disconnected) {
                     disconnectInternal(updateState = false)
                 }
+                if (editedSelectedServer || previous == null) {
+                    resetSessionRefreshTracking()
+                }
                 val updated = current.servers.upsert(next)
                 repository.saveServers(updated)
                 _state.update { state ->
@@ -219,6 +227,9 @@ class AppViewModel(
                 val current = _state.value
                 val wasSelected = current.selectedServerID == server.id
                 val updated = current.servers.filterNot { it.id == server.id }
+                if (wasSelected) {
+                    resetSessionRefreshTracking()
+                }
                 _state.update { state ->
                     val deleted = state.copy(
                         servers = updated,
@@ -271,6 +282,7 @@ class AppViewModel(
             val updatedServer = server.copy(projects = server.projects.filterNot { it.id == project.id })
             val updated = state.servers.upsert(updatedServer)
             repository.saveServers(updated)
+            resetSessionRefreshTracking()
             _state.update { current ->
                 val removedSelectedProject = current.selectedProjectID == project.id
                 val next = current.copy(
@@ -317,9 +329,18 @@ class AppViewModel(
                 }
                 appServer = client
                 startEventLoop(client)
-                _state.update { it.copy(connectionState = ServerConnectionState.Connected, statusMessage = "App-server connected.") }
-                refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = false)
-                refreshThreads()
+                val refreshGeneration = beginSessionRefresh()
+                var refreshHandedOff = false
+                try {
+                    _state.update { it.copy(connectionState = ServerConnectionState.Connected, statusMessage = "App-server connected.") }
+                    refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = false)
+                    refreshThreads(refreshGeneration = refreshGeneration)
+                    refreshHandedOff = true
+                } finally {
+                    if (!refreshHandedOff) {
+                        endSessionRefresh(refreshGeneration)
+                    }
+                }
             }
         }
     }
@@ -339,30 +360,61 @@ class AppViewModel(
     }
 
     fun refreshThreads() {
+        val refreshGeneration = beginSessionRefresh()
+        refreshThreads(refreshGeneration = refreshGeneration)
+    }
+
+    private fun refreshThreads(refreshGeneration: Long) {
         viewModelScope.launch {
-            runBusy("Refreshing sessions") {
-                val state = _state.value
-                val client = appServer ?: return@runBusy
-                val requestServerID = state.selectedServerID
-                val requestProjectID = state.selectedProjectID
-                val project = state.selectedProject
-                val cwd = project?.path
-                val sessionPaths = project?.sessionPaths ?: emptyList()
-                val loaded = if (sessionPaths.isEmpty()) {
-                    client.listThreads(cwd)
-                } else {
-                    sessionPaths.flatMap { path -> client.listThreads(path) }
-                        .distinctBy { it.id }
-                }
-                _state.update { current ->
-                    if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID) {
-                        current
+            try {
+                runBusy("Refreshing sessions") {
+                    val state = _state.value
+                    val client = appServer ?: return@runBusy
+                    val requestServerID = state.selectedServerID
+                    val requestProjectID = state.selectedProjectID
+                    val project = state.selectedProject
+                    val cwd = project?.path
+                    val sessionPaths = project?.sessionPaths ?: emptyList()
+                    val loaded = if (sessionPaths.isEmpty()) {
+                        client.listThreads(cwd)
                     } else {
-                        current.copy(threads = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds })
+                        sessionPaths.flatMap { path -> client.listThreads(path) }
+                            .distinctBy { it.id }
+                    }
+                    _state.update { current ->
+                        if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID) {
+                            current
+                        } else {
+                            current.copy(threads = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds })
+                        }
                     }
                 }
+            } finally {
+                endSessionRefresh(refreshGeneration)
             }
         }
+    }
+
+    private fun beginSessionRefresh(): Long {
+        activeSessionRefreshes += 1
+        _state.update { it.copy(isRefreshingSessions = true) }
+        return sessionRefreshGeneration
+    }
+
+    private fun endSessionRefresh(refreshGeneration: Long) {
+        if (refreshGeneration != sessionRefreshGeneration) {
+            return
+        }
+        activeSessionRefreshes = maxOf(0, activeSessionRefreshes - 1)
+        if (activeSessionRefreshes == 0) {
+            _state.update { it.copy(isRefreshingSessions = false) }
+        }
+    }
+
+    private fun resetSessionRefreshTracking() {
+        sessionRefreshGeneration += 1
+        activeSessionRefreshes = 0
+        _state.update { it.copy(isRefreshingSessions = false) }
     }
 
     fun openThread(thread: CodexThread) {
@@ -533,6 +585,7 @@ class AppViewModel(
         eventJob = null
         appServer?.close()
         appServer = null
+        resetSessionRefreshTracking()
         if (updateState) {
             val servers = _state.value.servers.clearingAppServerProjectState()
             repository.saveServers(servers)
@@ -1095,6 +1148,7 @@ private fun MobidexUiState.clearingSessionScope(): MobidexUiState =
         conversationSections = emptyList(),
         pendingApprovals = emptyList(),
         diffSnapshot = GitDiffSnapshot.Empty,
+        isRefreshingSessions = false,
         tokenUsagePercent = null,
     )
 

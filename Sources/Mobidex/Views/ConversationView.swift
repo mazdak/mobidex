@@ -103,7 +103,7 @@ struct ConversationView: View {
                 .accessibilityLabel("Stop Turn")
                 .accessibilityIdentifier("stopTurnButton")
             }
-            if !model.canSendMessage {
+            if !model.isAppServerConnected {
                 Label("Connect to continue", systemImage: "wifi.slash")
                     .font(.caption)
                     .foregroundStyle(.secondary)

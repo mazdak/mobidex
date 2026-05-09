@@ -2,7 +2,9 @@ package mobidex.android.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import mobidex.android.MobidexUiState
 import mobidex.android.model.ProjectRecord
+import mobidex.android.model.ServerConnectionState
 
 class ProjectLabelsTest {
     @Test
@@ -30,5 +32,31 @@ class ProjectLabelsTest {
         )
 
         assertEquals(listOf("60 discovered sessions"), projectSupportingLabels(project))
+    }
+
+    @Test
+    fun sessionEmptyTitleShowsLoadingBeforeFinalEmptyState() {
+        val loading = MobidexUiState(
+            connectionState = ServerConnectionState.Connected,
+            isRefreshingSessions = true,
+        )
+        val connected = MobidexUiState(connectionState = ServerConnectionState.Connected)
+        val disconnected = MobidexUiState(connectionState = ServerConnectionState.Disconnected)
+
+        assertEquals("Loading Sessions", sessionEmptyTitle(loading))
+        assertEquals("No Sessions", sessionEmptyTitle(connected))
+        assertEquals("Connect to Load Sessions", sessionEmptyTitle(disconnected))
+    }
+
+    @Test
+    fun projectEmptyTitleUsesConnectionInsteadOfCreateAvailability() {
+        val busyConnected = MobidexUiState(
+            connectionState = ServerConnectionState.Connected,
+            isBusy = true,
+        )
+        val loading = busyConnected.copy(isRefreshingSessions = true)
+
+        assertEquals("No Sessions", projectSessionEmptyTitle(busyConnected))
+        assertEquals("Loading Sessions", projectSessionEmptyTitle(loading))
     }
 }
