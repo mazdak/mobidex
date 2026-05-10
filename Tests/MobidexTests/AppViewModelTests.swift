@@ -736,7 +736,7 @@ final class AppViewModelTests: XCTestCase {
     @MainActor
     func testSelectingProjectLoadsSessionsWithoutOpeningOne() async throws {
         let appProject = ProjectRecord(path: "/srv/app")
-        let toolsProject = ProjectRecord(path: "/srv/tools")
+        let toolsProject = ProjectRecord(path: "/srv/tools", activeChatCount: 1)
         let server = ServerRecord(
             displayName: "Build Box",
             host: "build.example.com",
@@ -754,11 +754,25 @@ final class AppViewModelTests: XCTestCase {
             sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
         )
 
-        let connectTask = Task { await viewModel.connectSelectedServer() }
+        let connectTask = Task { await viewModel.connectSelectedServer(syncActiveChatCounts: true) }
         var cursor = 0
         let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
         cursor = initialize.nextCursor
         transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let loadedList = try await waitForRequest(method: "thread/loaded/list", in: transport, after: cursor)
+        cursor = loadedList.nextCursor
+        transport.receive("""
+        {"id":\(loadedList.id),"result":{"data":["thread-tools-active"]}}
+        """)
+        let toolsSummary = try await respondToThreadSummary(
+            threadID: "thread-tools-active",
+            preview: "Tools active",
+            cwd: "/srv/tools",
+            updatedAt: 1_770_000_450,
+            in: transport,
+            after: cursor
+        )
+        cursor = toolsSummary.nextCursor
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         var params = try requestParams(for: initialList, in: transport)
@@ -793,7 +807,9 @@ final class AppViewModelTests: XCTestCase {
         params = try requestParams(for: scopedToolsList, in: transport)
         XCTAssertEqual(params["cwd"] as? String, "/srv/tools")
         transport.receive("""
-        {"id":\(scopedToolsList.id),"result":{"data":[],"nextCursor":null}}
+        {"id":\(scopedToolsList.id),"result":{"data":[
+          {"id":"thread-tools-direct","preview":"Tools direct","cwd":"/srv/tools","status":{"type":"idle"},"updatedAt":1770000350,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
         """)
         let groupedToolsList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = groupedToolsList.nextCursor
@@ -806,7 +822,7 @@ final class AppViewModelTests: XCTestCase {
         ],"nextCursor":null}}
         """)
         await projectRefreshTask.value
-        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-tools-worktree"])
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-tools-worktree", "thread-tools-direct"])
         XCTAssertNil(viewModel.selectedThreadID)
 
         let refreshTask = Task { await viewModel.selectAllSessionsAndRefresh() }
@@ -1864,6 +1880,81 @@ final class AppViewModelTests: XCTestCase {
 
         XCTAssertEqual(viewModel.threads.map(\.id), ["thread-worktree", "thread-main"])
         XCTAssertEqual(viewModel.selectedThreadID, "thread-worktree")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testProjectSelectionLoadsGroupedActiveSessionsWhenExactPathListIsEmpty() async throws {
+        let project = ProjectRecord(
+            path: "/Users/mazdak/Code/resq/qlaw",
+            discovered: true,
+            discoveredSessionCount: 8,
+            activeChatCount: 1
+        )
+        let server = ServerRecord(
+            displayName: "MacBook Local",
+            host: "192.168.1.239",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(
+                appServer: CodexAppServerClient(transport: transport),
+                discoveredProjectBatches: [[
+                    RemoteProject(
+                        path: "/Users/mazdak/Code/resq/qlaw",
+                        discoveredSessionCount: 8,
+                        lastDiscoveredAt: nil
+                    )
+                ]]
+            )
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let exactList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = exactList.nextCursor
+        var params = try requestParams(for: exactList, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/Users/mazdak/Code/resq/qlaw")
+        transport.receive(#"{"id":\#(exactList.id),"result":{"data":[],"nextCursor":null}}"#)
+
+        let unscopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = unscopedList.nextCursor
+        params = try requestParams(for: unscopedList, in: transport)
+        XCTAssertNil(params["cwd"] as? String)
+        transport.receive("""
+        {"id":\(unscopedList.id),"result":{"data":[
+          {"id":"thread-qlaw","preview":"Qlaw","cwd":"/Users/mazdak/.codex/worktrees/b717/qlaw","status":{"type":"idle"},"updatedAt":1770000500,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-other","preview":"Other","cwd":"/Users/mazdak/.codex/worktrees/b717/fullstack","status":{"type":"idle"},"updatedAt":1770000600,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-qlaw",
+          "preview":"Qlaw",
+          "cwd":"/Users/mazdak/.codex/worktrees/b717/qlaw",
+          "status":{"type":"idle"},
+          "updatedAt":1770000500,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+        await connectTask.value
+
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-qlaw"])
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-qlaw")
         await viewModel.disconnect()
     }
 
@@ -4911,11 +5002,25 @@ private func waitForRequest(method: String, in transport: MockCodexLineTransport
 }
 
 private func respondToEmptyUnscopedThreadListFallback(in transport: MockCodexLineTransport, cursor: inout Int) async throws {
-    let fallbackList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
-    let params = try requestParams(for: fallbackList, in: transport)
-    XCTAssertNil(params["cwd"])
-    cursor = fallbackList.nextCursor
-    transport.receive(#"{"id":\#(fallbackList.id),"result":{"data":[],"nextCursor":null}}"#)
+    for _ in 0..<20 {
+        let lines = transport.sentLinesSnapshot
+        for index in cursor..<lines.count {
+            guard methodName(lines[index]) == "thread/list" else {
+                continue
+            }
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(lines[index].utf8)) as? [String: Any])
+            let request = CapturedRequest(id: try XCTUnwrap(object["id"] as? Int), nextCursor: index + 1)
+            let params = try requestParams(for: request, in: transport)
+            guard params["cwd"] == nil else {
+                continue
+            }
+            cursor = request.nextCursor
+            transport.receive(#"{"id":\#(request.id),"result":{"data":[],"nextCursor":null}}"#)
+            return
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTFail("Timed out waiting for unscoped thread/list fallback.")
 }
 
 private func requestParams(for request: CapturedRequest, in transport: MockCodexLineTransport) throws -> [String: Any] {

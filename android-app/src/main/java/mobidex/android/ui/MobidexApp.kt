@@ -583,6 +583,8 @@ private fun ProjectList(
     onOpenDetail: () -> Unit,
 ) {
     val sections = model.projectSections(search, showInactive, state.showsArchivedSessions)
+    val contentIsLoading = state.isDiscoveringProjects
+    val contentAlpha = if (contentIsLoading) 0.42f else 1f
 
     Column {
         OutlinedTextField(
@@ -591,32 +593,50 @@ private fun ProjectList(
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             placeholder = { Text("Search Projects") },
             modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+            enabled = !contentIsLoading,
             singleLine = true,
         )
+        if (contentIsLoading) {
+            LoadingListStatusRow("Loading projects...")
+        }
         if (sections.showInactiveDiscoveredFilter) {
             FilterChip(
                 selected = showInactive,
                 onClick = { onShowInactiveChange(!showInactive) },
+                enabled = !contentIsLoading,
                 label = { Text("Show inactive discovered projects") },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).graphicsLayer { alpha = contentAlpha },
             )
         }
         if (sections.showArchivedSessionFilter) {
             FilterChip(
                 selected = state.showsArchivedSessions,
                 onClick = { model.setShowsArchivedSessions(!state.showsArchivedSessions) },
+                enabled = !contentIsLoading,
                 label = { Text("Show archived sessions") },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).graphicsLayer { alpha = contentAlpha },
             )
         }
-        LazyColumn(Modifier.weight(1f, fill = true)) {
-            section("Favorites", sections.favorites) { ProjectRow(it, state, model, onOpenDetail) }
-            section(sections.discoveredTitle, sections.discovered) { ProjectRow(it, state, model, onOpenDetail) }
-            section("Added", sections.added) { ProjectRow(it, state, model, onOpenDetail) }
+        LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
+            section("Favorites", sections.favorites) { ProjectRow(it, state, model, onOpenDetail, enabled = !contentIsLoading) }
+            section(sections.discoveredTitle, sections.discovered) { ProjectRow(it, state, model, onOpenDetail, enabled = !contentIsLoading) }
+            section("Added", sections.added) { ProjectRow(it, state, model, onOpenDetail, enabled = !contentIsLoading) }
             if (sections.isEmpty) {
                 item { EmptyState(projectEmptyTitle(state, sections, search), "Connect or add a project path.", Icons.Default.Folder) }
             }
         }
+    }
+}
+
+@Composable
+private fun LoadingListStatusRow(title: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -642,7 +662,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.section(
 }
 
 @Composable
-private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: AppViewModel, onOpenDetail: () -> Unit) {
+private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: AppViewModel, onOpenDetail: () -> Unit, enabled: Boolean = true) {
     ListItem(
         headlineContent = { Text(project.displayName, fontWeight = FontWeight.SemiBold) },
         supportingContent = {
@@ -656,11 +676,11 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
         leadingContent = { Icon(if (project.id == state.selectedProjectID) Icons.Default.FolderOpen else Icons.Default.Folder, contentDescription = null) },
         trailingContent = {
             Row {
-                IconButton(onClick = { model.setProjectFavorite(project, !project.isFavorite) }) {
+                IconButton(onClick = { model.setProjectFavorite(project, !project.isFavorite) }, enabled = enabled) {
                     Icon(if (project.isFavorite) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = "Favorite")
                 }
                 if (!project.discovered) {
-                    IconButton(onClick = { model.removeProject(project) }) {
+                    IconButton(onClick = { model.removeProject(project) }, enabled = enabled) {
                         Icon(Icons.Default.Delete, contentDescription = "Remove Project")
                     }
                 }
@@ -675,6 +695,7 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
             model.selectProject(project.id)
             onOpenDetail()
         },
+        enabled = enabled,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Text("Open")
@@ -711,29 +732,36 @@ private fun ThreadList(state: MobidexUiState, model: AppViewModel, onOpenDetail:
             Icons.Default.Description,
         )
     } else {
-        LazyColumn {
-            items(state.threads, key = { it.id }) { thread ->
-                ListItem(
-                    headlineContent = { Text(thread.title, fontWeight = if (thread.id == state.selectedThreadID) FontWeight.SemiBold else FontWeight.Normal) },
-                    supportingContent = {
-                        Column {
-                            Text(thread.cwd, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(thread.status.sessionLabel, color = threadStatusColor(thread))
-                        }
-                    },
-                    leadingContent = {
-                        Box(Modifier.size(10.dp).clip(CircleShape).background(threadStatusColor(thread)))
-                    },
-                    modifier = Modifier.background(if (thread.id == state.selectedThreadID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
-                )
-                TextButton(
-                    onClick = {
-                        model.openThread(thread)
-                        onOpenDetail()
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Open") }
-                HorizontalDivider()
+        val contentAlpha = if (state.isRefreshingSessions) 0.42f else 1f
+        Column(Modifier.fillMaxSize()) {
+            if (state.isRefreshingSessions) {
+                LoadingListStatusRow("Loading sessions...")
+            }
+            LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
+                items(state.threads, key = { it.id }) { thread ->
+                    ListItem(
+                        headlineContent = { Text(thread.title, fontWeight = if (thread.id == state.selectedThreadID) FontWeight.SemiBold else FontWeight.Normal) },
+                        supportingContent = {
+                            Column {
+                                Text(thread.cwd, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(thread.status.sessionLabel, color = threadStatusColor(thread))
+                            }
+                        },
+                        leadingContent = {
+                            Box(Modifier.size(10.dp).clip(CircleShape).background(threadStatusColor(thread)))
+                        },
+                        modifier = Modifier.background(if (thread.id == state.selectedThreadID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
+                    )
+                    TextButton(
+                        onClick = {
+                            model.openThread(thread)
+                            onOpenDetail()
+                        },
+                        enabled = !state.isRefreshingSessions,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Open") }
+                    HorizontalDivider()
+                }
             }
         }
     }
@@ -998,10 +1026,16 @@ private fun Composer(
                 AssistChip(onClick = { showAccess = true }, label = { Text(state.selectedAccessMode.label) })
                 DropdownMenu(expanded = showAccess, onDismissRequest = { showAccess = false }) {
                     CodexAccessMode.entries.forEach { mode ->
-                        DropdownMenuItem(text = { Text(mode.label) }, onClick = {
-                            model.setAccessMode(mode)
-                            showAccess = false
-                        })
+                        DropdownMenuItem(
+                            text = { Text(mode.label) },
+                            onClick = {
+                                model.setAccessMode(mode)
+                                showAccess = false
+                            },
+                            leadingIcon = {
+                                if (mode == state.selectedAccessMode) Icon(Icons.Default.Check, contentDescription = null)
+                            },
+                        )
                     }
                 }
             }
@@ -1009,10 +1043,16 @@ private fun Composer(
                 AssistChip(onClick = { showEffort = true }, label = { Text("5.5 ${state.selectedReasoningEffort.label}") })
                 DropdownMenu(expanded = showEffort, onDismissRequest = { showEffort = false }) {
                     CodexReasoningEffortOption.entries.forEach { effort ->
-                        DropdownMenuItem(text = { Text(effort.label) }, onClick = {
-                            model.setReasoningEffort(effort)
-                            showEffort = false
-                        })
+                        DropdownMenuItem(
+                            text = { Text(effort.label) },
+                            onClick = {
+                                model.setReasoningEffort(effort)
+                                showEffort = false
+                            },
+                            leadingIcon = {
+                                if (effort == state.selectedReasoningEffort) Icon(Icons.Default.Check, contentDescription = null)
+                            },
+                        )
                     }
                 }
             }

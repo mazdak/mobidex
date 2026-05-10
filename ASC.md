@@ -8,6 +8,8 @@ Current app settings:
 - App Store Connect Bundle ID resource: `BCWXF9SR6H`
 - App Store Connect app ID: `6767185049`
 - TestFlight internal group: `Internal Testers` (`49de058d-8e57-4f7c-9929-3f600f867849`)
+- TestFlight external group: `External Testers` (`28e9cfaa-239b-4afe-911d-8dc1671e941b`)
+- Public TestFlight link: `https://testflight.apple.com/join/zmqueV6P`
 - Current App Store version: `1.0` (`b6795222-81a8-4a12-b4d2-c01b6ee017fa`)
 - Team ID: `JX3932QCN8`
 - Xcode project: `Mobidex.xcodeproj`
@@ -92,6 +94,20 @@ For an external group that needs beta app review after upload, pass an explicit 
 
 ```bash
 asc workflow run testflight_external BUILD_ID:BUILD_ID EXTERNAL_TESTFLIGHT_GROUP:"External Testers"
+```
+
+External TestFlight setup currently uses:
+
+- Review contact is configured in App Store Connect; verify it before each external submission with `asc testflight review view --app 6767185049 --output table`.
+- Demo account required: `false`
+- Beta app description: Mobidex requires a tester-controlled SSH server running `codex-app-server`.
+- Review note: do not provide a public demo SSH server; reviewers can inspect setup and connect to their own reachable host if available.
+- Latest submitted external build: `1.0 (5)` / `dc9c81fe-16be-4694-94e3-dc01a5d0dcd7`, submitted on `2026-05-09`, currently waiting for Beta Review.
+
+Enable or refresh the public link:
+
+```bash
+asc testflight groups edit --id 28e9cfaa-239b-4afe-911d-8dc1671e941b --public-link-enabled --public-link-limit-enabled --public-link-limit 10000 --feedback-enabled
 ```
 
 ## Local Validation

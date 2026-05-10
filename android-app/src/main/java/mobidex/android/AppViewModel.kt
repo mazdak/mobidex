@@ -160,6 +160,7 @@ class AppViewModel(
                 diffSnapshot = GitDiffSnapshot.Empty,
                 failureMessage = null,
                 statusMessage = null,
+                tokenUsagePercent = null,
             )
         }
     }
@@ -174,6 +175,7 @@ class AppViewModel(
                 selectedThread = null,
                 conversationSections = emptyList(),
                 diffSnapshot = GitDiffSnapshot.Empty,
+                tokenUsagePercent = null,
             )
         }
         refreshThreads(refreshGeneration = refreshGeneration)
@@ -197,6 +199,7 @@ class AppViewModel(
                 selectedThreadID = null,
                 selectedThread = null,
                 conversationSections = emptyList(),
+                tokenUsagePercent = null,
             )
         }
         refreshThreads(refreshGeneration = refreshGeneration)
@@ -320,6 +323,9 @@ class AppViewModel(
                         threads = emptyList(),
                         selectedThreadID = null,
                         selectedThread = null,
+                        conversationSections = emptyList(),
+                        diffSnapshot = GitDiffSnapshot.Empty,
+                        tokenUsagePercent = null,
                         statusMessage = "Added ${project.displayName}.",
                     )
                 }
@@ -432,9 +438,7 @@ class AppViewModel(
                         client.listThreads(cwd, includeArchived = includeArchived)
                     } else {
                         val exactMatches = sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived) }
-                        if (exactMatches.isNotEmpty()) {
-                            exactMatches.distinctBy { it.id }
-                        } else {
+                        if (exactMatches.isEmpty() || (project?.activeChatCount ?: 0) > 0) {
                             val unscoped = client.listThreads(null, includeArchived = includeArchived)
                             val groupedSessionIDs = SessionListSections.sessionIdsForProject(
                                 sessions = unscoped.map { thread ->
@@ -447,11 +451,17 @@ class AppViewModel(
                                 projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
                                 projectPath = cwd.orEmpty(),
                             )
-                            unscoped.filter { it.id in groupedSessionIDs }.distinctBy { it.id }
+                            (exactMatches + unscoped.filter { it.id in groupedSessionIDs }).distinctBy { it.id }
+                        } else {
+                            exactMatches.distinctBy { it.id }
                         }
                     }
                     _state.update { current ->
-                        if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID) {
+                        if (appServer !== client ||
+                            current.selectedServerID != requestServerID ||
+                            current.selectedProjectID != requestProjectID ||
+                            current.showsArchivedSessions != includeArchived
+                        ) {
                             current
                         } else {
                             current.copy(threads = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds })
@@ -496,6 +506,7 @@ class AppViewModel(
                     selectedThread = thread,
                     conversationSections = thread.conversationSections(),
                     diffSnapshot = GitDiffSnapshot.Empty,
+                    tokenUsagePercent = null,
                 )
             }
             runBusy("Opening session") {
@@ -755,6 +766,7 @@ class AppViewModel(
                         selectedThread = if (projectSelectionChanged) null else it.selectedThread,
                         conversationSections = if (projectSelectionChanged) emptyList() else it.conversationSections,
                         diffSnapshot = if (projectSelectionChanged) GitDiffSnapshot.Empty else it.diffSnapshot,
+                        tokenUsagePercent = if (projectSelectionChanged) null else it.tokenUsagePercent,
                         statusMessage = "Projects synced.",
                     )
                 } else {

@@ -210,6 +210,13 @@ struct ProjectSessionListView: View {
                         .pickerStyle(.segmented)
                     }
 
+                    if contentIsLoading {
+                        Section {
+                            LoadingListStatusRow(title: loadingStatusTitle)
+                                .listRowSeparator(.hidden)
+                        }
+                    }
+
                     switch selectedMode {
                     case .projects:
                         let sections = projectSections(from: server.projects)
@@ -218,12 +225,16 @@ struct ProjectSessionListView: View {
                                 Toggle("Show inactive discovered projects", isOn: $showInactiveDiscoveredProjects)
                                     .font(.subheadline)
                             }
+                            .disabled(contentIsLoading)
+                            .opacity(contentOpacity)
                         }
                         if sections.showArchivedSessionFilter {
                             Section {
                                 Toggle("Show archived sessions", isOn: $model.showsArchivedSessions)
                                     .font(.subheadline)
                             }
+                            .disabled(contentIsLoading)
+                            .opacity(contentOpacity)
                         }
 
                         if !sections.favorites.isEmpty {
@@ -232,6 +243,8 @@ struct ProjectSessionListView: View {
                                     projectRow(project)
                                 }
                             }
+                            .disabled(contentIsLoading)
+                            .opacity(contentOpacity)
                         }
 
                         if !sections.discovered.isEmpty {
@@ -240,6 +253,8 @@ struct ProjectSessionListView: View {
                                     projectRow(project)
                                 }
                             }
+                            .disabled(contentIsLoading)
+                            .opacity(contentOpacity)
                         }
 
                         if !sections.added.isEmpty {
@@ -248,6 +263,8 @@ struct ProjectSessionListView: View {
                                     projectRow(project)
                                 }
                             }
+                            .disabled(contentIsLoading)
+                            .opacity(contentOpacity)
                         }
 
                         if sections.isEmpty {
@@ -275,6 +292,8 @@ struct ProjectSessionListView: View {
                                 }
                             }
                         }
+                        .disabled(contentIsLoading)
+                        .opacity(contentOpacity)
                         if model.threads.isEmpty {
                             Section("Sessions") {
                                 ContentUnavailableView(
@@ -339,6 +358,28 @@ struct ProjectSessionListView: View {
             } else {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
             }
+        }
+    }
+
+    private var contentIsLoading: Bool {
+        switch selectedMode {
+        case .projects:
+            model.isDiscoveringProjects
+        case .sessions:
+            isSessionRefreshRequested || model.isRefreshingSessions
+        }
+    }
+
+    private var contentOpacity: Double {
+        contentIsLoading ? 0.42 : 1
+    }
+
+    private var loadingStatusTitle: String {
+        switch selectedMode {
+        case .projects:
+            "Loading projects..."
+        case .sessions:
+            "Loading sessions..."
         }
     }
 
@@ -417,6 +458,22 @@ struct ProjectSessionListView: View {
                 }
             }
         }
+    }
+}
+
+private struct LoadingListStatusRow: View {
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text(title)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.vertical, 6)
+        .accessibilityIdentifier("listLoadingStatus")
     }
 }
 

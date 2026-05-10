@@ -1809,7 +1809,9 @@ final class AppViewModel: ObservableObject {
                 merged.append(thread)
             }
         }
-        if merged.isEmpty, let projectPath = scope.cwd, let selectedServer {
+        if let projectPath = scope.cwd,
+           let selectedServer,
+           merged.isEmpty || (selectedServer.projects.first(where: { $0.path == projectPath })?.activeChatCount ?? 0) > 0 {
             let unscopedThreads = try await appServer.listThreads(cwd: nil, includeArchived: scope.includeArchivedSessions)
             let groupedSessionIDs = SharedKMPBridge.sessionIDsForProject(
                 threads: unscopedThreads,

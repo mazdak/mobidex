@@ -45,7 +45,7 @@ struct ConversationView: View {
                 projectHeader(project)
                 Divider()
                 ContentUnavailableView(
-                    model.canSendMessage ? "No Sessions" : "Connect to Create a Session",
+                    projectEmptyTitle,
                     systemImage: "bubble.left.and.bubble.right"
                 )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -215,19 +215,6 @@ struct ConversationView: View {
                         }
                     }
                 }
-                if model.isSelectedThreadLoading {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("Loading session")
-                            .font(.subheadline)
-                    }
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.top, 10)
-                    .accessibilityIdentifier("sessionLoadingIndicator")
-                }
                 if timelineDistanceFromBottom > Self.latestButtonShowDistance {
                     Button {
                         autoFollowStreaming = true
@@ -294,6 +281,13 @@ struct ConversationView: View {
                     }
                 }
         }
+    }
+
+    private var projectEmptyTitle: String {
+        if model.isRefreshingSessions {
+            return "Loading Sessions"
+        }
+        return model.canSendMessage ? "No Sessions" : "Connect to Create a Session"
     }
 
     private func scrollToConversationBottom(_ proxy: ScrollViewProxy) {
@@ -408,7 +402,9 @@ struct ConversationView: View {
 
             Spacer(minLength: 8)
 
-            contextIndicator
+            if shouldShowContextIndicator {
+                contextIndicator
+            }
 
             modelLabel(showReasoning: showModelReasoning)
 
@@ -424,7 +420,9 @@ struct ConversationView: View {
 
             Spacer(minLength: 6)
 
-            contextIndicator
+            if shouldShowContextIndicator {
+                contextIndicator
+            }
             modelLabel(showReasoning: false)
 
             sendButton
@@ -473,7 +471,11 @@ struct ConversationView: View {
                 Button {
                     model.selectedAccessMode = mode
                 } label: {
-                    Label("Next turn: \(mode.label)", systemImage: mode.systemImage)
+                    Label {
+                        Text(mode.label)
+                    } icon: {
+                        Image(systemName: mode == model.selectedAccessMode ? "checkmark" : mode.systemImage)
+                    }
                 }
             }
         } label: {
@@ -497,7 +499,13 @@ struct ConversationView: View {
                 Button {
                     model.selectedReasoningEffort = effort
                 } label: {
-                    Text("Next turn: \(effort.label)")
+                    Label {
+                        Text(effort.label)
+                    } icon: {
+                        if effort == model.selectedReasoningEffort {
+                            Image(systemName: "checkmark")
+                        }
+                    }
                 }
             }
         } label: {
@@ -582,6 +590,10 @@ struct ConversationView: View {
             }
         }
         .accessibilityLabel(percent.map { "Context window \($0) percent used" } ?? "Context window")
+    }
+
+    private var shouldShowContextIndicator: Bool {
+        !model.isSelectedThreadLoading && model.contextUsagePercent != nil
     }
 
     private var attachmentStrip: some View {
