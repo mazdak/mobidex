@@ -33,6 +33,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Bolt
@@ -40,7 +41,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Photo
@@ -892,7 +892,7 @@ private fun Composer(
                 Icon(Icons.Default.Photo, contentDescription = "Attach Photo")
             }
             IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
-                Icon(Icons.Default.InsertDriveFile, contentDescription = "Attach File")
+                Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = "Attach File")
             }
             Box {
                 AssistChip(onClick = { showAccess = true }, label = { Text(state.selectedAccessMode.label) })

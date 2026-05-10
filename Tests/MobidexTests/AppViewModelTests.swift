@@ -947,6 +947,7 @@ final class AppViewModelTests: XCTestCase {
         cursor = loadedList.nextCursor
         transport.receive(#"{"id":\#(loadedList.id),"result":{"data":[]}}"#)
         let emptyScopeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = emptyScopeList.nextCursor
         transport.receive(#"{"id":\#(emptyScopeList.id),"result":{"data":[],"nextCursor":null}}"#)
 
         try await waitForConnectionState(.connected, in: viewModel)
@@ -1201,6 +1202,7 @@ final class AppViewModelTests: XCTestCase {
         cursor = loadedList.nextCursor
         transport.receive(#"{"id":\#(loadedList.id),"result":{"data":[]}}"#)
         let emptyScopeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = emptyScopeList.nextCursor
         transport.receive(#"{"id":\#(emptyScopeList.id),"result":{"data":[],"nextCursor":null}}"#)
         try await waitForConnectionState(.connected, in: viewModel)
         await connectTask.value
@@ -1943,6 +1945,7 @@ final class AppViewModelTests: XCTestCase {
         let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = list.nextCursor
         transport.receive(#"{"id":\#(list.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         cursor = transport.sentLinesSnapshot.count
@@ -2297,6 +2300,7 @@ final class AppViewModelTests: XCTestCase {
         transport.receive("""
         {"id":\(initialList.id),"result":{"data":[],"nextCursor":null}}
         """)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
         XCTAssertEqual(viewModel.selectedServer?.projects.first?.discoveredSessionCount, 37)
 
@@ -2372,11 +2376,13 @@ final class AppViewModelTests: XCTestCase {
         {"id":\(loadedList.id),"result":{"data":[]}}
         """)
         let scopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = scopedList.nextCursor
         let scopedParams = try requestParams(for: scopedList, in: transport)
         XCTAssertEqual(scopedParams["cwd"] as? String, "/srv/app")
         transport.receive("""
         {"id":\(scopedList.id),"result":{"data":[],"nextCursor":null}}
         """)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let refreshedProject = try XCTUnwrap(viewModel.selectedServer?.projects.first)
@@ -2417,7 +2423,9 @@ final class AppViewModelTests: XCTestCase {
         cursor = loadedList.nextCursor
         transport.receive(#"{"id":\#(loadedList.id),"result":{"data":[]}}"#)
         let scopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = scopedList.nextCursor
         transport.receive(#"{"id":\#(scopedList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let lineCountAfterConnect = transport.sentLinesSnapshot.count
@@ -2467,6 +2475,7 @@ final class AppViewModelTests: XCTestCase {
         transport.receive("""
         {"id":\(initialList.id),"result":{"data":[],"nextCursor":null}}
         """)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         cursor = transport.sentLinesSnapshot.count
@@ -2585,6 +2594,7 @@ final class AppViewModelTests: XCTestCase {
         let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = list.nextCursor
         transport.receive(#"{"id":\#(list.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let sendTask = Task { await viewModel.sendComposerText("Start work") }
@@ -2644,6 +2654,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         viewModel.selectedReasoningEffort = .high
@@ -2748,6 +2759,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let sendTask = Task { await viewModel.sendComposerText("Start work") }
@@ -2866,6 +2878,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let sendTask = Task { await viewModel.sendComposerText("Start work") }
@@ -3051,6 +3064,7 @@ final class AppViewModelTests: XCTestCase {
         let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = list.nextCursor
         transport.receive(#"{"id":\#(list.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
         XCTAssertTrue(viewModel.canSendMessage)
 
@@ -3116,6 +3130,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let sendTask = Task { await viewModel.sendComposerText("Start work") }
@@ -3209,6 +3224,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let sendTask = Task { await viewModel.sendComposerText("Start work") }
@@ -3320,6 +3336,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let sendTask = Task { await viewModel.sendComposerText("Start work") }
@@ -3412,6 +3429,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let startSendTask = Task { await viewModel.sendComposerText("Start work") }
@@ -3621,6 +3639,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let imagePath = "/Users/mazdak/Downloads/download-latest-macos-app-badge-2x.png"
@@ -3709,6 +3728,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let sendTask = Task {
@@ -3816,6 +3836,7 @@ final class AppViewModelTests: XCTestCase {
         let refreshList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = refreshList.nextCursor
         transport.receive(#"{"id":\#(refreshList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await refreshTask.value
         await sendTask.value
 
@@ -3928,6 +3949,7 @@ final class AppViewModelTests: XCTestCase {
         let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = initialList.nextCursor
         transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await connectTask.value
 
         let refreshTask = Task { await viewModel.refreshChangedFilesForSelectedProject() }
@@ -4844,9 +4866,11 @@ private func connectWithSingleOpenSessionAfterReconnect(in viewModel: AppViewMod
     )
     cursor = summary.nextCursor
     let scopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+    cursor = scopedList.nextCursor
     transport.receive("""
     {"id":\(scopedList.id),"result":{"data":[],"nextCursor":null}}
     """)
+    try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
 }
 
 @discardableResult
@@ -4884,6 +4908,14 @@ private func waitForRequest(method: String, in transport: MockCodexLineTransport
         try await Task.sleep(nanoseconds: 10_000_000)
     }
     return try XCTUnwrap(nil as CapturedRequest?, "Timed out waiting for \(method).")
+}
+
+private func respondToEmptyUnscopedThreadListFallback(in transport: MockCodexLineTransport, cursor: inout Int) async throws {
+    let fallbackList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+    let params = try requestParams(for: fallbackList, in: transport)
+    XCTAssertNil(params["cwd"])
+    cursor = fallbackList.nextCursor
+    transport.receive(#"{"id":\#(fallbackList.id),"result":{"data":[],"nextCursor":null}}"#)
 }
 
 private func requestParams(for request: CapturedRequest, in transport: MockCodexLineTransport) throws -> [String: Any] {

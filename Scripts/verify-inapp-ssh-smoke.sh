@@ -100,7 +100,7 @@ cleanup() {
     echo "Keeping smoke CODEX_HOME: ${SMOKE_CODEX_HOME:-}" >&2
   else
     rm -rf "$WORK_DIR"
-    if [[ -n "${SMOKE_CODEX_HOME:-}" ]]; then
+    if [[ -n "${SMOKE_CODEX_HOME:-}" && "${SMOKE_CODEX_HOME_OWNED:-0}" == "1" ]]; then
       rm -rf "$SMOKE_CODEX_HOME"
     fi
   fi
@@ -179,7 +179,13 @@ SSHD_CONFIG="$WORK_DIR/sshd_config"
 PASSWORD_SERVER="$WORK_DIR/password_ssh_server.py"
 FAKE_CODEX_SERVER="$WORK_DIR/fake_codex_app_server.py"
 SMOKE_CWD="$WORK_DIR/project"
-SMOKE_CODEX_HOME="$(mktemp -d /tmp/mobidex-codex-home.XXXXXX)"
+if [[ -n "${MOBIDEX_SMOKE_CODEX_HOME:-}" ]]; then
+  SMOKE_CODEX_HOME="$MOBIDEX_SMOKE_CODEX_HOME"
+  SMOKE_CODEX_HOME_OWNED=0
+else
+  SMOKE_CODEX_HOME="$(mktemp -d /tmp/mobidex-codex-home.XXXXXX)"
+  SMOKE_CODEX_HOME_OWNED=1
+fi
 CODEX_PATH="$WORK_DIR/codex-smoke"
 
 mkdir -p "$SMOKE_CWD"
@@ -781,6 +787,8 @@ else
   ssh-keygen -q -t ed25519 -N "" -f "$HOST_KEY"
   ssh-keygen -q -t ed25519 -N "" -f "$CLIENT_KEY"
   cp "$CLIENT_KEY.pub" "$AUTHORIZED_KEYS"
+  SSHD_CODEX_HOME="${SMOKE_CODEX_HOME//\\/\\\\}"
+  SSHD_CODEX_HOME="${SSHD_CODEX_HOME//\"/\\\"}"
 
   cat >"$SSHD_CONFIG" <<EOF
 Port $PORT
@@ -795,7 +803,7 @@ ChallengeResponseAuthentication no
 UsePAM no
 StrictModes no
 LogLevel VERBOSE
-SetEnv CODEX_HOME=$SMOKE_CODEX_HOME
+SetEnv CODEX_HOME="$SSHD_CODEX_HOME"
 Subsystem sftp internal-sftp
 EOF
 
@@ -869,6 +877,9 @@ launch_env=(
   "SIMCTL_CHILD_MOBIDEX_SMOKE_EXPECTED_TEXT=$EXPECTED_TEXT"
   "SIMCTL_CHILD_MOBIDEX_SMOKE_TIMEOUT=$TIMEOUT"
 )
+if [[ -n "${MOBIDEX_SMOKE_SERVER_ID:-}" ]]; then
+  launch_env+=("SIMCTL_CHILD_MOBIDEX_SMOKE_SERVER_ID=$MOBIDEX_SMOKE_SERVER_ID")
+fi
 if [[ "$SMOKE_MODE" == "approval" || "$SMOKE_MODE" == "control" ]]; then
   launch_env+=("SIMCTL_CHILD_MOBIDEX_SMOKE_PROMOTE_DETAIL=1")
 fi
