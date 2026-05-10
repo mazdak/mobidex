@@ -13,4 +13,7 @@ MISSION.md
 NEXT.md
 
 .gradle/
+android-app/build/
 shared-core/build/
+terminal-web/dist/
+terminal-web/node_modules/
