@@ -47,6 +47,7 @@ const [html, css, js] = await Promise.all([
   Bun.file(resolve(dist, "mobidex-terminal.css")).text(),
   Bun.file(resolve(dist, "mobidex-terminal.js")).text(),
 ]);
+const wasmBase64 = Buffer.from(await Bun.file(resolve(dist, "ghostty-vt.wasm")).arrayBuffer()).toString("base64");
 const inlineHtml = html
   .replace(
     '    <link rel="stylesheet" href="./mobidex-terminal.css" />',
@@ -54,7 +55,7 @@ const inlineHtml = html
   )
   .replace(
     '    <script type="module" src="./mobidex-terminal.js"></script>',
-    `    <script type="module">${js}</script>`,
+    `    <script type="module">window.MobidexTerminalWasmUrl = "data:application/wasm;base64,${wasmBase64}";\n${js}</script>`,
   );
 await Bun.write(resolve(dist, "index-ios.html"), inlineHtml);
 

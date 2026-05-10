@@ -19,6 +19,7 @@ declare global {
       clear(): void;
       focus(): void;
     };
+    MobidexTerminalWasmUrl?: string;
   }
 }
 
@@ -42,7 +43,7 @@ function decodeBase64(data: string): Uint8Array {
 }
 
 async function boot() {
-  const core = await GhosttyCore.load({ wasmPath: "./ghostty-vt.wasm" });
+  const core = await GhosttyCore.load({ wasmPath: window.MobidexTerminalWasmUrl ?? "./ghostty-vt.wasm" });
   const term = new WTerm(terminalElement, {
     core,
     cols: 80,
