@@ -10,6 +10,7 @@ struct ConversationView: View {
     @State private var attachmentPaths: [String] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isFileImporterPresented = false
+    @State private var attachmentAlert: AttachmentAlert?
     @State private var isTimelineNearBottom = true
     @State private var timelineDistanceFromBottom: CGFloat = 0
     @State private var autoFollowStreaming = true
@@ -60,7 +61,16 @@ struct ConversationView: View {
                 attachmentPaths = []
             }
             .onChange(of: selectedPhotoItems) { _, items in
-                Task { await persistPhotoItems(items) }
+                guard !items.isEmpty else { return }
+                let threadID = model.selectedThreadID
+                Task { await persistPhotoItems(items, selectedThreadID: threadID) }
+            }
+            .alert(item: $attachmentAlert) { alert in
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("OK"))
+                )
             }
             .fileImporter(
                 isPresented: $isFileImporterPresented,
@@ -432,20 +442,27 @@ struct ConversationView: View {
     }
 
     private var attachmentIcon: some View {
-        Menu {
+        HStack(spacing: 8) {
             PhotosPicker(selection: $selectedPhotoItems, matching: .images) {
-                Label("Photos", systemImage: "photo")
+                Image(systemName: "photo")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
             }
+            .accessibilityLabel("Attach Photo")
+            .accessibilityIdentifier("photoAttachmentButton")
+
             Button {
                 isFileImporterPresented = true
             } label: {
-                Label("Files", systemImage: "doc")
+                Image(systemName: "doc")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
             }
-        } label: {
-            Image(systemName: "plus")
-                .font(.title3)
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
+            .buttonStyle(.plain)
+            .accessibilityLabel("Attach File")
+            .accessibilityIdentifier("fileAttachmentButton")
         }
         .accessibilityLabel("Attach")
     }
@@ -514,7 +531,13 @@ struct ConversationView: View {
                     localAttachmentPaths: attachments,
                     queueWhenActive: false
                 )
-                guard sent else { return }
+                guard sent else {
+                    attachmentAlert = AttachmentAlert(
+                        title: "Message Not Sent",
+                        message: model.statusMessage ?? "Mobidex could not send this message."
+                    )
+                    return
+                }
                 if composerText == text, attachmentPaths == attachments {
                     composerText = ""
                     attachmentPaths = []
@@ -586,7 +609,8 @@ struct ConversationView: View {
         }
     }
 
-    private func persistPhotoItems(_ items: [PhotosPickerItem]) async {
+    @MainActor
+    private func persistPhotoItems(_ items: [PhotosPickerItem], selectedThreadID: String?) async {
         var savedPaths: [String] = []
         for item in items {
             guard let data = try? await item.loadTransferable(type: Data.self) else {
@@ -603,15 +627,30 @@ struct ConversationView: View {
                 continue
             }
         }
+        guard model.selectedThreadID == selectedThreadID else {
+            selectedPhotoItems = []
+            return
+        }
         if !savedPaths.isEmpty {
             attachmentPaths.append(contentsOf: savedPaths)
+        } else {
+            attachmentAlert = AttachmentAlert(
+                title: "Photo Not Attached",
+                message: "Mobidex could not read the selected photo."
+            )
         }
+        selectedPhotoItems = []
     }
 
     private func handleImportedFiles(_ result: Result<[URL], Error>) {
         guard case .success(let urls) = result else {
+            attachmentAlert = AttachmentAlert(
+                title: "Files Not Attached",
+                message: "Mobidex could not access the selected files."
+            )
             return
         }
+        var didAttachFile = false
         for url in urls {
             let didStart = url.startAccessingSecurityScopedResource()
             defer {
@@ -626,11 +665,24 @@ struct ConversationView: View {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 try FileManager.default.copyItem(at: url, to: destination)
                 attachmentPaths.append(destination.path)
+                didAttachFile = true
             } catch {
                 continue
             }
         }
+        if !didAttachFile {
+            attachmentAlert = AttachmentAlert(
+                title: "Files Not Attached",
+                message: "Mobidex could not copy the selected files into a readable upload location."
+            )
+        }
     }
+}
+
+private struct AttachmentAlert: Identifiable {
+    var id = UUID()
+    var title: String
+    var message: String
 }
 
 private struct SessionStatusDot: View {

@@ -1,6 +1,10 @@
 package mobidex.android.ui
 
 import android.animation.ValueAnimator
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -36,8 +40,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
@@ -312,13 +318,13 @@ private fun ProjectSessionPane(
             Text(server.endpointLabel, style = MaterialTheme.typography.bodyMedium)
             StatusRow(state)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { model.testSelectedConnection() }) {
-                    Icon(Icons.Default.Check, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Test")
-                }
                 Button(onClick = { model.connectSelectedServer() }) {
                     Text(if (state.connectionState == ServerConnectionState.Connected) "Reconnect Codex" else "Connect Codex")
+                }
+                OutlinedButton(onClick = { model.showTerminalPlaceholder() }) {
+                    Icon(Icons.Default.Description, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Terminal")
                 }
             }
             SecondaryTabRow(selectedTabIndex = mode.ordinal) {
@@ -619,6 +625,7 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
 @Composable
 private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: Modifier = Modifier) {
     var composer by remember { mutableStateOf("") }
+    var attachmentUris by remember(state.selectedThreadID) { mutableStateOf<List<Uri>>(emptyList()) }
     Column(modifier) {
         LazyColumn(Modifier.weight(1f), reverseLayout = false) {
             items(state.pendingApprovals, key = { it.id }) { approval ->
@@ -631,11 +638,18 @@ private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: M
         Composer(
             value = composer,
             onValueChange = { composer = it },
+            attachmentUris = attachmentUris,
+            onAttachmentUrisChange = { attachmentUris = it },
             state = state,
             model = model,
             onSend = {
-                model.sendComposerText(composer)
-                composer = ""
+                val sentText = composer
+                val sentAttachments = attachmentUris
+                model.sendComposerInput(sentText, sentAttachments) { sent ->
+                    if (!sent || composer != sentText || attachmentUris != sentAttachments) return@sendComposerInput
+                    composer = ""
+                    attachmentUris = emptyList()
+                }
             },
         )
     }
@@ -698,15 +712,24 @@ private fun ConversationSectionRow(section: ConversationSection) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun Composer(
     value: String,
     onValueChange: (String) -> Unit,
+    attachmentUris: List<Uri>,
+    onAttachmentUrisChange: (List<Uri>) -> Unit,
     state: MobidexUiState,
     model: AppViewModel,
     onSend: () -> Unit,
 ) {
     var showEffort by remember { mutableStateOf(false) }
     var showAccess by remember { mutableStateOf(false) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isNotEmpty()) onAttachmentUrisChange(attachmentUris + uris)
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) onAttachmentUrisChange(attachmentUris + uris)
+    }
     Column(
         Modifier
             .fillMaxWidth()
@@ -722,7 +745,24 @@ private fun Composer(
             maxLines = 5,
             modifier = Modifier.fillMaxWidth(),
         )
+        if (attachmentUris.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                attachmentUris.forEach { uri ->
+                    AssistChip(
+                        onClick = { onAttachmentUrisChange(attachmentUris - uri) },
+                        label = { Text(uri.lastPathSegment ?: "Attachment", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
+                    )
+                }
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconButton(onClick = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                Icon(Icons.Default.Photo, contentDescription = "Attach Photo")
+            }
+            IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
+                Icon(Icons.Default.InsertDriveFile, contentDescription = "Attach File")
+            }
             Box {
                 AssistChip(onClick = { showAccess = true }, label = { Text(state.selectedAccessMode.label) })
                 DropdownMenu(expanded = showAccess, onDismissRequest = { showAccess = false }) {
@@ -747,7 +787,7 @@ private fun Composer(
             }
             if (state.tokenUsagePercent != null) Text("${state.tokenUsagePercent}%", style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onSend, enabled = value.trim().isNotEmpty() && state.canSendMessage) {
+            IconButton(onClick = onSend, enabled = (value.trim().isNotEmpty() || attachmentUris.isNotEmpty()) && state.canSendMessage) {
                 Icon(Icons.Default.ArrowUpward, contentDescription = "Send")
             }
         }
