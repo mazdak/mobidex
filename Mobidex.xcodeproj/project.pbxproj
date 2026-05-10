@@ -43,6 +43,7 @@
 		E1757AEB23E37E2300CB6932 /* CodexSessionProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55BCBB84C98AA5E8F2995DED /* CodexSessionProjection.swift */; };
 		E8613A97F994AFF88722315D /* MobidexShared.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 036A6139F3DF3BF1127395AD /* MobidexShared.xcframework */; };
 		EA630B6ECD0E0A9C99137981 /* DiffModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FFEE6E89AB7883BE87D5EAA /* DiffModels.swift */; };
+		F0D5B22C61D44BE98B38F001 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0D5B22C61D44BE98B38F000 /* TerminalView.swift */; };
 		F4A7A3770E87E4147A6663BD /* GitDiffParsing.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0F20BD6482ACD9456BFFC9 /* GitDiffParsing.swift */; };
 		F7EC2022662CBC70F41991CA /* SharedKMPBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B866DBC1E7520AE0FE2229 /* SharedKMPBridge.swift */; };
 /* End PBXBuildFile section */
@@ -105,6 +106,7 @@
 		D89135403B0F71480B09E5A6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E2A70EEBAFA590B84DAC2D48 /* ServerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerModels.swift; sourceTree = "<group>"; };
 		EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectionTests.swift; sourceTree = "<group>"; };
+		F0D5B22C61D44BE98B38F000 /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
 		F6A214A65C0D1B8E443F51C0 /* Mobidex.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mobidex.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		FD173BE099A8B5B43F253561 /* ProjectCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCatalog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -134,6 +136,7 @@
 				4B6F945AC3EF7F65796D4359 /* ServerEditorView.swift */,
 				84FDD3A694257EDC18131C08 /* SessionChangesView.swift */,
 				2B4A95D6997F1824BDB826C9 /* SplashView.swift */,
+				F0D5B22C61D44BE98B38F000 /* TerminalView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -433,6 +436,7 @@
 				CC8B7B2C111D4E8D9DD08101 /* SessionListProjection.swift in Sources */,
 				F7EC2022662CBC70F41991CA /* SharedKMPBridge.swift in Sources */,
 				2F63409CB4571EFBEC15FFB8 /* SplashView.swift in Sources */,
+				F0D5B22C61D44BE98B38F001 /* TerminalView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

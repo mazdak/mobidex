@@ -103,7 +103,11 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import mobidex.android.AndroidProjectListSections
 import mobidex.android.AppViewModel
 import mobidex.android.MobidexUiState
@@ -114,6 +118,7 @@ import mobidex.android.model.SSHCredential
 import mobidex.android.model.ServerAuthMethod
 import mobidex.android.model.ServerConnectionState
 import mobidex.android.model.ServerRecord
+import mobidex.android.service.RemoteTerminalSession
 import mobidex.shared.CodexAccessMode
 import mobidex.shared.CodexReasoningEffortOption
 import mobidex.shared.ConversationSection
@@ -298,6 +303,7 @@ private fun ProjectSessionPane(
     var mode by remember { mutableStateOf(ProjectSessionMode.Projects) }
     var search by remember { mutableStateOf("") }
     var showInactive by remember { mutableStateOf(false) }
+    var showTerminal by remember { mutableStateOf(false) }
     val server = state.selectedServer
 
     Column(modifier) {
@@ -321,7 +327,7 @@ private fun ProjectSessionPane(
                 Button(onClick = { model.connectSelectedServer() }) {
                     Text(if (state.connectionState == ServerConnectionState.Connected) "Reconnect Codex" else "Connect Codex")
                 }
-                OutlinedButton(onClick = { model.showTerminalPlaceholder() }) {
+                OutlinedButton(onClick = { showTerminal = true }) {
                     Icon(Icons.Default.Description, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("Terminal")
@@ -334,9 +340,134 @@ private fun ProjectSessionPane(
             }
         }
 
-        when (mode) {
-            ProjectSessionMode.Projects -> ProjectList(state, model, search, showInactive, { search = it }, { showInactive = it }, onOpenDetail)
-            ProjectSessionMode.Sessions -> ThreadList(state, model, onOpenDetail)
+        if (showTerminal) {
+            TerminalPane(
+                state = state,
+                model = model,
+                onClose = { showTerminal = false },
+                modifier = Modifier.weight(1f),
+            )
+        } else {
+            when (mode) {
+                ProjectSessionMode.Projects -> ProjectList(state, model, search, showInactive, { search = it }, { showInactive = it }, onOpenDetail)
+                ProjectSessionMode.Sessions -> ThreadList(state, model, onOpenDetail)
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: () -> Unit, modifier: Modifier = Modifier) {
+    val scope = rememberCoroutineScope()
+    val scrollState = rememberScrollState()
+    var input by remember { mutableStateOf("") }
+    var output by remember { mutableStateOf("Opening terminal...\n") }
+    var terminal by remember { mutableStateOf<RemoteTerminalSession?>(null) }
+
+    LaunchedEffect(state.selectedServer?.id, state.selectedProject?.id, state.selectedThreadID) {
+        output = "Opening terminal...\n"
+        var activeSession: RemoteTerminalSession? = null
+        try {
+            val session = model.openTerminalSession(columns = 80, rows = 24)
+            activeSession = session
+            terminal = session
+            output = ""
+            session.output.collect { chunk ->
+                output = (output + chunk).takeLast(80_000)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            output += "\n${error.message ?: "Terminal failed."}\n"
+        } finally {
+            withContext(NonCancellable) {
+                activeSession?.close()
+            }
+            if (terminal === activeSession) {
+                terminal = null
+            }
+        }
+    }
+
+    LaunchedEffect(output.length) {
+        scrollState.animateScrollTo(scrollState.maxValue)
+    }
+
+    fun send(text: String) {
+        val session = terminal ?: return
+        scope.launch {
+            runCatching { session.write(text) }.onFailure { error ->
+                output += "\n${error.message ?: "Terminal write failed."}\n"
+            }
+        }
+    }
+
+    Column(modifier.background(Color.Black)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Terminal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(state.selectedThread?.cwd ?: state.selectedProject?.path ?: state.selectedServer?.endpointLabel.orEmpty(), style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(onClick = onClose) { Text("Close") }
+        }
+        Text(
+            text = output.ifEmpty { " " },
+            color = Color.White,
+            fontFamily = FontFamily.Monospace,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(scrollState)
+                .padding(12.dp),
+        )
+        FlowRow(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(onClick = { send("\u0003") }, enabled = terminal != null) { Text("Ctrl-C") }
+            OutlinedButton(onClick = { send("\u001B") }, enabled = terminal != null) { Text("Esc") }
+            OutlinedButton(onClick = { send("\t") }, enabled = terminal != null) { Text("Tab") }
+            OutlinedButton(onClick = { output = "" }) { Text("Clear") }
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(">", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                singleLine = true,
+                placeholder = { Text("Input") },
+                modifier = Modifier.weight(1f),
+            )
+            Button(
+                onClick = {
+                    if (input.isEmpty()) return@Button
+                    val submitted = input
+                    input = ""
+                    send("$submitted\n")
+                },
+                enabled = input.isNotEmpty() && terminal != null,
+            ) {
+                Text("Send")
+            }
         }
     }
 }

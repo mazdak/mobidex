@@ -100,6 +100,20 @@ private enum AppViewModelError: LocalizedError {
     }
 }
 
+private enum TerminalSessionError: LocalizedError {
+    case missingServer
+    case unsupportedBackend
+
+    var errorDescription: String? {
+        switch self {
+        case .missingServer:
+            "Select a server before opening a terminal."
+        case .unsupportedBackend:
+            "Terminal sessions are not available for this SSH backend."
+        }
+    }
+}
+
 private struct ThreadLoadScope: Equatable {
     var serverID: UUID?
     var projectID: UUID?
@@ -775,6 +789,26 @@ final class AppViewModel: ObservableObject {
         await runOperation(.discoveringProjects, status: "Discovering projects") {
             let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
             try await refreshProjectsUsingCredential(credential, server: selectedServer, syncActiveChatCounts: true)
+        }
+    }
+
+    func openTerminalSession(columns: Int = 80, rows: Int = 24) async throws -> RemoteTerminalSession {
+        guard let selectedServer else {
+            throw TerminalSessionError.missingServer
+        }
+        guard let terminalService = sshService as? TerminalSSHService else {
+            throw TerminalSessionError.unsupportedBackend
+        }
+        do {
+            statusMessage = "Opening terminal"
+            let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
+            let cwd = selectedThread?.cwd ?? selectedProject?.path
+            let session = try await terminalService.openTerminal(cwd: cwd, columns: columns, rows: rows, server: selectedServer, credential: credential)
+            statusMessage = nil
+            return session
+        } catch {
+            statusMessage = error.localizedDescription
+            throw error
         }
     }
 

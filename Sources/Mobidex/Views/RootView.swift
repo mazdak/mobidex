@@ -159,6 +159,7 @@ struct ProjectSessionListView: View {
     @State private var projectSearchText = ""
     @State private var showInactiveDiscoveredProjects = false
     @State private var isSessionRefreshRequested = false
+    @State private var showingTerminal = false
 
     var body: some View {
         Group {
@@ -191,10 +192,7 @@ struct ProjectSessionListView: View {
                             }
                             .accessibilityIdentifier("connectButton")
                             Button {
-                                model.statusAlert = StatusAlert(
-                                    title: "Terminal Coming Soon",
-                                    message: "The terminal entry point is in place. The PTY transport and WebView terminal renderer are not wired yet."
-                                )
+                                showingTerminal = true
                             } label: {
                                 Label("Terminal", systemImage: "terminal")
                             }
@@ -288,6 +286,10 @@ struct ProjectSessionListView: View {
                             }
                         }
                     }
+                }
+                .sheet(isPresented: $showingTerminal) {
+                    TerminalView()
+                        .environmentObject(model)
                 }
                 .searchable(text: $projectSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search Projects")
                 .onChange(of: projectSearchText) { _, newValue in

@@ -58,6 +58,17 @@ protocol SSHService: Sendable {
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient
 }
 
+protocol RemoteTerminalSession: AnyObject, Sendable {
+    var output: AsyncThrowingStream<Data, Error> { get }
+    func write(_ data: Data) async throws
+    func resize(columns: Int, rows: Int) async throws
+    func close() async
+}
+
+protocol TerminalSSHService: SSHService {
+    func openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential) async throws -> RemoteTerminalSession
+}
+
 enum SSHServiceError: LocalizedError {
     case missingPassword
     case missingPrivateKey
@@ -119,7 +130,7 @@ enum SSHServiceError: LocalizedError {
     }
 }
 
-final class CitadelSSHService: SSHService {
+final class CitadelSSHService: TerminalSSHService {
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws {
         try await withClient(server: server, credential: credential) { client in
             _ = try await client.executeCommand("printf mobidex-ready", maxResponseSize: 1_024, mergeStreams: true)
@@ -191,6 +202,16 @@ final class CitadelSSHService: SSHService {
                 try? await sftp.close()
                 throw error
             }
+        }
+    }
+
+    func openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential) async throws -> RemoteTerminalSession {
+        let client = try await connect(server: server, credential: credential)
+        do {
+            return try await CitadelTerminalSession.open(client: client, cwd: cwd, columns: columns, rows: rows)
+        } catch {
+            try? await client.close()
+            throw mapSSHError(error, server: server, operation: .command)
         }
     }
 
@@ -274,6 +295,159 @@ final class CitadelSSHService: SSHService {
         }
     }
 
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+
+    func shellQuotedForRemoteCommand() -> String {
+        "'\(replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+    }
+}
+
+private struct TerminalSize: Sendable {
+    var columns: Int
+    var rows: Int
+}
+
+private final class CitadelTerminalSession: RemoteTerminalSession, @unchecked Sendable {
+    let output: AsyncThrowingStream<Data, Error>
+
+    private let client: SSHClient
+    private let ready = ReadySignal()
+    private let outputContinuation: AsyncThrowingStream<Data, Error>.Continuation
+    private let inputBytes: AsyncStream<Data>
+    private let inputContinuation: AsyncStream<Data>.Continuation
+    private let resizeRequests: AsyncStream<TerminalSize>
+    private let resizeContinuation: AsyncStream<TerminalSize>.Continuation
+    private var task: Task<Void, Never>?
+
+    private init(client: SSHClient) {
+        self.client = client
+
+        let output = AsyncThrowingStream<Data, Error>.makeStream()
+        self.output = output.stream
+        outputContinuation = output.continuation
+
+        let input = AsyncStream<Data>.makeStream()
+        inputBytes = input.stream
+        inputContinuation = input.continuation
+
+        let resize = AsyncStream<TerminalSize>.makeStream()
+        resizeRequests = resize.stream
+        resizeContinuation = resize.continuation
+    }
+
+    static func open(client: SSHClient, cwd: String?, columns: Int, rows: Int) async throws -> CitadelTerminalSession {
+        let session = CitadelTerminalSession(client: client)
+        let ready = session.ready
+        let outputContinuation = session.outputContinuation
+        let inputBytes = session.inputBytes
+        let inputContinuation = session.inputContinuation
+        let resizeRequests = session.resizeRequests
+        let resizeContinuation = session.resizeContinuation
+
+        session.task = Task {
+            do {
+                try await client.withPTY(
+                    SSHChannelRequestEvent.PseudoTerminalRequest(
+                        wantReply: true,
+                        term: "xterm-256color",
+                        terminalCharacterWidth: columns,
+                        terminalRowHeight: rows,
+                        terminalPixelWidth: 0,
+                        terminalPixelHeight: 0,
+                        terminalModes: .init([.ECHO: 1])
+                    )
+                ) { inbound, outbound in
+                    await ready.succeed()
+                    if let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty {
+                        try await outbound.write(ByteBuffer(string: "cd \(cwd.shellQuotedForRemoteCommand())\n"))
+                    }
+
+                    let writer = Task {
+                        do {
+                            for await data in inputBytes {
+                                var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+                                buffer.writeBytes(data)
+                                try await outbound.write(buffer)
+                            }
+                        } catch {
+                            inputContinuation.finish()
+                            outputContinuation.finish(throwing: error)
+                        }
+                    }
+                    let resizer = Task {
+                        do {
+                            for await size in resizeRequests {
+                                try await outbound.changeSize(cols: size.columns, rows: size.rows, pixelWidth: 0, pixelHeight: 0)
+                            }
+                        } catch {
+                            resizeContinuation.finish()
+                        }
+                    }
+                    defer {
+                        writer.cancel()
+                        resizer.cancel()
+                    }
+
+                    for try await output in inbound {
+                        var buffer: ByteBuffer
+                        switch output {
+                        case .stdout(let stdout):
+                            buffer = stdout
+                        case .stderr(let stderr):
+                            buffer = stderr
+                        }
+                        if let bytes = buffer.readBytes(length: buffer.readableBytes), !bytes.isEmpty {
+                            outputContinuation.yield(Data(bytes))
+                        }
+                    }
+                    inputContinuation.finish()
+                    resizeContinuation.finish()
+                    outputContinuation.finish()
+                }
+            } catch {
+                await ready.fail(error)
+                inputContinuation.finish()
+                resizeContinuation.finish()
+                outputContinuation.finish(throwing: error)
+            }
+            try? await client.close()
+        }
+
+        do {
+            try await withTaskCancellationHandler {
+                try await session.ready.wait()
+            } onCancel: {
+                Task {
+                    await session.close()
+                }
+            }
+        } catch {
+            await session.close()
+            throw error
+        }
+        return session
+    }
+
+    func write(_ data: Data) async throws {
+        inputContinuation.yield(data)
+    }
+
+    func resize(columns: Int, rows: Int) async throws {
+        resizeContinuation.yield(TerminalSize(columns: columns, rows: rows))
+    }
+
+    func close() async {
+        inputContinuation.finish()
+        resizeContinuation.finish()
+        task?.cancel()
+        try? await client.close()
+        outputContinuation.finish()
+    }
 }
 
 private final class PinnedHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
