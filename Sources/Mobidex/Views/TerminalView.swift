@@ -204,7 +204,7 @@ private struct TerminalWebView: UIViewRepresentable {
         webView.scrollView.backgroundColor = .black
         webView.scrollView.keyboardDismissMode = .interactive
 
-        if let html = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "TerminalWeb") {
+        if let html = Bundle.main.url(forResource: "index-ios", withExtension: "html", subdirectory: "TerminalWeb") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         } else {
             onError("Terminal web assets are missing from the app bundle.")

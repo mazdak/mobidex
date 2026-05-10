@@ -8,10 +8,13 @@ const dist = resolve(root, "dist");
 const iosTarget = resolve(repo, "Sources/Mobidex/TerminalWeb");
 const androidTarget = resolve(repo, "android-app/src/main/assets/terminal");
 
-async function copyDist(target: string) {
+async function copyDist(target: string, options: { includeIosEntry?: boolean } = {}) {
   await rm(target, { force: true, recursive: true });
   await mkdir(target, { recursive: true });
   await cp(dist, target, { recursive: true });
+  if (!options.includeIosEntry) {
+    await rm(resolve(target, "index-ios.html"), { force: true });
+  }
 }
 
 await rm(dist, { force: true, recursive: true });
@@ -39,5 +42,21 @@ await cp(
   resolve(dist, "ghostty-vt.wasm"),
 );
 
-await copyDist(iosTarget);
+const [html, css, js] = await Promise.all([
+  Bun.file(resolve(dist, "index.html")).text(),
+  Bun.file(resolve(dist, "mobidex-terminal.css")).text(),
+  Bun.file(resolve(dist, "mobidex-terminal.js")).text(),
+]);
+const inlineHtml = html
+  .replace(
+    '    <link rel="stylesheet" href="./mobidex-terminal.css" />',
+    `    <style>${css}</style>`,
+  )
+  .replace(
+    '    <script type="module" src="./mobidex-terminal.js"></script>',
+    `    <script type="module">${js}</script>`,
+  );
+await Bun.write(resolve(dist, "index-ios.html"), inlineHtml);
+
+await copyDist(iosTarget, { includeIosEntry: true });
 await copyDist(androidTarget);
