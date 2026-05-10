@@ -625,7 +625,7 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
 @Composable
 private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: Modifier = Modifier) {
     var composer by remember { mutableStateOf("") }
-    var attachmentUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var attachmentUris by remember(state.selectedThreadID) { mutableStateOf<List<Uri>>(emptyList()) }
     Column(modifier) {
         LazyColumn(Modifier.weight(1f), reverseLayout = false) {
             items(state.pendingApprovals, key = { it.id }) { approval ->

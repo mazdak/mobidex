@@ -120,6 +120,7 @@ data class AndroidProjectListSections(
 }
 
 class AppViewModel(
+    context: Context,
     private val repository: ServerRepository,
     private val credentialStore: CredentialStore,
     private val hostKeyStore: HostKeyStore,
@@ -1250,10 +1251,12 @@ class AppViewModel(
     class Factory(private val context: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
-            val hostKeyStore = SharedPreferencesHostKeyStore(context)
+            val appContext = context.applicationContext
+            val hostKeyStore = SharedPreferencesHostKeyStore(appContext)
             return AppViewModel(
-                repository = SharedPreferencesServerRepository(context),
-                credentialStore = AndroidCredentialStore(context),
+                context = appContext,
+                repository = SharedPreferencesServerRepository(appContext),
+                credentialStore = AndroidCredentialStore(appContext),
                 hostKeyStore = hostKeyStore,
                 sshService = SshjMobidexSshService(hostKeyStore),
             ) as T
