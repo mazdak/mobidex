@@ -38,6 +38,10 @@ if (!result.success) {
 
 await cp(resolve(root, "src/index.html"), resolve(dist, "index.html"));
 await cp(
+  resolve(root, "src/fonts/AdwaitaMonoNerdFont-LICENSE.txt"),
+  resolve(dist, "AdwaitaMonoNerdFont-LICENSE.txt"),
+);
+await cp(
   resolve(root, "node_modules/@wterm/ghostty/wasm/ghostty-vt.wasm"),
   resolve(dist, "ghostty-vt.wasm"),
 );
