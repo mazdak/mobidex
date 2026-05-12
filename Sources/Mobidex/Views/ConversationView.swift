@@ -93,16 +93,6 @@ struct ConversationView: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button {
-                Task { await model.startNewSession() }
-            } label: {
-                Image(systemName: "plus.bubble")
-            }
-            .buttonStyle(.bordered)
-            .disabled(!model.canCreateSession)
-            .accessibilityLabel("New Session")
-            .accessibilityHint(model.canCreateSession ? "Creates a Codex session for this project." : "Select a project and connect to the server before creating a session.")
-            .accessibilityIdentifier("newSessionButton")
             if model.canInterruptActiveTurn {
                 Button {
                     Task { await model.interruptActiveTurn() }
@@ -135,15 +125,6 @@ struct ConversationView: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button {
-                Task { await model.startNewSession() }
-            } label: {
-                Label("New Session", systemImage: "plus.bubble")
-            }
-            .buttonStyle(.bordered)
-            .disabled(!model.canCreateSession)
-            .accessibilityHint(model.canSendMessage ? "Creates a Codex session for this project." : "Connect to the server before creating a session.")
-            .accessibilityIdentifier("newSessionButton")
         }
         .padding()
     }
@@ -364,12 +345,7 @@ struct ConversationView: View {
                     attachmentStrip
                 }
 
-                ViewThatFits(in: .horizontal) {
-                    composerControlRow(showModelReasoning: true, showAccessText: true)
-                    composerControlRow(showModelReasoning: false, showAccessText: true)
-                    compactComposerControlRow
-                    minimalComposerControlRow
-                }
+                composerControlRow
             }
             .padding(.horizontal, 18)
             .padding(.top, 14)
@@ -386,55 +362,46 @@ struct ConversationView: View {
     }
 
     private var sendDisabled: Bool {
-        (composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachmentPaths.isEmpty)
-            || !model.canSendMessage
+        !hasComposerInput || !model.canSendMessage
     }
 
     private var sendButtonBackground: Color {
-        sendDisabled ? Color.secondary.opacity(0.45) : Color.accentColor
+        sendVisuallyUnavailable ? Color.secondary.opacity(0.45) : Color.accentColor
     }
 
-    private func composerControlRow(showModelReasoning: Bool, showAccessText: Bool) -> some View {
-        HStack(spacing: showAccessText ? 14 : 12) {
+    private var hasComposerInput: Bool {
+        !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentPaths.isEmpty
+    }
+
+    private var sendVisuallyUnavailable: Bool {
+        !hasComposerInput || model.connectionState != .connected || model.isSelectedThreadLoading
+    }
+
+    private var composerControlRow: some View {
+        HStack(spacing: 8) {
             attachmentIcon
 
-            accessLabel(showText: showAccessText)
+            accessLabel
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
 
-            if shouldShowContextIndicator {
-                contextIndicator
-            }
-
-            modelLabel(showReasoning: showModelReasoning)
-
-            sendButton
+            composerTrailingControls
         }
     }
 
-    private var compactComposerControlRow: some View {
-        HStack(spacing: 12) {
-            attachmentIcon
-
-            accessLabel(showText: false)
-
-            Spacer(minLength: 6)
-
-            if shouldShowContextIndicator {
-                contextIndicator
+    private var composerTrailingControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                if shouldShowContextIndicator {
+                    contextIndicator
+                }
+                modelLabel
+                sendButton
             }
-            modelLabel(showReasoning: false)
-
-            sendButton
-        }
-    }
-
-    private var minimalComposerControlRow: some View {
-        HStack(spacing: 12) {
-            attachmentIcon
-
-            Spacer(minLength: 0)
-
+            HStack(spacing: 8) {
+                modelLabel
+                sendButton
+            }
             sendButton
         }
     }
@@ -445,7 +412,7 @@ struct ConversationView: View {
                 Image(systemName: "photo")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 32, height: 32)
             }
             .accessibilityLabel("Attach Photo")
             .accessibilityIdentifier("photoAttachmentButton")
@@ -456,7 +423,7 @@ struct ConversationView: View {
                 Image(systemName: "doc")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 32, height: 32)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Attach File")
@@ -465,7 +432,7 @@ struct ConversationView: View {
         .accessibilityLabel("Attach")
     }
 
-    private func accessLabel(showText: Bool) -> some View {
+    private var accessLabel: some View {
         Menu {
             ForEach(CodexAccessMode.allCases) { mode in
                 Button {
@@ -479,21 +446,16 @@ struct ConversationView: View {
                 }
             }
         } label: {
-            Label {
-                if showText {
-                    Text(model.selectedAccessMode.label)
-                }
-            } icon: {
-                Image(systemName: model.selectedAccessMode.systemImage)
-            }
+            Image(systemName: model.selectedAccessMode.systemImage)
+                .font(.title3)
+                .frame(width: 32, height: 32)
         }
         .font(.subheadline)
         .foregroundStyle(.orange)
-        .disabled(model.selectedThread?.status.isActive == true)
         .accessibilityLabel("Next turn access mode \(model.selectedAccessMode.label)")
     }
 
-    private func modelLabel(showReasoning: Bool) -> some View {
+    private var modelLabel: some View {
         Menu {
             ForEach(CodexReasoningEffortOption.allCases) { effort in
                 Button {
@@ -512,46 +474,20 @@ struct ConversationView: View {
             HStack(spacing: 6) {
                 Text("5.5")
                     .fontWeight(.medium)
-                if showReasoning {
-                    Text(model.selectedReasoningEffort.label)
-                        .foregroundStyle(.secondary)
-                }
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
+            .frame(minWidth: 44, minHeight: 32)
         }
         .font(.subheadline)
         .foregroundStyle(.primary)
-        .disabled(model.selectedThread?.status.isActive == true)
         .accessibilityLabel("Model GPT-5.5 next turn reasoning \(model.selectedReasoningEffort.label)")
     }
 
     private var sendButton: some View {
         Button {
-            let text = composerText
-            let attachments = attachmentPaths
-            isComposerFocused = false
-            model.requestConversationSendScroll()
-            Task {
-                let sent = await model.sendComposerInput(
-                    text: text,
-                    localAttachmentPaths: attachments,
-                    queueWhenActive: false
-                )
-                guard sent else {
-                    attachmentAlert = AttachmentAlert(
-                        title: "Message Not Sent",
-                        message: model.statusMessage ?? "Mobidex could not send this message."
-                    )
-                    return
-                }
-                if composerText == text, attachmentPaths == attachments {
-                    composerText = ""
-                    attachmentPaths = []
-                    selectedPhotoItems = []
-                }
-            }
+            submitComposerInput(queueWhenActive: false)
         } label: {
             Image(systemName: "arrow.up")
                 .font(.title3.weight(.semibold))
@@ -561,8 +497,41 @@ struct ConversationView: View {
         }
         .buttonStyle(.plain)
         .disabled(sendDisabled)
+        .contextMenu {
+            if model.selectedThread?.status.isActive == true {
+                Button("Send as Follow-up") {
+                    submitComposerInput(queueWhenActive: true)
+                }
+            }
+        }
         .accessibilityLabel("Send")
         .accessibilityIdentifier("sendButton")
+    }
+
+    private func submitComposerInput(queueWhenActive: Bool) {
+        let text = composerText
+        let attachments = attachmentPaths
+        isComposerFocused = false
+        model.requestConversationSendScroll()
+        Task {
+            let sent = await model.sendComposerInput(
+                text: text,
+                localAttachmentPaths: attachments,
+                queueWhenActive: queueWhenActive
+            )
+            guard sent else {
+                attachmentAlert = AttachmentAlert(
+                    title: "Message Not Sent",
+                    message: model.statusMessage ?? "Mobidex could not send this message."
+                )
+                return
+            }
+            if composerText == text, attachmentPaths == attachments {
+                composerText = ""
+                attachmentPaths = []
+                selectedPhotoItems = []
+            }
+        }
     }
 
     private var contextIndicator: some View {

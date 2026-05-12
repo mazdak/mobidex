@@ -17,7 +17,9 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -53,6 +55,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -239,7 +242,7 @@ private fun CompactMobidexApp(
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                0 -> ServerPane(state, model, onAddServer, onEditServer, Modifier.fillMaxSize())
+                0 -> ServerPane(state, model, onAddServer, onEditServer, Modifier.fillMaxSize(), onOpenProjects = { tab = 1 })
                 1 -> ProjectSessionPane(state, model, onAddProject, Modifier.fillMaxSize(), onOpenDetail = { tab = 2 })
                 else -> ConversationPane(state, model, Modifier.fillMaxSize())
             }
@@ -261,6 +264,7 @@ private fun ServerPane(
     onAddServer: () -> Unit,
     onEditServer: (ServerRecord) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenProjects: () -> Unit = {},
 ) {
     Column(modifier) {
         PaneHeader("Servers", Icons.Default.Storage) {
@@ -290,11 +294,14 @@ private fun ServerPane(
                             .background(if (server.id == state.selectedServerID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
                     )
                     TextButton(
-                        onClick = { model.selectServer(server.id) },
+                        onClick = {
+                            model.selectServerAndConnect(server.id)
+                            onOpenProjects()
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                    Text("Select")
-                }
+                        Text("Select")
+                    }
                     HorizontalDivider()
                 }
             }
@@ -319,6 +326,9 @@ private fun ProjectSessionPane(
 
     Column(modifier) {
         PaneHeader(server?.displayName ?: "Mobidex", Icons.Default.FolderOpen) {
+            IconButton(onClick = { model.startNewSession() }, enabled = state.canCreateSession) {
+                Icon(Icons.Default.Add, contentDescription = "New Session")
+            }
             IconButton(onClick = { model.refreshProjects() }, enabled = server != null && state.connectionState == ServerConnectionState.Connected) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh Projects")
             }
@@ -360,7 +370,7 @@ private fun ProjectSessionPane(
             )
         } else {
             when (mode) {
-                ProjectSessionMode.Projects -> ProjectList(state, model, search, showInactive, { search = it }, { showInactive = it }, onOpenDetail)
+                ProjectSessionMode.Projects -> ProjectList(state, model, search, showInactive, { search = it }, { showInactive = it }, onOpenSessions = { mode = ProjectSessionMode.Sessions })
                 ProjectSessionMode.Sessions -> ThreadList(state, model, onOpenDetail)
             }
         }
@@ -580,7 +590,7 @@ private fun ProjectList(
     showInactive: Boolean,
     onSearchChange: (String) -> Unit,
     onShowInactiveChange: (Boolean) -> Unit,
-    onOpenDetail: () -> Unit,
+    onOpenSessions: () -> Unit,
 ) {
     val sections = model.projectSections(search, showInactive, state.showsArchivedSessions)
     val contentIsLoading = state.isDiscoveringProjects
@@ -618,9 +628,8 @@ private fun ProjectList(
             )
         }
         LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
-            section("Favorites", sections.favorites) { ProjectRow(it, state, model, onOpenDetail, enabled = !contentIsLoading) }
-            section(sections.discoveredTitle, sections.discovered) { ProjectRow(it, state, model, onOpenDetail, enabled = !contentIsLoading) }
-            section("Added", sections.added) { ProjectRow(it, state, model, onOpenDetail, enabled = !contentIsLoading) }
+            section("Favorites", sections.favorites) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
+            section(sections.discoveredTitle, sections.discovered) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
             if (sections.isEmpty) {
                 item { EmptyState(projectEmptyTitle(state, sections, search), "Connect or add a project path.", Icons.Default.Folder) }
             }
@@ -725,18 +734,25 @@ internal fun projectSupportingLabels(project: ProjectRecord): List<String> {
 
 @Composable
 private fun ThreadList(state: MobidexUiState, model: AppViewModel, onOpenDetail: () -> Unit) {
-    if (state.threads.isEmpty()) {
-        EmptyState(
-            sessionEmptyTitle(state),
-            "Sessions from CLI, VS Code, exec, and app-server sources appear here.",
-            Icons.Default.Description,
+    val contentAlpha = if (state.isRefreshingSessions) 0.42f else 1f
+    Column(Modifier.fillMaxSize()) {
+        FilterChip(
+            selected = state.showsArchivedSessions,
+            onClick = { model.setShowsArchivedSessions(!state.showsArchivedSessions) },
+            enabled = !state.isRefreshingSessions,
+            label = { Text("Show archived sessions") },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).graphicsLayer { alpha = contentAlpha },
         )
-    } else {
-        val contentAlpha = if (state.isRefreshingSessions) 0.42f else 1f
-        Column(Modifier.fillMaxSize()) {
-            if (state.isRefreshingSessions) {
-                LoadingListStatusRow("Loading sessions...")
-            }
+        if (state.isRefreshingSessions) {
+            LoadingListStatusRow("Loading sessions...")
+        }
+        if (state.threads.isEmpty()) {
+            EmptyState(
+                sessionEmptyTitle(state),
+                "Sessions from CLI, VS Code, exec, and app-server sources appear here.",
+                Icons.Default.Description,
+            )
+        } else {
             LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
                 items(state.threads, key = { it.id }) { thread ->
                     ListItem(
@@ -872,11 +888,6 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
             Text(project.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Button(onClick = { model.startNewSession() }, enabled = state.canCreateSession) {
-            Icon(Icons.Default.Add, contentDescription = null)
-            Spacer(Modifier.width(6.dp))
-            Text("New Session")
-        }
     }
     HorizontalDivider()
 }
@@ -904,7 +915,16 @@ private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: M
             onSend = {
                 val sentText = composer
                 val sentAttachments = attachmentUris
-                model.sendComposerInput(sentText, sentAttachments) { sent ->
+                model.sendComposerInput(sentText, sentAttachments, queueWhenActive = false) { sent ->
+                    if (!sent || composer != sentText || attachmentUris != sentAttachments) return@sendComposerInput
+                    composer = ""
+                    attachmentUris = emptyList()
+                }
+            },
+            onSendFollowUp = {
+                val sentText = composer
+                val sentAttachments = attachmentUris
+                model.sendComposerInput(sentText, sentAttachments, queueWhenActive = true) { sent ->
                     if (!sent || composer != sentText || attachmentUris != sentAttachments) return@sendComposerInput
                     composer = ""
                     attachmentUris = emptyList()
@@ -980,9 +1000,12 @@ private fun Composer(
     state: MobidexUiState,
     model: AppViewModel,
     onSend: () -> Unit,
+    onSendFollowUp: () -> Unit,
 ) {
     var showEffort by remember { mutableStateOf(false) }
     var showAccess by remember { mutableStateOf(false) }
+    var showSendOptions by remember { mutableStateOf(false) }
+    val sendEnabled = (value.trim().isNotEmpty() || attachmentUris.isNotEmpty()) && state.canSendMessage
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) onAttachmentUrisChange(attachmentUris + uris)
     }
@@ -1023,7 +1046,9 @@ private fun Composer(
                 Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = "Attach File")
             }
             Box {
-                AssistChip(onClick = { showAccess = true }, label = { Text(state.selectedAccessMode.label) })
+                IconButton(onClick = { showAccess = true }) {
+                    Icon(state.selectedAccessMode.icon, contentDescription = "Next turn access mode ${state.selectedAccessMode.label}")
+                }
                 DropdownMenu(expanded = showAccess, onDismissRequest = { showAccess = false }) {
                     CodexAccessMode.entries.forEach { mode ->
                         DropdownMenuItem(
@@ -1058,12 +1083,60 @@ private fun Composer(
             }
             if (state.tokenUsagePercent != null) Text("${state.tokenUsagePercent}%", style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = onSend, enabled = (value.trim().isNotEmpty() || attachmentUris.isNotEmpty()) && state.canSendMessage) {
-                Icon(Icons.Default.ArrowUpward, contentDescription = "Send")
+            Box {
+                SendIconButton(
+                    enabled = sendEnabled,
+                    activeTurn = state.selectedThread?.status?.isActive == true,
+                    onSend = onSend,
+                    onShowOptions = { showSendOptions = true },
+                )
+                DropdownMenu(expanded = showSendOptions, onDismissRequest = { showSendOptions = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Send as Follow-up") },
+                        onClick = {
+                            showSendOptions = false
+                            onSendFollowUp()
+                        },
+                    )
+                }
             }
         }
     }
 }
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SendIconButton(
+    enabled: Boolean,
+    activeTurn: Boolean,
+    onSend: () -> Unit,
+    onShowOptions: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .combinedClickable(
+                enabled = enabled,
+                onClick = onSend,
+                onLongClick = { if (activeTurn) onShowOptions() },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Default.ArrowUpward,
+            contentDescription = "Send",
+            tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+        )
+    }
+}
+
+private val CodexAccessMode.icon: ImageVector
+    get() = when (this) {
+        CodexAccessMode.FullAccess -> Icons.Default.Security
+        CodexAccessMode.WorkspaceWrite -> Icons.Default.Folder
+        CodexAccessMode.ReadOnly -> Icons.Default.Visibility
+    }
 
 @Composable
 private fun ChangesView(state: MobidexUiState, model: AppViewModel, modifier: Modifier = Modifier) {

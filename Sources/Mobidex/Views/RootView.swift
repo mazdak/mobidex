@@ -159,6 +159,7 @@ struct ProjectSessionListView: View {
     @State private var projectSearchText = ""
     @State private var showInactiveDiscoveredProjects = false
     @State private var isSessionRefreshRequested = false
+    @State private var skipNextAllSessionsRefresh = false
     @State private var showingTerminal = false
 
     var body: some View {
@@ -257,16 +258,6 @@ struct ProjectSessionListView: View {
                             .opacity(contentOpacity)
                         }
 
-                        if !sections.added.isEmpty {
-                            Section("Added") {
-                                ForEach(sections.added) { project in
-                                    projectRow(project)
-                                }
-                            }
-                            .disabled(contentIsLoading)
-                            .opacity(contentOpacity)
-                        }
-
                         if sections.isEmpty {
                             Section {
                                 ContentUnavailableView(
@@ -278,6 +269,13 @@ struct ProjectSessionListView: View {
                             }
                         }
                     case .sessions:
+                        Section {
+                            Toggle("Show archived sessions", isOn: $model.showsArchivedSessions)
+                                .font(.subheadline)
+                        }
+                        .disabled(contentIsLoading)
+                        .opacity(contentOpacity)
+
                         ForEach(model.sessionSections) { sessionSection in
                             Section(sessionSection.title) {
                                 ForEach(sessionSection.threads) { thread in
@@ -318,6 +316,10 @@ struct ProjectSessionListView: View {
                 }
                 .onChange(of: selectedMode) { _, newValue in
                     guard newValue == .sessions else { return }
+                    if skipNextAllSessionsRefresh {
+                        skipNextAllSessionsRefresh = false
+                        return
+                    }
                     isSessionRefreshRequested = true
                     Task {
                         await model.selectAllSessionsAndRefresh()
@@ -334,6 +336,15 @@ struct ProjectSessionListView: View {
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            Task { await model.startNewSession() }
+                        } label: {
+                            Image(systemName: "plus.bubble")
+                        }
+                        .disabled(!model.canCreateSession)
+                        .accessibilityLabel("New Session")
+                        .accessibilityIdentifier("newSessionButton")
+
                         Button {
                             Task { await model.refreshProjects() }
                         } label: {
@@ -435,7 +446,12 @@ struct ProjectSessionListView: View {
     private func projectRow(_ project: ProjectRecord) -> some View {
         Button {
             model.selectProject(project.id)
-            promoteDetailIfCompact()
+            if selectedMode == .sessions {
+                skipNextAllSessionsRefresh = false
+            } else {
+                skipNextAllSessionsRefresh = true
+                selectedMode = .sessions
+            }
             Task { await model.refreshThreads() }
         } label: {
             ProjectRow(project: project, selected: project.id == model.selectedProjectID)

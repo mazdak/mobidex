@@ -575,7 +575,7 @@ final class AppViewModel: ObservableObject {
             return false
         }
 
-        let project = ProjectRecord(path: trimmed)
+        let project = ProjectRecord(path: trimmed, isFavorite: true)
         nextServers[index].projects.append(project)
         nextServers[index].updatedAt = .now
 
@@ -585,7 +585,7 @@ final class AppViewModel: ObservableObject {
             isShowingAllSessions = false
             selectedProjectID = project.id
             resetSessionState(clearThreads: true)
-            statusMessage = "Added \(project.displayName)."
+            statusMessage = "Saved \(project.displayName) as a favorite."
             return true
         } catch {
             statusMessage = error.localizedDescription

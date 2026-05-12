@@ -99,7 +99,7 @@ data class MobidexUiState(
         get() = selectedServer?.projects?.firstOrNull { it.id == selectedProjectID }
 
     val canSendMessage: Boolean
-        get() = connectionState == ServerConnectionState.Connected && !isBusy
+        get() = connectionState == ServerConnectionState.Connected
 
     val canCreateSession: Boolean
         get() = connectionState == ServerConnectionState.Connected && !isBusy
@@ -135,6 +135,8 @@ class AppViewModel(
     private var diffSnapshotRequestID = 0L
     private var activeSessionRefreshes = 0
     private var sessionRefreshGeneration = 0L
+    private var isSendingInput = false
+    private val queuedTurnInputsByThreadID = mutableMapOf<String, MutableList<List<CodexInputItem>>>()
     private val appContext = context.applicationContext
 
     init {
@@ -162,6 +164,19 @@ class AppViewModel(
                 statusMessage = null,
                 tokenUsagePercent = null,
             )
+        }
+    }
+
+    fun selectServerAndConnect(serverID: String?) {
+        viewModelScope.launch {
+            val state = _state.value
+            if (state.selectedServerID == serverID && state.connectionState == ServerConnectionState.Connected) return@launch
+            if (state.connectionState == ServerConnectionState.Connected || state.connectionState == ServerConnectionState.Connecting) {
+                disconnectInternal(updateState = false)
+                _state.update { it.copy(connectionState = ServerConnectionState.Disconnected) }
+            }
+            selectServer(serverID)
+            connectSelectedServer()
         }
     }
 
@@ -312,7 +327,7 @@ class AppViewModel(
                 val state = _state.value
                 val server = state.selectedServer ?: error("Select a server before adding a project.")
                 require(server.projects.none { it.path == trimmed }) { "That project is already saved." }
-                val project = ProjectRecord(path = trimmed)
+                val project = ProjectRecord(path = trimmed, isFavorite = true)
                 val updatedServer = server.copy(projects = server.projects + project, updatedAtEpochSeconds = Instant.now().epochSecond)
                 val updated = state.servers.upsert(updatedServer)
                 repository.saveServers(updated)
@@ -326,7 +341,7 @@ class AppViewModel(
                         conversationSections = emptyList(),
                         diffSnapshot = GitDiffSnapshot.Empty,
                         tokenUsagePercent = null,
-                        statusMessage = "Added ${project.displayName}.",
+                        statusMessage = "Saved ${project.displayName} as a favorite.",
                     )
                 }
             }
@@ -526,7 +541,7 @@ class AppViewModel(
                 val requestServerID = state.selectedServerID
                 val requestProjectID = state.selectedProjectID
                 val requestThreadID = state.selectedThreadID
-                val cwd = state.selectedProject?.path ?: return@runBusy
+                val cwd = state.selectedProject?.path ?: state.selectedThread?.cwd ?: return@runBusy
                 val thread = client.startThread(cwd)
                 hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID)
                 _state.update { current ->
@@ -545,60 +560,91 @@ class AppViewModel(
         sendComposerInput(text, emptyList(), onComplete = {})
     }
 
-    fun sendComposerInput(text: String, attachmentUris: List<Uri>, onComplete: (Boolean) -> Unit = {}) {
+    fun sendComposerInput(text: String, attachmentUris: List<Uri>, queueWhenActive: Boolean = false, onComplete: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             val trimmed = text.trim()
             if (trimmed.isEmpty() && attachmentUris.isEmpty()) {
                 onComplete(false)
                 return@launch
             }
+            if (isSendingInput) {
+                onComplete(false)
+                return@launch
+            }
+            isSendingInput = true
             var didSubmitInput = false
-            runBusy(if (attachmentUris.isEmpty()) "Sending" else "Uploading attachments") {
-                val client = appServer ?: error("Connect to the app-server before sending a message.")
-                val requestState = _state.value
-                val requestServerID = requestState.selectedServerID
-                val requestProjectID = requestState.selectedProjectID
-                val requestThreadID = requestState.selectedThreadID
-                var thread = requestState.selectedThread
-                var createdThread = false
-                if (thread == null) {
-                    thread = client.startThread(requestState.selectedProject?.path)
-                    createdThread = true
-                    hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID)
-                }
-                if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
-                    return@runBusy
-                }
-                val input = buildList {
-                    if (trimmed.isNotEmpty()) add(CodexInputItem.Text(trimmed))
-                    addAll(stageAttachmentInputs(attachmentUris, requestState.selectedServer ?: error("Select a server before uploading attachments.")))
-                }
-                if (input.isEmpty()) return@runBusy
-                val activeTurnID = _state.value.activeTurnID
-                if (thread.status.isActive && activeTurnID != null) {
-                    client.steer(thread.id, activeTurnID, input)
-                    _state.update {
-                        if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
-                            it.copy(statusMessage = "Steered active turn.")
-                        } else {
-                            it
-                        }
+            try {
+                runBusy(if (attachmentUris.isEmpty()) "Sending" else "Uploading attachments") {
+                    val client = appServer ?: error("Connect to the app-server before sending a message.")
+                    val requestState = _state.value
+                    val requestServerID = requestState.selectedServerID
+                    val requestProjectID = requestState.selectedProjectID
+                    val requestThreadID = requestState.selectedThreadID
+                    var thread = requestState.selectedThread
+                    var createdThread = false
+                    if (thread == null) {
+                        thread = client.startThread(requestState.selectedProject?.path)
+                        createdThread = true
+                        hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID)
                     }
-                    didSubmitInput = true
-                } else {
-                    val turn = client.startTurn(
-                        threadID = thread.id,
-                        input = input,
-                        options = turnOptions(_state.value.selectedReasoningEffort, _state.value.selectedAccessMode, thread.cwd),
-                    )
                     if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                         return@runBusy
                     }
-                    hydrateConversation(thread.copy(status = thread.status.copy(type = if (turn.status == "inProgress") "active" else "idle"), turns = thread.turns.upsert(turn)))
-                    didSubmitInput = true
+                    val input = buildList {
+                        if (trimmed.isNotEmpty()) add(CodexInputItem.Text(trimmed))
+                        addAll(stageAttachmentInputs(attachmentUris, requestState.selectedServer ?: error("Select a server before uploading attachments.")))
+                    }
+                    if (input.isEmpty()) return@runBusy
+                    if (thread.status.isActive) {
+                        val activeTurnID = _state.value.activeTurnID
+                        if (queueWhenActive) {
+                            queuedTurnInputsByThreadID.getOrPut(thread.id) { mutableListOf() }.add(input)
+                            _state.update {
+                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                                    it.copy(statusMessage = "Queued message for after the current turn.")
+                                } else {
+                                    it
+                                }
+                            }
+                            didSubmitInput = true
+                        } else if (activeTurnID != null) {
+                            client.steer(thread.id, activeTurnID, input)
+                            _state.update {
+                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                                    it.copy(statusMessage = "Steered active turn.")
+                                } else {
+                                    it
+                                }
+                            }
+                            didSubmitInput = true
+                        } else {
+                            queuedTurnInputsByThreadID.getOrPut(thread.id) { mutableListOf() }.add(input)
+                            _state.update {
+                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                                    it.copy(statusMessage = "Queued message until the active turn is available.")
+                                } else {
+                                    it
+                                }
+                            }
+                            didSubmitInput = true
+                        }
+                    } else {
+                        val turn = client.startTurn(
+                            threadID = thread.id,
+                            input = input,
+                            options = turnOptions(_state.value.selectedReasoningEffort, _state.value.selectedAccessMode, thread.cwd),
+                        )
+                        if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                            return@runBusy
+                        }
+                        hydrateConversation(thread.copy(status = thread.status.copy(type = if (turn.status == "inProgress") "active" else "idle"), turns = thread.turns.upsert(turn)))
+                        didSubmitInput = true
+                    }
+                    refreshThreads()
+                    if (createdThread) refreshProjectsForCurrentScope(client, requestServerID)
                 }
-                refreshThreads()
-                if (createdThread) refreshProjectsForCurrentScope(client, requestServerID)
+            } finally {
+                isSendingInput = false
             }
             onComplete(didSubmitInput)
         }
@@ -715,6 +761,7 @@ class AppViewModel(
         eventJob = null
         appServer?.close()
         appServer = null
+        queuedTurnInputsByThreadID.clear()
         resetSessionRefreshTracking()
         if (updateState) {
             val servers = _state.value.servers.clearingAppServerProjectState()
@@ -947,19 +994,26 @@ class AppViewModel(
                 appServer?.let { client -> refreshProjectsForCurrentScope(client, _state.value.selectedServerID) }
             }
             "turn/started", "turn/completed" -> {
-                if (!eventTargetsSelectedThread(params)) return
-                val turn = params.obj("turn")?.let { parseTurn(it) } ?: return
-                _state.update { state ->
-                    val thread = state.selectedThread ?: return@update state
-                    val next = thread.copy(
-                        status = if (method == "turn/started") thread.status.copy(type = "active") else thread.status.copy(type = "idle"),
-                        turns = thread.turns.upsert(turn),
-                    )
-                    state.copy(selectedThread = next, conversationSections = next.conversationSections())
+                val targetsSelectedThread = eventTargetsSelectedThread(params)
+                val turn = params.obj("turn")?.let { parseTurn(it) }
+                if (targetsSelectedThread && turn != null) {
+                    _state.update { state ->
+                        val thread = state.selectedThread ?: return@update state
+                        val next = thread.copy(
+                            status = if (method == "turn/started") thread.status.copy(type = "active") else thread.status.copy(type = "idle"),
+                            turns = thread.turns.upsert(turn),
+                        )
+                        state.copy(selectedThread = next, conversationSections = next.conversationSections())
+                    }
+                } else if (method == "turn/started") {
+                    return
                 }
                 if (method == "turn/completed") {
                     refreshThreads()
-                    _state.value.selectedThreadID?.let { id -> appServer?.readThread(id)?.let { hydrateConversation(it) } }
+                    if (targetsSelectedThread) {
+                        _state.value.selectedThreadID?.let { id -> appServer?.readThread(id)?.let { hydrateConversation(it) } }
+                    }
+                    params.string("threadId")?.let { startNextQueuedTurnIfReady(it) }
                 }
             }
             "item/started", "item/completed" -> {
@@ -1027,6 +1081,35 @@ class AppViewModel(
                     conversationSections = thread.conversationSections(),
                 )
             }
+        }
+    }
+
+    private suspend fun startNextQueuedTurnIfReady(threadID: String) {
+        try {
+            while (queuedTurnInputsByThreadID[threadID]?.isNotEmpty() == true) {
+                val queuedInput = queuedTurnInputsByThreadID[threadID]?.firstOrNull() ?: return
+                val client = appServer ?: return
+                val state = _state.value
+                val thread = state.selectedThread?.takeIf { it.id == threadID } ?: client.readThread(threadID)
+                if (thread.status.isActive) return
+                val turn = client.startTurn(
+                    threadID = thread.id,
+                    input = queuedInput,
+                    options = turnOptions(state.selectedReasoningEffort, state.selectedAccessMode, thread.cwd),
+                )
+                queuedTurnInputsByThreadID[threadID]?.removeFirstOrNull()
+                if (queuedTurnInputsByThreadID[threadID]?.isEmpty() == true) {
+                    queuedTurnInputsByThreadID.remove(threadID)
+                }
+                if (state.selectedThreadID == threadID) {
+                    hydrateConversation(thread.copy(status = thread.status.copy(type = if (turn.status == "inProgress") "active" else "idle"), turns = thread.turns.upsert(turn)))
+                }
+                refreshThreads()
+                if (turn.status == "inProgress") return
+            }
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            _state.update { it.copy(statusMessage = error.message) }
         }
     }
 
@@ -1305,20 +1388,11 @@ private fun MobidexUiState.clearingSessionScope(): MobidexUiState =
 private fun List<ServerRecord>.clearingAppServerProjectState(): List<ServerRecord> =
     map { server ->
         server.copy(
-            projects = server.projects.mapNotNull { project ->
-                when {
-                    !project.discovered -> project.copy(activeChatCount = 0, lastActiveChatAtEpochSeconds = null)
-                    project.isFavorite -> project.copy(
-                        discovered = false,
-                        sessionPaths = listOf(project.path),
-                        discoveredSessionCount = 0,
-                        archivedSessionCount = 0,
-                        activeChatCount = 0,
-                        lastDiscoveredAtEpochSeconds = null,
-                        lastActiveChatAtEpochSeconds = null,
-                    )
-                    else -> null
-                }
+            projects = server.projects.map { project ->
+                project.copy(
+                    activeChatCount = 0,
+                    lastActiveChatAtEpochSeconds = null,
+                )
             }
         )
     }

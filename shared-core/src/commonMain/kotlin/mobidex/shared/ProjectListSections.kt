@@ -28,7 +28,7 @@ data class ProjectListSections(
             val sorted = matching.sortedWith(projectListComparator)
 
             return ProjectListSections(
-                favorites = sorted.filter { it.isFavorite },
+                favorites = sorted.filter { it.isFavorite || !it.discovered },
                 discovered = sorted.filter { project ->
                     val hasVisibleSessions = project.activeChatCount > 0 ||
                         project.discoveredSessionCount > 0 ||
@@ -48,7 +48,7 @@ data class ProjectListSections(
                                 canSearchHiddenProject
                             )
                 },
-                added = sorted.filter { !it.discovered && !it.isFavorite },
+                added = emptyList(),
                 showInactiveDiscoveredFilter = projects.any {
                     it.discovered &&
                         !it.isFavorite &&

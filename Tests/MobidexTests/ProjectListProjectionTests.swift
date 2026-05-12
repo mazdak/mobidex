@@ -61,7 +61,8 @@ final class ProjectListProjectionTests: XCTestCase {
             showInactiveDiscoveredProjects: false,
             showArchivedSessionProjects: false
         )
-        XCTAssertEqual(defaultSections.added.map(\.path), ["/srv/manual"])
+        XCTAssertEqual(defaultSections.favorites.map(\.path), ["/srv/manual"])
+        XCTAssertTrue(defaultSections.added.isEmpty)
 
         let searchSections = ProjectListSections(
             projects: [manualProject, activeDiscovered],
@@ -69,7 +70,8 @@ final class ProjectListProjectionTests: XCTestCase {
             showInactiveDiscoveredProjects: false,
             showArchivedSessionProjects: false
         )
-        XCTAssertEqual(searchSections.added.map(\.path), ["/srv/manual"])
+        XCTAssertEqual(searchSections.favorites.map(\.path), ["/srv/manual"])
+        XCTAssertTrue(searchSections.added.isEmpty)
         XCTAssertTrue(searchSections.discovered.isEmpty)
     }
 
