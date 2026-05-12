@@ -177,6 +177,32 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
     static func normalizedSessionPaths(_ paths: [String], primaryPath: String) -> [String] {
         SharedKMPBridge.normalizedSessionPaths(paths, primaryPath: primaryPath)
     }
+
+    var macOSPrivacyWarning: String? {
+        Self.macOSPrivacyWarning(for: [path] + sessionPaths)
+    }
+
+    static func macOSPrivacyWarning(for paths: [String]) -> String? {
+        paths.contains(where: isLikelyMacOSPrivacyProtectedPath)
+            ? "macOS may block SSH access to this protected location. Move it outside protected folders or grant Full Disk Access to the SSH/Remote Login service."
+            : nil
+    }
+
+    private static func isLikelyMacOSPrivacyProtectedPath(_ path: String) -> Bool {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        if components.first == "Volumes" {
+            return true
+        }
+        guard components.count >= 3, components[0] == "Users" else {
+            return false
+        }
+        if ["Desktop", "Documents", "Downloads"].contains(String(components[2])) {
+            return true
+        }
+        return components.count >= 4 &&
+            components[2] == "Library" &&
+            components[3] == "Mobile Documents"
+    }
 }
 
 struct SSHCredential: Equatable {

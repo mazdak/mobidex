@@ -62,6 +62,7 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -712,22 +713,23 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
 }
 
 internal fun projectSupportingLabels(project: ProjectRecord): List<String> {
-    if (!project.discovered) return emptyList()
     return buildList {
-        if (project.activeChatCount > 0) {
-            add(if (project.activeChatCount == 1) "1 loaded in app-server" else "${project.activeChatCount} loaded in app-server")
-        }
-        if (project.discoveredSessionCount > 0) {
-            add(if (project.discoveredSessionCount == 1) "1 discovered session" else "${project.discoveredSessionCount} discovered sessions")
-        }
-        if (project.archivedSessionCount > 0) {
-            add(if (project.archivedSessionCount == 1) "1 archived session" else "${project.archivedSessionCount} archived sessions")
-        }
-        if (project.activeChatCount == 0 && project.discoveredSessionCount == 0 && project.archivedSessionCount == 0) {
-            add("No loaded sessions")
-        }
-        if (project.sessionPaths.size > 1) {
-            add("${project.sessionPaths.size} worktree paths grouped")
+        if (project.discovered) {
+            if (project.activeChatCount > 0) {
+                add(if (project.activeChatCount == 1) "1 loaded in app-server" else "${project.activeChatCount} loaded in app-server")
+            }
+            if (project.discoveredSessionCount > 0) {
+                add(if (project.discoveredSessionCount == 1) "1 discovered session" else "${project.discoveredSessionCount} discovered sessions")
+            }
+            if (project.archivedSessionCount > 0) {
+                add(if (project.archivedSessionCount == 1) "1 archived session" else "${project.archivedSessionCount} archived sessions")
+            }
+            if (project.activeChatCount == 0 && project.discoveredSessionCount == 0 && project.archivedSessionCount == 0) {
+                add("No loaded sessions")
+            }
+            if (project.sessionPaths.size > 1) {
+                add("${project.sessionPaths.size} worktree paths grouped")
+            }
         }
     }
 }
@@ -789,6 +791,7 @@ private fun ConversationPane(state: MobidexUiState, model: AppViewModel, modifie
     val thread = state.selectedThread
     val project = state.selectedProject
     Column(modifier) {
+        MacOSPrivacyWarningBanner(state, model)
         if (thread != null) {
             ConversationHeader(thread, state, model)
             SecondaryTabRow(selectedTabIndex = detail.ordinal) {
@@ -813,6 +816,31 @@ private fun ConversationPane(state: MobidexUiState, model: AppViewModel, modifie
         }
     }
 }
+
+@Composable
+private fun MacOSPrivacyWarningBanner(state: MobidexUiState, model: AppViewModel) {
+    val warning = macOSPrivacyWarningForConversation(state)
+    if (warning.isNullOrBlank() || state.dismissedMacOSPrivacyWarning) return
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f))
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
+        Text(warning, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+        IconButton(onClick = { model.dismissMacOSPrivacyWarningForever() }, modifier = Modifier.size(32.dp)) {
+            Icon(Icons.Default.Close, contentDescription = "Dismiss macOS privacy warning")
+        }
+    }
+    HorizontalDivider()
+}
+
+private fun macOSPrivacyWarningForConversation(state: MobidexUiState): String? =
+    state.selectedThread?.cwd?.let { ProjectRecord.macOSPrivacyWarning(listOf(it)) }
+        ?: state.selectedProject?.macOSPrivacyWarning
 
 internal fun sessionEmptyTitle(state: MobidexUiState): String =
     when {

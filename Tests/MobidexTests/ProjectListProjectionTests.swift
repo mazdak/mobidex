@@ -2,6 +2,14 @@ import XCTest
 @testable import Mobidex
 
 final class ProjectListProjectionTests: XCTestCase {
+    func testMacOSPrivacyWarningFlagsProtectedUserFolders() throws {
+        XCTAssertNil(ProjectRecord(path: "/Users/yesh/Code/app").macOSPrivacyWarning)
+        XCTAssertNotNil(ProjectRecord(path: "/Users/yesh/Documents/work/app").macOSPrivacyWarning)
+        XCTAssertNotNil(ProjectRecord(path: "/Users/yesh/Library/Mobile Documents/com~apple~CloudDocs/app").macOSPrivacyWarning)
+        XCTAssertNotNil(ProjectRecord(path: "/Volumes/External/app").macOSPrivacyWarning)
+        XCTAssertNotNil(ProjectRecord(path: "/Users/yesh/Code/app", sessionPaths: ["/Users/yesh/Desktop/app"]).macOSPrivacyWarning)
+    }
+
     func testSeparatesFavoritesFromActiveDiscoveredProjects() throws {
         let favoriteWithoutChats = ProjectRecord(path: "/srv/favorite", discovered: false, isFavorite: true)
         let activeDiscovered = ProjectRecord(path: "/srv/active", discovered: true, discoveredSessionCount: 2)

@@ -27,6 +27,31 @@ class ProjectLabelsTest {
     }
 
     @Test
+    fun macOSProtectedProjectsDoNotShowPrivacyWarningInRows() {
+        val project = ProjectRecord(
+            path = "/Users/yesh/Documents/work/ResQlaw",
+            discovered = true,
+            discoveredSessionCount = 1,
+        )
+
+        assertEquals(listOf("1 discovered session"), projectSupportingLabels(project))
+    }
+
+    @Test
+    fun macOSProtectedWarningIncludesICloudAndVolumes() {
+        assertEquals(
+            "macOS may block SSH access to this protected location. Move it outside protected folders or grant Full Disk Access to the SSH/Remote Login service.",
+            ProjectRecord.macOSPrivacyWarning(
+                listOf("/Users/yesh/Library/Mobile Documents/com~apple~CloudDocs/ResQlaw")
+            ),
+        )
+        assertEquals(
+            "macOS may block SSH access to this protected location. Move it outside protected folders or grant Full Disk Access to the SSH/Remote Login service.",
+            ProjectRecord.macOSPrivacyWarning(listOf("/Volumes/External/ResQlaw")),
+        )
+    }
+
+    @Test
     fun discoveredSessionCountIsNeverRenderedAsActiveSessions() {
         val project = ProjectRecord(
             path = "/srv/app",

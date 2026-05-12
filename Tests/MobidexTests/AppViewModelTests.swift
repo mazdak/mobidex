@@ -126,7 +126,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(project.path, "/srv/app")
         XCTAssertEqual(viewModel.selectedProjectID, project.id)
         XCTAssertEqual(try repository.loadServers().first?.projects.first?.path, "/srv/app")
-        XCTAssertEqual(viewModel.statusMessage, "Added app.")
+        XCTAssertEqual(viewModel.statusMessage, "Saved app as a favorite.")
     }
 
     @MainActor

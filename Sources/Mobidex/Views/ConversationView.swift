@@ -19,6 +19,7 @@ struct ConversationView: View {
     @State private var initialBottomScrollThreadID: String?
     @State private var programmaticBottomScrollSettling = false
     @State private var programmaticBottomScrollGeneration = 0
+    @AppStorage("mobidex.dismissedMacOSPrivacyWarning") private var dismissedMacOSPrivacyWarning = false
     @FocusState private var isComposerFocused: Bool
     private let conversationBottomID = "conversationBottom"
     private static let latestButtonShowDistance: CGFloat = 48
@@ -28,6 +29,7 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let thread = model.selectedThread {
+                macOSPrivacyWarningBanner(warning: macOSPrivacyWarning(for: thread.cwd))
                 header(thread)
                 Divider()
                 detailPicker
@@ -42,6 +44,7 @@ struct ConversationView: View {
                     SessionChangesView(cwd: thread.cwd)
                 }
             } else if let project = model.selectedProject {
+                macOSPrivacyWarningBanner(warning: project.macOSPrivacyWarning)
                 projectHeader(project)
                 Divider()
                 ContentUnavailableView(
@@ -79,6 +82,36 @@ struct ConversationView: View {
             ) { result in
                 handleImportedFiles(result)
             }
+    }
+
+    @ViewBuilder
+    private func macOSPrivacyWarningBanner(warning: String?) -> some View {
+        if let warning, !dismissedMacOSPrivacyWarning {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text(warning)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    dismissedMacOSPrivacyWarning = true
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("Dismiss macOS privacy warning")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(.orange.opacity(0.12))
+            Divider()
+        }
+    }
+
+    private func macOSPrivacyWarning(for cwd: String) -> String? {
+        ProjectRecord.macOSPrivacyWarning(for: [cwd])
     }
 
     private func header(_ thread: CodexThread) -> some View {

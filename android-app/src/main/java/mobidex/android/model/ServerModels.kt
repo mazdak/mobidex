@@ -66,9 +66,29 @@ data class ProjectRecord(
     val normalized: ProjectRecord
         get() = copy(sessionPaths = normalizedSessionPaths(sessionPaths, path))
 
+    val macOSPrivacyWarning: String?
+        get() = macOSPrivacyWarning(listOf(path) + sessionPaths)
+
     companion object {
         fun normalizedSessionPaths(paths: List<String>, primaryPath: String): List<String> =
             mobidex.shared.ProjectRecord.Companion.normalizedSessionPaths(paths, primaryPath)
+
+        fun macOSPrivacyWarning(paths: List<String>): String? =
+            if (paths.any(::isLikelyMacOSPrivacyProtectedPath)) {
+                "macOS may block SSH access to this protected location. Move it outside protected folders or grant Full Disk Access to the SSH/Remote Login service."
+            } else {
+                null
+            }
+
+        private fun isLikelyMacOSPrivacyProtectedPath(path: String): Boolean {
+            val components = path.split('/').filter { it.isNotEmpty() }
+            if (components.firstOrNull() == "Volumes") return true
+            if (components.size < 3 || components[0] != "Users") return false
+            if (components[2] in setOf("Desktop", "Documents", "Downloads")) return true
+            return components.size >= 4 &&
+                components[2] == "Library" &&
+                components[3] == "Mobile Documents"
+        }
     }
 }
 

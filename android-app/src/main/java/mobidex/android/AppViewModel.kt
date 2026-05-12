@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import java.io.File
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,6 +92,7 @@ data class MobidexUiState(
     val diffSnapshot: GitDiffSnapshot = GitDiffSnapshot.Empty,
     val isRefreshingChanges: Boolean = false,
     val tokenUsagePercent: Int? = null,
+    val dismissedMacOSPrivacyWarning: Boolean = false,
 ) {
     val selectedServer: ServerRecord?
         get() = servers.firstOrNull { it.id == selectedServerID }
@@ -138,8 +140,12 @@ class AppViewModel(
     private var isSendingInput = false
     private val queuedTurnInputsByThreadID = mutableMapOf<String, MutableList<List<CodexInputItem>>>()
     private val appContext = context.applicationContext
+    private val preferences = appContext.getSharedPreferences("mobidex", Context.MODE_PRIVATE)
 
     init {
+        _state.update {
+            it.copy(dismissedMacOSPrivacyWarning = preferences.getBoolean(MACOS_PRIVACY_WARNING_DISMISSED_KEY, false))
+        }
         viewModelScope.launch { loadServers() }
     }
 
@@ -182,8 +188,8 @@ class AppViewModel(
 
     fun selectProject(projectID: String?) {
         val refreshGeneration = beginSessionRefresh()
-        _state.update {
-            it.copy(
+        _state.update { state ->
+            state.copy(
                 selectedProjectID = projectID,
                 threads = emptyList(),
                 selectedThreadID = null,
@@ -194,6 +200,11 @@ class AppViewModel(
             )
         }
         refreshThreads(refreshGeneration = refreshGeneration)
+    }
+
+    fun dismissMacOSPrivacyWarningForever() {
+        preferences.edit().putBoolean(MACOS_PRIVACY_WARNING_DISMISSED_KEY, true).apply()
+        _state.update { it.copy(dismissedMacOSPrivacyWarning = true) }
     }
 
     fun setReasoningEffort(effort: CodexReasoningEffortOption) {
@@ -1416,6 +1427,8 @@ private data class CachedAttachment(val localPath: String, val mimeType: String?
 
 private fun String.isImageAttachmentPath(): Boolean =
     substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp")
+
+private const val MACOS_PRIVACY_WARNING_DISMISSED_KEY = "dismissedMacOSPrivacyWarning"
 
 private fun String.sanitizedAttachmentName(): String {
     val sanitized = replace(Regex("""[^A-Za-z0-9._-]"""), "_").trim('_')
