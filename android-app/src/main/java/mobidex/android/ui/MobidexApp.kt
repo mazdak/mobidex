@@ -1358,7 +1358,7 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
                         privateKeyPEM = if (authMethod == ServerAuthMethod.PrivateKey) privateKey else null,
                         privateKeyPassphrase = if (authMethod == ServerAuthMethod.PrivateKey) passphrase else null,
                     ),
-                    connectAfterSave = original == null,
+                    connectAfterSave = false,
                 )
                 onDismiss()
             }) { Text("Save") }

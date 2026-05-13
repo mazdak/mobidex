@@ -222,7 +222,7 @@ struct ServerEditorView: View {
             privateKeyPEM: authMethod == .privateKey ? privateKey : nil,
             privateKeyPassphrase: authMethod == .privateKey ? privateKeyPassphrase : nil
         )
-        if await model.saveServer(server, credential: credential, connectAfterSave: original == nil) {
+        if await model.saveServer(server, credential: credential) {
             dismiss()
         } else {
             validationMessage = model.statusMessage ?? "Mobidex could not save this server."

@@ -134,17 +134,6 @@ struct ServerSidebarView: View {
                 ContentUnavailableView("No Servers", systemImage: "server.rack", description: Text("Add an SSH server to begin."))
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            if let statusMessage = model.statusMessage, !statusMessage.isEmpty {
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(.bar)
-            }
-        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -361,6 +350,17 @@ struct ProjectSessionListView: View {
                 .sheet(isPresented: $showingDiagnostics) {
                     ConnectionDiagnosticsView()
                         .environmentObject(model)
+                }
+                .safeAreaInset(edge: .bottom) {
+                    if let statusMessage = model.statusMessage, !statusMessage.isEmpty {
+                        Text(statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(.bar)
+                    }
                 }
                 .searchable(text: $projectSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search Projects")
                 .onChange(of: projectSearchText) { _, newValue in

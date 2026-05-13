@@ -142,6 +142,24 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testSaveNewServerDoesNotAutoConnectByDefault() async throws {
+        let repository = InMemoryServerRepository()
+        let credentials = InMemoryCredentialStore()
+        let sshService = StubSSHService()
+        let viewModel = AppViewModel(repository: repository, credentialStore: credentials, sshService: sshService)
+        let server = ServerRecord(displayName: "Build Box", host: "build.example.com", username: "mazdak", authMethod: .password)
+
+        let saved = await viewModel.saveServer(server, credential: SSHCredential(password: "secret"))
+
+        XCTAssertTrue(saved)
+        XCTAssertEqual(viewModel.selectedServerID, server.id)
+        XCTAssertEqual(viewModel.connectionState, .disconnected)
+        XCTAssertEqual(sshService.openAppServerCallCount, 0)
+        XCTAssertTrue(viewModel.threads.isEmpty)
+        XCTAssertEqual(viewModel.statusMessage, "Saved Build Box.")
+    }
+
+    @MainActor
     func testLoadServersClearsPersistedOpenSessionCounts() async throws {
         let project = ProjectRecord(
             path: "/srv/app",
