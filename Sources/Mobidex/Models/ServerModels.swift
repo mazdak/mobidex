@@ -219,9 +219,9 @@ enum ServerConnectionState: Equatable {
 
     var label: String {
         switch self {
-        case .disconnected: "App-server disconnected"
-        case .connecting: "Connecting app-server"
-        case .connected: "App-server connected"
+        case .disconnected: "Server disconnected"
+        case .connecting: "Connecting server"
+        case .connected: "Server connected"
         case .failed(let message): message
         }
     }

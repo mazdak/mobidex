@@ -26,7 +26,7 @@ class RemoteCodexAppServerCommandTest {
         )
 
         assertEquals(
-            "mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"\$mobidex_shell_rc\" ]; then . \"\$mobidex_shell_rc\" 1>&2; fi; export PATH=\"\$HOME/.bun/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://",
+            "mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"\$mobidex_shell_rc\" ]; then . \"\$mobidex_shell_rc\" 1>&2; fi; export PATH=\"\$HOME/.bun/bin:\$HOME/.cargo/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://",
             command,
         )
     }
@@ -38,6 +38,7 @@ class RemoteCodexAppServerCommandTest {
         assertContains(command, "command -v codex")
         assertContains(command, "mobidex_shell_rc=\"\${HOME}\"/'.zshrc'")
         assertContains(command, "\$HOME/.bun/bin/codex")
+        assertContains(command, "\$HOME/.cargo/bin/codex")
         assertContains(command, "/opt/homebrew/opt/node@22/bin")
         assertContains(command, "zsh bash")
         assertContains(command, "app-server --listen stdio://")

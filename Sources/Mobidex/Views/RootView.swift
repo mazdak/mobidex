@@ -95,7 +95,6 @@ struct ServerSidebarView: View {
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("serverRow")
-                .listRowBackground(server.id == model.selectedServerID ? Color.accentColor.opacity(0.12) : nil)
                 .contextMenu {
                     Button {
                         editingServer = server
@@ -161,6 +160,7 @@ struct ProjectSessionListView: View {
     @State private var isSessionRefreshRequested = false
     @State private var skipNextAllSessionsRefresh = false
     @State private var showingTerminal = false
+    @State private var showingDiagnostics = false
 
     var body: some View {
         Group {
@@ -189,15 +189,24 @@ struct ProjectSessionListView: View {
                             Button {
                                 Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
                             } label: {
-                                Text(model.isAppServerConnected ? "Reconnect Codex" : "Connect Codex")
+                                Text(model.isAppServerConnected ? "Reconnect" : "Connect")
                             }
+                            .disabled(model.connectionState == .connecting)
                             .accessibilityIdentifier("connectButton")
                             Button {
                                 showingTerminal = true
                             } label: {
                                 Label("Terminal", systemImage: "terminal")
                             }
+                            .disabled(serverControlsDisabled)
                             .accessibilityIdentifier("terminalButton")
+                            Button {
+                                showingDiagnostics = true
+                            } label: {
+                                Label("Diagnostics", systemImage: "stethoscope")
+                            }
+                            .disabled(serverControlsDisabled || model.isRunningConnectionDiagnostics)
+                            .accessibilityIdentifier("connectionDiagnosticsButton")
                         }
                         .buttonStyle(.bordered)
                     }
@@ -226,7 +235,7 @@ struct ProjectSessionListView: View {
                                 Toggle("Show inactive discovered projects", isOn: $showInactiveDiscoveredProjects)
                                     .font(.subheadline)
                             }
-                            .disabled(contentIsLoading)
+                            .disabled(serverContentDisabled)
                             .opacity(contentOpacity)
                         }
                         if sections.showArchivedSessionFilter {
@@ -234,7 +243,7 @@ struct ProjectSessionListView: View {
                                 Toggle("Show archived sessions", isOn: $model.showsArchivedSessions)
                                     .font(.subheadline)
                             }
-                            .disabled(contentIsLoading)
+                            .disabled(serverContentDisabled)
                             .opacity(contentOpacity)
                         }
 
@@ -244,7 +253,7 @@ struct ProjectSessionListView: View {
                                     projectRow(project)
                                 }
                             }
-                            .disabled(contentIsLoading)
+                            .disabled(serverContentDisabled)
                             .opacity(contentOpacity)
                         }
 
@@ -254,7 +263,7 @@ struct ProjectSessionListView: View {
                                     projectRow(project)
                                 }
                             }
-                            .disabled(contentIsLoading)
+                            .disabled(serverContentDisabled)
                             .opacity(contentOpacity)
                         }
 
@@ -269,11 +278,24 @@ struct ProjectSessionListView: View {
                             }
                         }
                     case .sessions:
+                        if let project = model.selectedProject, !model.isShowingAllSessions {
+                            Section("Project") {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(project.displayName)
+                                        .font(.headline)
+                                    Text(project.path)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                .padding(.vertical, 4)
+                            }
+                        }
                         Section {
                             Toggle("Show archived sessions", isOn: $model.showsArchivedSessions)
                                 .font(.subheadline)
                         }
-                        .disabled(contentIsLoading)
+                        .disabled(serverContentDisabled)
                         .opacity(contentOpacity)
 
                         ForEach(model.sessionSections) { sessionSection in
@@ -290,7 +312,7 @@ struct ProjectSessionListView: View {
                                 }
                             }
                         }
-                        .disabled(contentIsLoading)
+                        .disabled(serverContentDisabled)
                         .opacity(contentOpacity)
                         if model.threads.isEmpty {
                             Section("Sessions") {
@@ -306,6 +328,10 @@ struct ProjectSessionListView: View {
                 }
                 .sheet(isPresented: $showingTerminal) {
                     TerminalView()
+                        .environmentObject(model)
+                }
+                .sheet(isPresented: $showingDiagnostics) {
+                    ConnectionDiagnosticsView()
                         .environmentObject(model)
                 }
                 .searchable(text: $projectSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search Projects")
@@ -337,19 +363,11 @@ struct ProjectSessionListView: View {
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button {
-                            Task { await model.startNewSession() }
-                        } label: {
-                            Image(systemName: "plus.bubble")
-                        }
-                        .disabled(!model.canCreateSession)
-                        .accessibilityLabel("New Session")
-                        .accessibilityIdentifier("newSessionButton")
-
-                        Button {
                             Task { await model.refreshProjects() }
                         } label: {
                             Image(systemName: "arrow.clockwise")
                         }
+                        .disabled(serverControlsDisabled)
                         .accessibilityLabel("Refresh Projects")
 
                         Button {
@@ -357,19 +375,25 @@ struct ProjectSessionListView: View {
                         } label: {
                             Image(systemName: "folder.badge.plus")
                         }
+                        .disabled(serverControlsDisabled)
                         .accessibilityLabel("Add Project")
                     }
                 }
                 .sheet(isPresented: $showingProjectAdd) {
                     ProjectAddView()
                 }
-                .task(id: model.selectedServerID) {
-                    await model.ensureSelectedServerConnected()
-                }
             } else {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
             }
         }
+    }
+
+    private var serverControlsDisabled: Bool {
+        model.connectionState == .connecting
+    }
+
+    private var serverContentDisabled: Bool {
+        contentIsLoading || serverControlsDisabled
     }
 
     private var contentIsLoading: Bool {
@@ -382,7 +406,7 @@ struct ProjectSessionListView: View {
     }
 
     private var contentOpacity: Double {
-        contentIsLoading ? 0.42 : 1
+        serverContentDisabled ? 0.42 : 1
     }
 
     private var loadingStatusTitle: String {
@@ -503,6 +527,101 @@ private enum ProjectSessionMode: String, CaseIterable, Identifiable {
         switch self {
         case .projects: "Projects"
         case .sessions: "Sessions"
+        }
+    }
+}
+
+struct ConnectionDiagnosticsView: View {
+    @EnvironmentObject private var model: AppViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if model.isRunningConnectionDiagnostics {
+                    Section {
+                        LoadingListStatusRow(title: "Running diagnostics...")
+                    }
+                }
+                if let report = model.connectionDiagnosticReport {
+                    Section("Connection") {
+                        diagnosticRow("Host", report.host)
+                        diagnosticRow("Auth method", report.authMethod)
+                        diagnosticRow("Failure stage", report.failureStage ?? "none")
+                        diagnosticRow("SSH host key fingerprint", report.hostKeyFingerprint ?? "not observed")
+                    }
+                    Section("Resolved Addresses") {
+                        if report.resolvedAddresses.isEmpty {
+                            Text("None")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(report.resolvedAddresses, id: \.self) { address in
+                                Text(address)
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                        }
+                    }
+                    Section("TCP Results") {
+                        if report.tcpResults.isEmpty {
+                            Text("Not run")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(report.tcpResults) { result in
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(result.address)
+                                        .font(.system(.body, design: .monospaced))
+                                    Text(result.result)
+                                        .font(.caption)
+                                        .foregroundStyle(result.result == "connected" ? .green : .red)
+                                }
+                            }
+                        }
+                    }
+                    Section("Stages") {
+                        diagnosticRow("Remote command", report.remoteCommandResult ?? "not reached")
+                        diagnosticRow("App-server", report.appServerResult ?? "not reached")
+                    }
+                    Section("Raw Error") {
+                        diagnosticRow("Type", report.rawUnderlyingErrorType ?? "none")
+                        diagnosticRow("Error", report.rawUnderlyingError ?? "none")
+                    }
+                } else {
+                    Section {
+                        ContentUnavailableView("No Diagnostics Yet", systemImage: "stethoscope")
+                    }
+                }
+            }
+            .navigationTitle("Diagnostics")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        Task { await model.diagnoseSelectedConnection() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(model.isRunningConnectionDiagnostics)
+                    .accessibilityLabel("Run Diagnostics")
+                }
+            }
+            .task {
+                if model.connectionDiagnosticReport == nil {
+                    await model.diagnoseSelectedConnection()
+                }
+            }
+        }
+    }
+
+    private func diagnosticRow(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.body, design: title == "Error" ? .default : .monospaced))
+                .textSelection(.enabled)
         }
     }
 }

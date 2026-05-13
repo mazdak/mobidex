@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import Citadel
 import Crypto
+import Darwin
 import NIOCore
 import NIOPosix
 import NIOSSH
@@ -50,8 +51,35 @@ struct RemoteDirectoryListing: Codable, Equatable {
     var entries: [RemoteDirectoryEntry]
 }
 
+struct SSHDiagnosticTCPResult: Identifiable, Equatable {
+    var id: String { address }
+    var address: String
+    var result: String
+}
+
+struct SSHDiagnosticReport: Equatable {
+    var host: String
+    var resolvedAddresses: [String]
+    var tcpResults: [SSHDiagnosticTCPResult]
+    var hostKeyFingerprint: String?
+    var authMethod: String
+    var failureStage: String?
+    var rawUnderlyingErrorType: String?
+    var rawUnderlyingError: String?
+    var remoteCommandResult: String?
+    var appServerResult: String?
+
+    var summary: String {
+        if let failureStage {
+            return "Failed at \(failureStage)"
+        }
+        return "Diagnostics passed"
+    }
+}
+
 protocol SSHService: Sendable {
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws
+    func diagnoseConnection(server: ServerRecord, credential: SSHCredential) async -> SSHDiagnosticReport
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject]
     func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String]
@@ -137,6 +165,89 @@ final class CitadelSSHService: TerminalSSHService {
         }
     }
 
+    func diagnoseConnection(server: ServerRecord, credential: SSHCredential) async -> SSHDiagnosticReport {
+        let authLabel = switch server.authMethod {
+        case .password: "password"
+        case .privateKey: "private key"
+        }
+        var report = SSHDiagnosticReport(
+            host: "\(server.host):\(server.port)",
+            resolvedAddresses: [],
+            tcpResults: [],
+            hostKeyFingerprint: nil,
+            authMethod: authLabel,
+            failureStage: nil,
+            rawUnderlyingErrorType: nil,
+            rawUnderlyingError: nil,
+            remoteCommandResult: nil,
+            appServerResult: nil
+        )
+
+        do {
+            let addresses = try await Task.detached(priority: .userInitiated) {
+                try resolveAddresses(host: server.host, port: server.port)
+            }.value
+            report.resolvedAddresses = addresses
+            report.tcpResults = await Task.detached(priority: .userInitiated) {
+                addresses.map { address in
+                    SSHDiagnosticTCPResult(
+                        address: address,
+                        result: tcpProbe(address: address, port: server.port, timeoutMilliseconds: 2_000)
+                    )
+                }
+            }.value
+        } catch {
+            report.failureStage = "DNS"
+            report.rawUnderlyingErrorType = String(reflecting: type(of: error))
+            report.rawUnderlyingError = String(describing: error)
+            return report
+        }
+
+        let hostKeyCapture = HostKeyFingerprintCapture()
+        do {
+            let client = try await SSHClient.connect(
+                host: server.host,
+                port: server.port,
+                authenticationMethod: authenticationMethod(server: server, credential: credential),
+                hostKeyValidator: .custom(DiagnosticHostKeyValidator(server: server, capture: hostKeyCapture)),
+                reconnect: .never,
+                algorithms: .all
+            )
+            report.hostKeyFingerprint = hostKeyCapture.fingerprint
+            do {
+                let output = try await client.executeCommand("printf mobidex-ready", maxResponseSize: 1_024, mergeStreams: true)
+                report.remoteCommandResult = String(buffer: output).trimmingCharacters(in: .whitespacesAndNewlines)
+            } catch {
+                report.failureStage = "remote command"
+                report.rawUnderlyingErrorType = String(reflecting: type(of: error))
+                report.rawUnderlyingError = String(describing: error)
+                try? await client.close()
+                return report
+            }
+            try? await client.close()
+        } catch {
+            report.hostKeyFingerprint = hostKeyCapture.fingerprint
+            let mapped = mapSSHError(error, server: server, operation: .connect)
+            report.failureStage = diagnosticStage(for: mapped, fallback: error)
+            report.rawUnderlyingErrorType = String(reflecting: type(of: error))
+            report.rawUnderlyingError = String(describing: error)
+            return report
+        }
+
+        do {
+            let appServer = try await openAppServer(server: server, credential: credential)
+            report.appServerResult = "initialized"
+            await appServer.close()
+        } catch {
+            report.failureStage = "app-server"
+            report.rawUnderlyingErrorType = String(reflecting: type(of: error))
+            report.rawUnderlyingError = String(describing: error)
+            return report
+        }
+
+        return report
+    }
+
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] {
         try await withClient(server: server, credential: credential) { client in
             let output = try await client.executeCommand(
@@ -189,10 +300,14 @@ final class CitadelSSHService: TerminalSSHService {
                         throw SSHServiceError.localFileNotReadable(localPath)
                     }
                     let remotePath = "\(remoteDirectory)/\(UUID().uuidString)-\(sanitizedFilename(localURL.lastPathComponent))"
-                    try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
-                        var buffer = ByteBufferAllocator().buffer(capacity: data.count)
-                        buffer.writeBytes(data)
-                        try await file.write(buffer)
+                    do {
+                        try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
+                            var buffer = ByteBufferAllocator().buffer(capacity: data.count)
+                            buffer.writeBytes(data)
+                            try await file.write(buffer)
+                        }
+                    } catch {
+                        try await uploadViaShell(data: data, remotePath: remotePath, client: client)
                     }
                     remotePaths.append(remotePath)
                 }
@@ -295,6 +410,52 @@ final class CitadelSSHService: TerminalSSHService {
         }
     }
 
+}
+
+private final class HostKeyFingerprintCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var captured: String?
+
+    var fingerprint: String? {
+        lock.withLock { captured }
+    }
+
+    func save(_ fingerprint: String) {
+        lock.withLock {
+            captured = fingerprint
+        }
+    }
+}
+
+private final class DiagnosticHostKeyValidator: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
+    private let server: ServerRecord
+    private let capture: HostKeyFingerprintCapture
+
+    init(server: ServerRecord, capture: HostKeyFingerprintCapture) {
+        self.server = server
+        self.capture = capture
+    }
+
+    func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
+        let fingerprint = sshHostKeyFingerprint(hostKey)
+        capture.save(fingerprint)
+        if let pinned = SSHHostKeyPinStore.fingerprint(serverID: server.id, legacyHost: server.host, legacyPort: server.port),
+           pinned != fingerprint {
+            validationCompletePromise.fail(SSHServiceError.hostKeyChanged(server.host, server.port))
+            return
+        }
+        validationCompletePromise.succeed(())
+    }
+}
+
+private func uploadViaShell(data: Data, remotePath: String, client: SSHClient) async throws {
+    let encoded = data.base64EncodedString()
+    let command = "printf %s \(encoded.shellQuotedForRemoteCommand()) | base64 -d > \(remotePath.shellQuotedForRemoteCommand())"
+    let result = try await client.executeCommand(command, maxResponseSize: 16_384, mergeStreams: true, inShell: true)
+    let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
+    if !output.isEmpty {
+        throw SSHServiceError.connectionClosed("uploading an attachment: \(output)")
+    }
 }
 
 private extension String {
@@ -550,6 +711,108 @@ private func sanitizedFilename(_ value: String) -> String {
     return sanitized.isEmpty ? "attachment" : sanitized
 }
 
+private func resolveAddresses(host: String, port: Int) throws -> [String] {
+    var hints = addrinfo(
+        ai_flags: AI_ADDRCONFIG,
+        ai_family: AF_UNSPEC,
+        ai_socktype: SOCK_STREAM,
+        ai_protocol: IPPROTO_TCP,
+        ai_addrlen: 0,
+        ai_canonname: nil,
+        ai_addr: nil,
+        ai_next: nil
+    )
+    var info: UnsafeMutablePointer<addrinfo>?
+    let code = getaddrinfo(host, "\(port)", &hints, &info)
+    guard code == 0, let info else {
+        throw POSIXError(POSIXErrorCode(rawValue: code == EAI_SYSTEM ? errno : code) ?? .EIO)
+    }
+    defer { freeaddrinfo(info) }
+
+    var addresses: [String] = []
+    var cursor: UnsafeMutablePointer<addrinfo>? = info
+    while let current = cursor {
+        if let address = numericAddress(from: current.pointee.ai_addr) {
+            addresses.append(address)
+        }
+        cursor = current.pointee.ai_next
+    }
+    return Array(NSOrderedSet(array: addresses)) as? [String] ?? addresses
+}
+
+private func numericAddress(from sockaddrPointer: UnsafeMutablePointer<sockaddr>?) -> String? {
+    guard let sockaddrPointer else { return nil }
+    let family = Int32(sockaddrPointer.pointee.sa_family)
+    var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+    let result = getnameinfo(
+        sockaddrPointer,
+        socklen_t(sockaddrPointer.pointee.sa_len),
+        &host,
+        socklen_t(host.count),
+        nil,
+        0,
+        NI_NUMERICHOST
+    )
+    guard result == 0 else { return nil }
+    let value = host.withUnsafeBufferPointer { buffer in
+        let end = buffer.firstIndex(of: 0) ?? buffer.endIndex
+        return String(decoding: buffer[..<end].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+    }
+    return family == AF_INET6 ? "[\(value)]" : value
+}
+
+private func tcpProbe(address: String, port: Int, timeoutMilliseconds: Int32) -> String {
+    let host = address.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    var hints = addrinfo(
+        ai_flags: AI_NUMERICHOST,
+        ai_family: AF_UNSPEC,
+        ai_socktype: SOCK_STREAM,
+        ai_protocol: IPPROTO_TCP,
+        ai_addrlen: 0,
+        ai_canonname: nil,
+        ai_addr: nil,
+        ai_next: nil
+    )
+    var info: UnsafeMutablePointer<addrinfo>?
+    let lookup = getaddrinfo(host, "\(port)", &hints, &info)
+    guard lookup == 0, let info else {
+        return "address parse failed: \(lookup)"
+    }
+    defer { freeaddrinfo(info) }
+
+    let fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
+    guard fd >= 0 else {
+        return "socket failed: errno \(errno)"
+    }
+    defer { close(fd) }
+
+    let flags = fcntl(fd, F_GETFL, 0)
+    _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+    let connectResult = connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen)
+    if connectResult == 0 {
+        return "connected"
+    }
+    guard errno == EINPROGRESS else {
+        return "connect failed: errno \(errno)"
+    }
+
+    var pollDescriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+    let selected = poll(&pollDescriptor, 1, timeoutMilliseconds)
+    if selected == 0 {
+        return "timed out"
+    }
+    if selected < 0 {
+        return "poll failed: errno \(errno)"
+    }
+
+    var socketError: Int32 = 0
+    var socketErrorLength = socklen_t(MemoryLayout<Int32>.size)
+    guard getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &socketErrorLength) == 0 else {
+        return "getsockopt failed: errno \(errno)"
+    }
+    return socketError == 0 ? "connected" : "connect failed: errno \(socketError)"
+}
+
 private enum SSHOperationContext {
     case connect
     case command
@@ -625,6 +888,35 @@ private func closedError(for operation: SSHOperationContext) -> SSHServiceError 
     case .appServer(let command):
         .appServerClosed(command: command, details: nil)
     }
+}
+
+private func diagnosticStage(for mapped: Error, fallback: Error) -> String {
+    if mapped is AuthenticationFailed {
+        return "auth"
+    }
+    if let serviceError = mapped as? SSHServiceError {
+        switch serviceError {
+        case .authenticationFailed, .missingPassword, .missingPrivateKey, .unsupportedPrivateKey:
+            return "auth"
+        case .connectionTimedOut, .hostUnreachable, .localNetworkPermissionDenied, .connectionFailed:
+            return "TCP"
+        case .hostKeyChanged:
+            return "SSH handshake"
+        case .connectionClosed:
+            return "SSH handshake"
+        case .appServerClosed:
+            return "app-server"
+        case .transportClosed, .invalidDiscoveryOutput, .remoteDirectoryBrowseFailed, .localFileNotReadable:
+            return "remote command"
+        }
+    }
+    if fallback is NIOConnectionError {
+        return "TCP"
+    }
+    if fallback is SSHClientError {
+        return "auth"
+    }
+    return "SSH handshake"
 }
 
 private final class SSHAppServerProcessTransport: CodexLineTransport, @unchecked Sendable {

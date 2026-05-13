@@ -292,11 +292,11 @@ private fun ServerPane(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(if (server.id == state.selectedServerID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
+                            .background(Color.Transparent),
                     )
                     TextButton(
                         onClick = {
-                            model.selectServerAndConnect(server.id)
+                            model.switchServerFromList(server.id)
                             onOpenProjects()
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -324,12 +324,10 @@ private fun ProjectSessionPane(
     var showInactive by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     val server = state.selectedServer
+    val connectionMode = state.connectionState == ServerConnectionState.Connecting
 
     Column(modifier) {
         PaneHeader(server?.displayName ?: "Mobidex", Icons.Default.FolderOpen) {
-            IconButton(onClick = { model.startNewSession() }, enabled = state.canCreateSession) {
-                Icon(Icons.Default.Add, contentDescription = "New Session")
-            }
             IconButton(onClick = { model.refreshProjects() }, enabled = server != null && state.connectionState == ServerConnectionState.Connected) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh Projects")
             }
@@ -346,10 +344,10 @@ private fun ProjectSessionPane(
             Text(server.endpointLabel, style = MaterialTheme.typography.bodyMedium)
             StatusRow(state)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { model.connectSelectedServer() }) {
-                    Text(if (state.connectionState == ServerConnectionState.Connected) "Reconnect Codex" else "Connect Codex")
+                Button(onClick = { model.connectSelectedServer() }, enabled = !connectionMode) {
+                    Text(if (state.connectionState == ServerConnectionState.Connected) "Reconnect" else "Connect")
                 }
-                OutlinedButton(onClick = { showTerminal = true }) {
+                OutlinedButton(onClick = { showTerminal = true }, enabled = !connectionMode) {
                     Icon(Icons.Default.Description, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("Terminal")
@@ -371,8 +369,8 @@ private fun ProjectSessionPane(
             )
         } else {
             when (mode) {
-                ProjectSessionMode.Projects -> ProjectList(state, model, search, showInactive, { search = it }, { showInactive = it }, onOpenSessions = { mode = ProjectSessionMode.Sessions })
-                ProjectSessionMode.Sessions -> ThreadList(state, model, onOpenDetail)
+                ProjectSessionMode.Projects -> ProjectList(state, model, search, showInactive, { search = it }, { showInactive = it }, disabled = connectionMode, onOpenSessions = { mode = ProjectSessionMode.Sessions })
+                ProjectSessionMode.Sessions -> ThreadList(state, model, disabled = connectionMode, onOpenDetail = onOpenDetail)
             }
         }
     }
@@ -591,10 +589,11 @@ private fun ProjectList(
     showInactive: Boolean,
     onSearchChange: (String) -> Unit,
     onShowInactiveChange: (Boolean) -> Unit,
+    disabled: Boolean = false,
     onOpenSessions: () -> Unit,
 ) {
     val sections = model.projectSections(search, showInactive, state.showsArchivedSessions)
-    val contentIsLoading = state.isDiscoveringProjects
+    val contentIsLoading = state.isDiscoveringProjects || disabled
     val contentAlpha = if (contentIsLoading) 0.42f else 1f
 
     Column {
@@ -735,13 +734,20 @@ internal fun projectSupportingLabels(project: ProjectRecord): List<String> {
 }
 
 @Composable
-private fun ThreadList(state: MobidexUiState, model: AppViewModel, onOpenDetail: () -> Unit) {
-    val contentAlpha = if (state.isRefreshingSessions) 0.42f else 1f
+private fun ThreadList(state: MobidexUiState, model: AppViewModel, disabled: Boolean = false, onOpenDetail: () -> Unit) {
+    val contentDisabled = state.isRefreshingSessions || disabled
+    val contentAlpha = if (contentDisabled) 0.42f else 1f
     Column(Modifier.fillMaxSize()) {
+        state.selectedProject?.let { project ->
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text(project.displayName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
         FilterChip(
             selected = state.showsArchivedSessions,
             onClick = { model.setShowsArchivedSessions(!state.showsArchivedSessions) },
-            enabled = !state.isRefreshingSessions,
+            enabled = !contentDisabled,
             label = { Text("Show archived sessions") },
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).graphicsLayer { alpha = contentAlpha },
         )
@@ -775,7 +781,7 @@ private fun ThreadList(state: MobidexUiState, model: AppViewModel, onOpenDetail:
                             model.openThread(thread)
                             onOpenDetail()
                         },
-                        enabled = !state.isRefreshingSessions,
+                        enabled = !contentDisabled,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Open") }
                     HorizontalDivider()
@@ -915,6 +921,11 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
         Column(Modifier.weight(1f)) {
             Text(project.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Button(onClick = { model.startNewSession() }, enabled = state.canCreateSession) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Spacer(Modifier.width(6.dp))
+            Text("New Session")
         }
     }
     HorizontalDivider()
@@ -1109,7 +1120,9 @@ private fun Composer(
                     }
                 }
             }
-            if (state.tokenUsagePercent != null) Text("${state.tokenUsagePercent}%", style = MaterialTheme.typography.labelMedium)
+            state.tokenUsagePercent?.let { percent ->
+                ContextUsageIndicator(percent)
+            }
             Spacer(Modifier.weight(1f))
             Box {
                 SendIconButton(
@@ -1120,6 +1133,13 @@ private fun Composer(
                 )
                 DropdownMenu(expanded = showSendOptions, onDismissRequest = { showSendOptions = false }) {
                     DropdownMenuItem(
+                        text = { Text("Send to Codex") },
+                        onClick = {
+                            showSendOptions = false
+                            onSend()
+                        },
+                    )
+                    DropdownMenuItem(
                         text = { Text("Send as Follow-up") },
                         onClick = {
                             showSendOptions = false
@@ -1128,6 +1148,26 @@ private fun Composer(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ContextUsageIndicator(percent: Int) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }, modifier = Modifier.size(36.dp)) {
+            CircularProgressIndicator(
+                progress = { (percent.coerceIn(0, 100) / 100f) },
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Context window $percent% used") },
+                onClick = { expanded = false },
+            )
         }
     }
 }

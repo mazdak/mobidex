@@ -104,7 +104,7 @@ data class MobidexUiState(
         get() = connectionState == ServerConnectionState.Connected
 
     val canCreateSession: Boolean
-        get() = connectionState == ServerConnectionState.Connected && !isBusy
+        get() = connectionState == ServerConnectionState.Connected && selectedProject != null && selectedThread == null && !isBusy
 
     val activeTurnID: String?
         get() = selectedThread?.turns?.lastOrNull { it.status == "inProgress" }?.id
@@ -170,6 +170,17 @@ class AppViewModel(
                 statusMessage = null,
                 tokenUsagePercent = null,
             )
+        }
+    }
+
+    fun switchServerFromList(serverID: String?) {
+        viewModelScope.launch {
+            if (_state.value.selectedServerID == serverID) return@launch
+            if (_state.value.connectionState == ServerConnectionState.Connected || _state.value.connectionState == ServerConnectionState.Connecting) {
+                disconnectInternal(updateState = false)
+                _state.update { it.copy(connectionState = ServerConnectionState.Disconnected) }
+            }
+            selectServer(serverID)
         }
     }
 
@@ -416,7 +427,7 @@ class AppViewModel(
                 val refreshGeneration = beginSessionRefresh()
                 var refreshHandedOff = false
                 try {
-                    _state.update { it.copy(connectionState = ServerConnectionState.Connected, statusMessage = "App-server connected.") }
+                    _state.update { it.copy(connectionState = ServerConnectionState.Connected, statusMessage = "Server connected.") }
                     refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = false)
                     refreshThreads(refreshGeneration = refreshGeneration)
                     refreshHandedOff = true
@@ -437,7 +448,7 @@ class AppViewModel(
         viewModelScope.launch {
             runBusy("Syncing projects") {
                 val server = _state.value.selectedServer ?: return@runBusy
-                val client = appServer ?: error("Connect to the app-server before syncing projects.")
+                val client = appServer ?: error("Connect to the server before syncing projects.")
                 refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = true)
             }
         }
@@ -552,7 +563,7 @@ class AppViewModel(
                 val requestServerID = state.selectedServerID
                 val requestProjectID = state.selectedProjectID
                 val requestThreadID = state.selectedThreadID
-                val cwd = state.selectedProject?.path ?: state.selectedThread?.cwd ?: return@runBusy
+                val cwd = state.selectedProject?.path ?: return@runBusy
                 val thread = client.startThread(cwd)
                 hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID)
                 _state.update { current ->
@@ -586,7 +597,7 @@ class AppViewModel(
             var didSubmitInput = false
             try {
                 runBusy(if (attachmentUris.isEmpty()) "Sending" else "Uploading attachments") {
-                    val client = appServer ?: error("Connect to the app-server before sending a message.")
+                    val client = appServer ?: error("Connect to the server before sending a message.")
                     val requestState = _state.value
                     val requestServerID = requestState.selectedServerID
                     val requestProjectID = requestState.selectedProjectID
@@ -782,7 +793,7 @@ class AppViewModel(
                     servers = servers,
                     connectionState = ServerConnectionState.Disconnected,
                     pendingApprovals = emptyList(),
-                    statusMessage = "App-server disconnected.",
+                    statusMessage = "Server disconnected.",
                 )
             }
         }

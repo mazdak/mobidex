@@ -11,6 +11,7 @@ struct ConversationView: View {
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isFileImporterPresented = false
     @State private var attachmentAlert: AttachmentAlert?
+    @State private var showsContextPopover = false
     @State private var isTimelineNearBottom = true
     @State private var timelineDistanceFromBottom: CGFloat = 0
     @State private var autoFollowStreaming = true
@@ -158,6 +159,14 @@ struct ConversationView: View {
                     .lineLimit(1)
             }
             Spacer()
+            Button {
+                Task { await model.startNewSession() }
+            } label: {
+                Label("New Session", systemImage: "plus.bubble")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.canCreateSession)
+            .accessibilityIdentifier("projectNewSessionButton")
         }
         .padding()
     }
@@ -407,7 +416,7 @@ struct ConversationView: View {
     }
 
     private var sendVisuallyUnavailable: Bool {
-        !hasComposerInput || model.connectionState != .connected || model.isSelectedThreadLoading
+        !hasComposerInput || model.connectionState != .connected
     }
 
     private var composerControlRow: some View {
@@ -532,6 +541,9 @@ struct ConversationView: View {
         .disabled(sendDisabled)
         .contextMenu {
             if model.selectedThread?.status.isActive == true {
+                Button("Send to Codex") {
+                    submitComposerInput(queueWhenActive: false)
+                }
                 Button("Send as Follow-up") {
                     submitComposerInput(queueWhenActive: true)
                 }
@@ -570,32 +582,34 @@ struct ConversationView: View {
     private var contextIndicator: some View {
         let fraction = model.contextUsageFraction
         let percent = model.contextUsagePercent
-        return HStack(spacing: 5) {
+        return Button {
+            showsContextPopover = true
+        } label: {
             ZStack {
                 Circle()
                     .stroke(Color.secondary.opacity(0.25), lineWidth: 3)
-                    .frame(width: 18, height: 18)
+                    .frame(width: 20, height: 20)
                 if let fraction {
                     Circle()
                         .trim(from: 0, to: fraction)
                         .stroke(Color.secondary, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                        .frame(width: 18, height: 18)
+                        .frame(width: 20, height: 20)
                 }
             }
-            if let percent {
-                Text("\(percent)%")
-                    .font(.caption2.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showsContextPopover) {
+            Text(percent.map { "Context window \($0)% used" } ?? "Context window unavailable")
+                .font(.caption)
+                .padding(10)
+                .presentationCompactAdaptation(.popover)
         }
         .accessibilityLabel(percent.map { "Context window \($0) percent used" } ?? "Context window")
     }
 
     private var shouldShowContextIndicator: Bool {
-        !model.isSelectedThreadLoading && model.contextUsagePercent != nil
+        model.contextUsagePercent != nil
     }
 
     private var attachmentStrip: some View {

@@ -99,8 +99,8 @@ data class SSHCredential(
 )
 
 enum class ServerConnectionState(val label: String) {
-    Disconnected("App-server disconnected"),
-    Connecting("Connecting app-server"),
-    Connected("App-server connected"),
+    Disconnected("Server disconnected"),
+    Connecting("Connecting server"),
+    Connected("Server connected"),
     Failed("Connection failed"),
 }

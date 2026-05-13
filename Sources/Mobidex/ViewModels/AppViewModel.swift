@@ -159,6 +159,8 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var pendingApprovals: [PendingApproval] = []
     @Published private(set) var connectionState: ServerConnectionState = .disconnected
     @Published private(set) var appServerReconnectStatus: AppServerReconnectStatus?
+    @Published private(set) var connectionDiagnosticReport: SSHDiagnosticReport?
+    @Published private(set) var isRunningConnectionDiagnostics = false
     @Published private(set) var statusMessage: String?
     @Published var statusAlert: StatusAlert?
     @Published private(set) var changedFiles: [String] = []
@@ -239,7 +241,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var canSendMessage: Bool {
-        appServer != nil && !isSelectedThreadLoading && !isSessionMutationInFlight
+        appServer != nil && !isSessionMutationInFlight
     }
 
     var canInterruptActiveTurn: Bool {
@@ -255,7 +257,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var canCreateSession: Bool {
-        appServer != nil && (selectedProject != nil || selectedThread != nil) && !isSessionMutationInFlight
+        appServer != nil && selectedProject != nil && selectedThread == nil && !isSessionMutationInFlight
     }
 
     var sessionSections: [SessionListSection] {
@@ -648,6 +650,37 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func diagnoseSelectedConnection() async {
+        guard let selectedServer else { return }
+        isRunningConnectionDiagnostics = true
+        statusMessage = "Running connection diagnostics"
+        defer {
+            isRunningConnectionDiagnostics = false
+        }
+        let credential: SSHCredential
+        do {
+            credential = try await loadCredentialFromStore(serverID: selectedServer.id)
+        } catch {
+            connectionDiagnosticReport = SSHDiagnosticReport(
+                host: selectedServer.endpointLabel,
+                resolvedAddresses: [],
+                tcpResults: [],
+                hostKeyFingerprint: nil,
+                authMethod: selectedServer.authMethod.label.lowercased(),
+                failureStage: "auth",
+                rawUnderlyingErrorType: String(reflecting: type(of: error)),
+                rawUnderlyingError: String(describing: error),
+                remoteCommandResult: nil,
+                appServerResult: nil
+            )
+            statusMessage = "Connection diagnostics failed."
+            return
+        }
+        let report = await sshService.diagnoseConnection(server: selectedServer, credential: credential)
+        connectionDiagnosticReport = report
+        statusMessage = report.summary
+    }
+
     func ensureSelectedServerConnected() async {
         guard let serverID = selectedServerID else {
             return
@@ -753,7 +786,7 @@ final class AppViewModel: ObservableObject {
             startEventLoop()
             connectGeneration = connectionGeneration
             connectionState = .connected
-            statusMessage = "App-server connected."
+            statusMessage = "Server connected."
         }
 
         guard didConnect, let credential else {
@@ -780,7 +813,7 @@ final class AppViewModel: ObservableObject {
         } && syncSucceeded
 
         if syncSucceeded, connectionState == .connected, connectionGeneration == connectGeneration {
-            statusMessage = "App-server connected."
+            statusMessage = "Server connected."
         }
     }
 
@@ -851,14 +884,14 @@ final class AppViewModel: ObservableObject {
     func startNewSession() async {
         guard let cwd = selectedProject?.path ?? selectedThread?.cwd else { return }
         guard appServer != nil else {
-            statusMessage = "Connect to the app-server before starting a new session."
+            statusMessage = "Connect to the server before starting a new session."
             return
         }
         guard !isOperationActive(.startingSession) else { return }
         let scope = currentThreadLoadScope
         await runOperation(.startingSession, status: "Starting session") {
             guard let appServer else {
-                statusMessage = "Connect to the app-server before starting a new session."
+                statusMessage = "Connect to the server before starting a new session."
                 return
             }
             let thread = try await appServer.startThread(cwd: cwd)
@@ -954,7 +987,7 @@ final class AppViewModel: ObservableObject {
     @discardableResult
     func refreshDiffSnapshot(cwd explicitCwd: String? = nil) async -> GitDiffSnapshot {
         guard appServer != nil else {
-            statusMessage = "Connect to the app-server before checking changed files."
+            statusMessage = "Connect to the server before checking changed files."
             return .empty
         }
         let scope = currentThreadLoadScope
@@ -987,11 +1020,7 @@ final class AppViewModel: ObservableObject {
     ) async -> Bool {
         guard !baseInput.isEmpty || !localAttachmentPaths.isEmpty else { return false }
         guard appServer != nil else {
-            statusMessage = "Connect to the app-server before sending a message."
-            return false
-        }
-        guard !isSelectedThreadLoading else {
-            statusMessage = "Wait for the session to finish loading before sending a message."
+            statusMessage = "Connect to the server before sending a message."
             return false
         }
         guard !isOperationActive(.sending) else { return false }
@@ -1661,7 +1690,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         connectionState = .connecting
-        statusMessage = "\(message) Reconnecting app-server."
+        statusMessage = "\(message) Reconnecting server."
         scheduleAppServerReconnect(serverID: serverID, disconnectMessage: message)
     }
 
@@ -1732,7 +1761,7 @@ final class AppViewModel: ObservableObject {
         if appServer == nil {
             if shouldAttemptAppServerReconnect(serverID: serverID) {
                 connectionState = .connecting
-                statusMessage = "\(disconnectMessage) Reconnecting app-server."
+                statusMessage = "\(disconnectMessage) Reconnecting server."
                 scheduleAppServerReconnect(serverID: serverID, disconnectMessage: disconnectMessage)
             } else {
                 appServerReconnectStatus = nil

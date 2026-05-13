@@ -94,7 +94,7 @@ object RemoteCodexAppServerCommand {
     private fun shellEnvironmentBootstrapCommand(targetShellRCFile: String): String =
         listOf(
             targetShellRCBootstrapCommand(targetShellRCFile),
-            "export PATH=\"\$HOME/.bun/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"",
+            "export PATH=\"\$HOME/.bun/bin:\$HOME/.cargo/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"",
         ).joinToString("; ")
 
     private fun targetShellRCBootstrapCommand(targetShellRCFile: String): String {
@@ -105,6 +105,7 @@ object RemoteCodexAppServerCommand {
 
     private val codexCandidates = listOf(
         "\$HOME/.bun/bin/codex",
+        "\$HOME/.cargo/bin/codex",
         "\$HOME/.local/bin/codex",
         "\$HOME/.npm-global/bin/codex",
         "/opt/homebrew/bin/codex",

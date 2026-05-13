@@ -89,7 +89,7 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertEqual(
             server.appServerCommand,
-            "mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi; export PATH=\"$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://"
+            "mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi; export PATH=\"$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://"
         )
     }
 
@@ -167,7 +167,7 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertEqual(
             server.appServerCommand,
-            "mobidex_shell_rc=\"${HOME}\"/'.zshrc'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi; export PATH=\"$HOME/.bun/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; \"${HOME}\"/'.bun/bin/codex' app-server --listen stdio://"
+            "mobidex_shell_rc=\"${HOME}\"/'.zshrc'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi; export PATH=\"$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; \"${HOME}\"/'.bun/bin/codex' app-server --listen stdio://"
         )
     }
 
@@ -257,6 +257,20 @@ private func legacyHostKeyPinKey(serverID: UUID, host: String, port: Int) -> Str
 
 private struct CredentialStorageStubSSHService: SSHService {
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws {}
+    func diagnoseConnection(server: ServerRecord, credential: SSHCredential) async -> SSHDiagnosticReport {
+        SSHDiagnosticReport(
+            host: server.endpointLabel,
+            resolvedAddresses: [],
+            tcpResults: [],
+            hostKeyFingerprint: nil,
+            authMethod: server.authMethod.label.lowercased(),
+            failureStage: nil,
+            rawUnderlyingErrorType: nil,
+            rawUnderlyingError: nil,
+            remoteCommandResult: nil,
+            appServerResult: nil
+        )
+    }
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] { [] }
     func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
         RemoteDirectoryListing(path: path, entries: [])

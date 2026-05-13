@@ -25,7 +25,7 @@ final class MobidexUITests: XCTestCase {
         XCTAssertTrue(projectRow.waitForExistence(timeout: timeout), "Seeded project row did not appear.")
         projectRow.tap()
 
-        let newSessionButton = app.buttons["newSessionButton"]
+        let newSessionButton = app.buttons["projectNewSessionButton"]
         XCTAssertTrue(waitForEnabled(newSessionButton, timeout: timeout), "New Session button did not become enabled after opening the seeded project.")
         newSessionButton.tap()
 

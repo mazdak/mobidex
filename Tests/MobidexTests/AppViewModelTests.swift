@@ -237,7 +237,7 @@ final class AppViewModelTests: XCTestCase {
 
         try await connectWithSingleOpenSessionAfterReconnect(in: viewModel, transport: secondTransport)
         try await waitForConnectionState(.connected, in: viewModel)
-        try await waitForStatusMessage("App-server connected.", in: viewModel)
+        try await waitForStatusMessage("Server connected.", in: viewModel)
         XCTAssertNil(viewModel.appServerReconnectStatus)
         XCTAssertEqual(sshService.openAppServerCallCount, 2)
         let reconnectedProject = try XCTUnwrap(viewModel.selectedServer?.projects.first)
@@ -277,7 +277,7 @@ final class AppViewModelTests: XCTestCase {
         firstTransport.finishInbound(throwing: ChannelError.inputClosed)
 
         try await connectWithSingleOpenSessionAfterReconnect(in: viewModel, transport: secondTransport)
-        try await waitForStatusMessage("App-server connected.", in: viewModel)
+        try await waitForStatusMessage("Server connected.", in: viewModel)
         XCTAssertEqual(sshService.openAppServerCallCount, 3)
         XCTAssertEqual(viewModel.connectionState, .connected)
         XCTAssertEqual(viewModel.selectedServer?.projects.first?.activeChatCount, 1)
@@ -545,7 +545,7 @@ final class AppViewModelTests: XCTestCase {
         await connectTask.value
 
         try await connectWithSingleOpenSessionAfterReconnect(in: viewModel, transport: secondTransport)
-        try await waitForStatusMessage("App-server connected.", in: viewModel)
+        try await waitForStatusMessage("Server connected.", in: viewModel)
         XCTAssertEqual(sshService.openAppServerCallCount, 2)
         XCTAssertEqual(viewModel.connectionState, .connected)
     }
@@ -1288,7 +1288,7 @@ final class AppViewModelTests: XCTestCase {
         viewModel.selectProject(project.id)
         await viewModel.startNewSession()
 
-        XCTAssertEqual(viewModel.statusMessage, "Connect to the app-server before starting a new session.")
+        XCTAssertEqual(viewModel.statusMessage, "Connect to the server before starting a new session.")
     }
 
     @MainActor
@@ -1560,7 +1560,7 @@ final class AppViewModelTests: XCTestCase {
         let read = try await waitForRequest(method: "thread/resume", in: transport, after: cursor)
         XCTAssertTrue(viewModel.isSelectedThreadLoading)
         XCTAssertTrue(viewModel.isAppServerConnected)
-        XCTAssertFalse(viewModel.canSendMessage)
+        XCTAssertTrue(viewModel.canSendMessage)
         transport.receive("""
         {"id":\(read.id),"result":{"thread":{
           "id":"thread-1",
@@ -3170,10 +3170,7 @@ final class AppViewModelTests: XCTestCase {
         )
         let openTask = Task { await viewModel.openThread(thread) }
         let read = try await waitForRequest(method: "thread/resume", in: transport, after: cursor)
-        XCTAssertFalse(viewModel.canSendMessage)
-        await viewModel.sendComposerText("Should not send yet")
-        XCTAssertFalse(transport.sentLinesSnapshot[cursor...].contains { methodName($0) == "turn/start" })
-        XCTAssertEqual(viewModel.statusMessage, "Wait for the session to finish loading before sending a message.")
+        XCTAssertTrue(viewModel.canSendMessage)
         cursor = read.nextCursor
         transport.receive("""
         {"id":\(read.id),"result":{"thread":{
@@ -3641,7 +3638,7 @@ final class AppViewModelTests: XCTestCase {
         let pendingInitialRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
         cursor = pendingInitialRead.nextCursor
         try await waitForSelectedThreadID("thread-active", in: viewModel)
-        XCTAssertFalse(viewModel.canSendMessage)
+        XCTAssertTrue(viewModel.canSendMessage)
         transport.receive("""
         {"id":\(pendingInitialRead.id),"result":{"thread":{
           "id":"thread-active",
@@ -4695,6 +4692,20 @@ private final class BlockingOpenSSHService: SSHService, @unchecked Sendable {
     }
 
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws {}
+    func diagnoseConnection(server: ServerRecord, credential: SSHCredential) async -> SSHDiagnosticReport {
+        SSHDiagnosticReport(
+            host: server.endpointLabel,
+            resolvedAddresses: [],
+            tcpResults: [],
+            hostKeyFingerprint: nil,
+            authMethod: server.authMethod.label.lowercased(),
+            failureStage: nil,
+            rawUnderlyingErrorType: nil,
+            rawUnderlyingError: nil,
+            remoteCommandResult: "mobidex-ready",
+            appServerResult: "initialized"
+        )
+    }
 
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] {
         []
@@ -4806,6 +4817,21 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         }
     }
 
+    func diagnoseConnection(server: ServerRecord, credential: SSHCredential) async -> SSHDiagnosticReport {
+        SSHDiagnosticReport(
+            host: server.endpointLabel,
+            resolvedAddresses: [],
+            tcpResults: [],
+            hostKeyFingerprint: nil,
+            authMethod: server.authMethod.label.lowercased(),
+            failureStage: testConnectionError == nil ? nil : "SSH handshake",
+            rawUnderlyingErrorType: testConnectionError.map { String(reflecting: type(of: $0)) },
+            rawUnderlyingError: testConnectionError.map { String(describing: $0) },
+            remoteCommandResult: testConnectionError == nil ? "mobidex-ready" : nil,
+            appServerResult: testConnectionError == nil ? "initialized" : nil
+        )
+    }
+
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] {
         lock.withLock {
             guard !discoveredProjectBatches.isEmpty else {
@@ -4892,6 +4918,21 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
         if let testConnectionError {
             throw testConnectionError
         }
+    }
+
+    func diagnoseConnection(server: ServerRecord, credential: SSHCredential) async -> SSHDiagnosticReport {
+        SSHDiagnosticReport(
+            host: server.endpointLabel,
+            resolvedAddresses: [],
+            tcpResults: [],
+            hostKeyFingerprint: nil,
+            authMethod: server.authMethod.label.lowercased(),
+            failureStage: testConnectionError == nil ? nil : "SSH handshake",
+            rawUnderlyingErrorType: testConnectionError.map { String(reflecting: type(of: $0)) },
+            rawUnderlyingError: testConnectionError.map { String(describing: $0) },
+            remoteCommandResult: testConnectionError == nil ? "mobidex-ready" : nil,
+            appServerResult: testConnectionError == nil ? "initialized" : nil
+        )
     }
 
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] {
