@@ -50,8 +50,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -205,7 +207,7 @@ private fun WideMobidexApp(
     Row(Modifier.fillMaxSize()) {
         ServerPane(state, model, onAddServer, onEditServer, Modifier.width(300.dp).fillMaxHeight())
         VerticalDivider(Modifier.fillMaxHeight())
-        ProjectSessionPane(state, model, onAddProject, Modifier.width(380.dp).fillMaxHeight())
+        ProjectSessionPane(state, model, onAddProject, onEditServer, Modifier.width(380.dp).fillMaxHeight())
         VerticalDivider(Modifier.fillMaxHeight())
         ConversationPane(state, model, Modifier.weight(1f).fillMaxHeight())
     }
@@ -244,7 +246,7 @@ private fun CompactMobidexApp(
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
                 0 -> ServerPane(state, model, onAddServer, onEditServer, Modifier.fillMaxSize(), onOpenProjects = { tab = 1 })
-                1 -> ProjectSessionPane(state, model, onAddProject, Modifier.fillMaxSize(), onOpenDetail = { tab = 2 })
+                1 -> ProjectSessionPane(state, model, onAddProject, onEditServer, Modifier.fillMaxSize(), onOpenDetail = { tab = 2 })
                 else -> ConversationPane(state, model, Modifier.fillMaxSize())
             }
         }
@@ -267,6 +269,7 @@ private fun ServerPane(
     modifier: Modifier = Modifier,
     onOpenProjects: () -> Unit = {},
 ) {
+    var serverPendingDeletion by remember { mutableStateOf<ServerRecord?>(null) }
     Column(modifier) {
         PaneHeader("Servers", Icons.Default.Storage) {
             IconButton(onClick = onAddServer) {
@@ -285,7 +288,7 @@ private fun ServerPane(
                         trailingContent = {
                             Row {
                                 TextButton(onClick = { onEditServer(server) }) { Text("Edit") }
-                                IconButton(onClick = { model.deleteServer(server) }) {
+                                IconButton(onClick = { serverPendingDeletion = server }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Delete Server")
                                 }
                             }
@@ -308,6 +311,17 @@ private fun ServerPane(
             }
         }
     }
+
+    serverPendingDeletion?.let { pending ->
+        DeleteServerConfirmationDialog(
+            server = pending,
+            onDismiss = { serverPendingDeletion = null },
+            onConfirm = {
+                serverPendingDeletion = null
+                model.deleteServer(pending)
+            },
+        )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -316,6 +330,7 @@ private fun ProjectSessionPane(
     state: MobidexUiState,
     model: AppViewModel,
     onAddProject: () -> Unit,
+    onEditServer: (ServerRecord) -> Unit,
     modifier: Modifier = Modifier,
     onOpenDetail: () -> Unit = {},
 ) {
@@ -323,6 +338,7 @@ private fun ProjectSessionPane(
     var search by remember { mutableStateOf("") }
     var showInactive by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
+    var serverPendingDeletion by remember { mutableStateOf<ServerRecord?>(null) }
     val server = state.selectedServer
     val connectionMode = state.connectionState == ServerConnectionState.Connecting
 
@@ -333,6 +349,13 @@ private fun ProjectSessionPane(
             }
             IconButton(onClick = onAddProject, enabled = server != null) {
                 Icon(Icons.Default.Add, contentDescription = "Add Project")
+            }
+            if (server != null) {
+                SelectedServerActionsMenu(
+                    server = server,
+                    onEditServer = onEditServer,
+                    onDeleteServer = { serverPendingDeletion = it },
+                )
             }
         }
         if (server == null) {
@@ -372,6 +395,72 @@ private fun ProjectSessionPane(
                 ProjectSessionMode.Projects -> ProjectList(state, model, search, showInactive, { search = it }, { showInactive = it }, disabled = connectionMode, onOpenSessions = { mode = ProjectSessionMode.Sessions })
                 ProjectSessionMode.Sessions -> ThreadList(state, model, disabled = connectionMode, onOpenDetail = onOpenDetail)
             }
+        }
+    }
+
+    serverPendingDeletion?.let { pending ->
+        DeleteServerConfirmationDialog(
+            server = pending,
+            onDismiss = { serverPendingDeletion = null },
+            onConfirm = {
+                serverPendingDeletion = null
+                model.deleteServer(pending)
+            },
+        )
+    }
+}
+
+@Composable
+private fun DeleteServerConfirmationDialog(
+    server: ServerRecord,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete server?") },
+        text = { Text("This removes ${server.displayName} and its saved credentials from Mobidex.") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun SelectedServerActionsMenu(
+    server: ServerRecord,
+    onEditServer: (ServerRecord) -> Unit,
+    onDeleteServer: (ServerRecord) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = "Server Actions")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Edit Settings") },
+                leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                onClick = {
+                    expanded = false
+                    onEditServer(server)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Delete Server", color = MaterialTheme.colorScheme.error) },
+                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                onClick = {
+                    expanded = false
+                    onDeleteServer(server)
+                },
+            )
         }
     }
 }
@@ -677,12 +766,9 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
         supportingContent = {
             Column {
                 Text(project.path, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                projectSupportingLabels(project).forEach { label ->
-                    Text(label, style = MaterialTheme.typography.labelSmall)
-                }
             }
         },
-        leadingContent = { Icon(if (project.id == state.selectedProjectID) Icons.Default.FolderOpen else Icons.Default.Folder, contentDescription = null) },
+        leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
         trailingContent = {
             Row {
                 IconButton(onClick = { model.setProjectFavorite(project, !project.isFavorite) }, enabled = enabled) {
@@ -696,8 +782,7 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
             }
         },
         modifier = Modifier
-            .fillMaxWidth()
-            .background(if (project.id == state.selectedProjectID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
+            .fillMaxWidth(),
     )
     TextButton(
         onClick = {
@@ -711,37 +796,22 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
     }
 }
 
-internal fun projectSupportingLabels(project: ProjectRecord): List<String> {
-    return buildList {
-        if (project.discovered) {
-            if (project.activeChatCount > 0) {
-                add(if (project.activeChatCount == 1) "1 loaded in app-server" else "${project.activeChatCount} loaded in app-server")
-            }
-            if (project.discoveredSessionCount > 0) {
-                add(if (project.discoveredSessionCount == 1) "1 discovered session" else "${project.discoveredSessionCount} discovered sessions")
-            }
-            if (project.archivedSessionCount > 0) {
-                add(if (project.archivedSessionCount == 1) "1 archived session" else "${project.archivedSessionCount} archived sessions")
-            }
-            if (project.activeChatCount == 0 && project.discoveredSessionCount == 0 && project.archivedSessionCount == 0) {
-                add("No loaded sessions")
-            }
-            if (project.sessionPaths.size > 1) {
-                add("${project.sessionPaths.size} worktree paths grouped")
-            }
-        }
-    }
-}
-
 @Composable
 private fun ThreadList(state: MobidexUiState, model: AppViewModel, disabled: Boolean = false, onOpenDetail: () -> Unit) {
     val contentDisabled = state.isRefreshingSessions || disabled
     val contentAlpha = if (contentDisabled) 0.42f else 1f
     Column(Modifier.fillMaxSize()) {
         state.selectedProject?.let { project ->
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text(project.displayName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(
+                Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f)) {
+                    Text("Sessions in ${project.displayName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         FilterChip(
@@ -751,9 +821,6 @@ private fun ThreadList(state: MobidexUiState, model: AppViewModel, disabled: Boo
             label = { Text("Show archived sessions") },
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).graphicsLayer { alpha = contentAlpha },
         )
-        if (state.isRefreshingSessions) {
-            LoadingListStatusRow("Loading sessions...")
-        }
         if (state.threads.isEmpty()) {
             EmptyState(
                 sessionEmptyTitle(state),
@@ -850,14 +917,14 @@ private fun macOSPrivacyWarningForConversation(state: MobidexUiState): String? =
 
 internal fun sessionEmptyTitle(state: MobidexUiState): String =
     when {
-        state.isRefreshingSessions -> "Loading Sessions"
+        state.isRefreshingSessions -> "Loading Sessions..."
         state.connectionState == ServerConnectionState.Connected -> "No Sessions"
         else -> "Connect to Load Sessions"
     }
 
 internal fun projectSessionEmptyTitle(state: MobidexUiState): String =
     when {
-        state.isRefreshingSessions -> "Loading Sessions"
+        state.isRefreshingSessions -> "Loading Sessions..."
         state.connectionState == ServerConnectionState.Connected -> "No Sessions"
         else -> "Connect to Create a Session"
     }
@@ -1509,7 +1576,6 @@ private fun StatusRow(state: MobidexUiState) {
         Text(state.failureMessage ?: state.connectionState.label, color = connectionColor(state.connectionState), style = MaterialTheme.typography.bodySmall)
         if (state.isBusy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
     }
-    if (!state.statusMessage.isNullOrBlank()) Text(state.statusMessage, style = MaterialTheme.typography.labelSmall)
 }
 
 @Composable

@@ -170,167 +170,45 @@ struct ProjectSessionListView: View {
     @State private var skipNextAllSessionsRefresh = false
     @State private var showingTerminal = false
     @State private var showingDiagnostics = false
+    @State private var editingServer: ServerRecord?
+    @State private var serverPendingDeletion: ServerRecord?
+    @State private var isDeleteServerConfirmationPresented = false
 
     var body: some View {
         Group {
             if let server = model.selectedServer {
                 List {
-                    Section {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(server.endpointLabel)
-                                    .font(.subheadline)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Text(model.connectionState.label)
-                                    .font(.caption)
-                                    .foregroundStyle(statusColor)
-                                if let reconnectStatus = model.appServerReconnectStatus {
-                                    Text(reconnectStatus.label)
-                                        .font(.caption2)
-                                        .foregroundStyle(.orange)
-                                }
-                            }
-                            Spacer()
-                            if model.isBusy {
-                                ProgressView()
-                            }
-                        }
-                        HStack {
-                            Button {
-                                Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
-                            } label: {
-                                ServerActionButtonLabel(
-                                    title: model.isAppServerConnected ? "Reconnect" : "Connect",
-                                    systemImage: "point.3.connected.trianglepath.dotted"
-                                )
-                            }
-                            .frame(maxWidth: .infinity)
-                            .disabled(model.connectionState == .connecting)
-                            .accessibilityIdentifier("connectButton")
-                            Button {
-                                showingTerminal = true
-                            } label: {
-                                ServerActionButtonLabel(title: "Terminal", systemImage: "terminal")
-                            }
-                            .frame(maxWidth: .infinity)
-                            .disabled(serverControlsDisabled)
-                            .accessibilityIdentifier("terminalButton")
-                            Button {
-                                showingDiagnostics = true
-                            } label: {
-                                ServerActionButtonLabel(title: "Doctor", systemImage: "stethoscope")
-                            }
-                            .frame(maxWidth: .infinity)
-                            .disabled(serverControlsDisabled || model.isRunningConnectionDiagnostics)
-                            .accessibilityIdentifier("connectionDiagnosticsButton")
-                        }
-                        .buttonStyle(.bordered)
-                    }
+                    serverControlsSection(server)
 
-                    Section {
-                        Picker("List", selection: $selectedMode) {
-                            ForEach(ProjectSessionMode.allCases) { mode in
-                                Text(mode.label).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                    }
-
-                    if contentIsLoading {
-                        Section {
-                            LoadingListStatusRow(title: loadingStatusTitle)
-                                .listRowSeparator(.hidden)
-                        }
-                    }
+                    LoadingSection(isLoading: selectedMode == .projects && contentIsLoading, title: "Loading projects...")
 
                     switch selectedMode {
                     case .projects:
                         let sections = projectSections(from: server.projects)
-                        if sections.showInactiveDiscoveredFilter {
-                            Section {
-                                Toggle("Show inactive discovered projects", isOn: $showInactiveDiscoveredProjects)
-                                    .font(.subheadline)
-                            }
-                            .disabled(serverContentDisabled)
-                            .opacity(contentOpacity)
-                        }
-                        if sections.showArchivedSessionFilter {
-                            Section {
-                                Toggle("Show archived sessions", isOn: $model.showsArchivedSessions)
-                                    .font(.subheadline)
-                            }
-                            .disabled(serverContentDisabled)
-                            .opacity(contentOpacity)
-                        }
-
-                        if !sections.favorites.isEmpty {
-                            Section("Favorites") {
-                                ForEach(sections.favorites) { project in
-                                    projectRow(project)
-                                }
-                            }
-                            .disabled(serverContentDisabled)
-                            .opacity(contentOpacity)
-                        }
-
-                        if !sections.discovered.isEmpty {
-                            Section(sections.discoveredTitle) {
-                                ForEach(sections.discovered) { project in
-                                    projectRow(project)
-                                }
-                            }
-                            .disabled(serverContentDisabled)
-                            .opacity(contentOpacity)
-                        }
-
-                        if sections.isEmpty {
-                            Section {
-                                ContentUnavailableView(
-                                    projectsUnavailableTitle(server: server, sections: sections),
-                                    systemImage: "folder"
-                                )
-                                .frame(maxWidth: .infinity, minHeight: 260)
-                                .listRowSeparator(.hidden)
-                            }
-                        }
+                        ProjectSectionsContent(
+                            sections: sections,
+                            unavailableTitle: projectsUnavailableTitle(server: server, sections: sections),
+                            serverContentDisabled: serverContentDisabled,
+                            contentOpacity: contentOpacity,
+                            showInactiveDiscoveredProjects: $showInactiveDiscoveredProjects,
+                            showsArchivedSessions: $model.showsArchivedSessions,
+                            selectedMode: $selectedMode,
+                            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
+                        )
                     case .sessions:
-                        if let project = model.selectedProject, !model.isShowingAllSessions {
-                            Section("Project") {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(project.displayName)
-                                        .font(.headline)
-                                    Text(project.path)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                                .padding(.vertical, 4)
-                            }
+                        SessionsContent(
+                            selectedProject: model.selectedProject,
+                            isShowingAllSessions: model.isShowingAllSessions,
+                            showsArchivedSessions: $model.showsArchivedSessions,
+                            sections: model.sessionSections,
+                            selectedThreadID: model.selectedThreadID,
+                            serverContentDisabled: serverContentDisabled,
+                            contentOpacity: contentOpacity
+                        ) { thread in
+                            promoteDetailIfCompact()
+                            Task { await model.openThread(thread) }
                         }
-                        Section {
-                            Toggle("Show archived sessions", isOn: $model.showsArchivedSessions)
-                                .font(.subheadline)
-                        }
-                        .disabled(serverContentDisabled)
-                        .opacity(contentOpacity)
 
-                        ForEach(model.sessionSections) { sessionSection in
-                            Section(sessionSection.title) {
-                                ForEach(sessionSection.threads) { thread in
-                                    Button {
-                                        promoteDetailIfCompact()
-                                        Task { await model.openThread(thread) }
-                                    } label: {
-                                        ThreadRow(thread: thread, selected: thread.id == model.selectedThreadID)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .accessibilityIdentifier("threadRow")
-                                }
-                            }
-                        }
-                        .disabled(serverContentDisabled)
-                        .opacity(contentOpacity)
                         if model.threads.isEmpty {
                             Section("Sessions") {
                                 ContentUnavailableView(
@@ -351,68 +229,148 @@ struct ProjectSessionListView: View {
                     ConnectionDiagnosticsView()
                         .environmentObject(model)
                 }
-                .safeAreaInset(edge: .bottom) {
-                    if let statusMessage = model.statusMessage, !statusMessage.isEmpty {
-                        Text(statusMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(.bar)
-                    }
-                }
                 .searchable(text: $projectSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search Projects")
                 .onChange(of: projectSearchText) { _, newValue in
-                    if !newValue.isEmpty {
-                        selectedMode = .projects
-                    }
+                    handleProjectSearchChange(newValue)
                 }
                 .onChange(of: selectedMode) { _, newValue in
-                    guard newValue == .sessions else { return }
-                    if skipNextAllSessionsRefresh {
-                        skipNextAllSessionsRefresh = false
-                        return
-                    }
-                    isSessionRefreshRequested = true
-                    Task {
-                        await model.selectAllSessionsAndRefresh()
-                        isSessionRefreshRequested = false
-                    }
+                    handleSelectedModeChange(newValue)
                 }
                 .onChange(of: model.showsArchivedSessions) { _, _ in
-                    guard model.isAppServerConnected else { return }
-                    isSessionRefreshRequested = true
-                    Task {
-                        await model.refreshThreads()
-                        isSessionRefreshRequested = false
-                    }
+                    handleArchivedSessionsChange()
                 }
                 .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button {
-                            Task { await model.refreshProjects() }
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                        }
-                        .disabled(serverControlsDisabled)
-                        .accessibilityLabel("Refresh Projects")
-
-                        Button {
-                            showingProjectAdd = true
-                        } label: {
-                            Image(systemName: "folder.badge.plus")
-                        }
-                        .disabled(serverControlsDisabled)
-                        .accessibilityLabel("Add Project")
-                    }
+                    SelectedServerToolbar(
+                        server: server,
+                        disabled: serverControlsDisabled,
+                        showingProjectAdd: $showingProjectAdd,
+                        editingServer: $editingServer,
+                        serverPendingDeletion: $serverPendingDeletion,
+                        isDeleteServerConfirmationPresented: $isDeleteServerConfirmationPresented
+                    )
                 }
                 .sheet(isPresented: $showingProjectAdd) {
                     ProjectAddView()
                 }
+                .sheet(item: $editingServer) { server in
+                    ServerEditorView(server: server)
+                }
+                .confirmationDialog(
+                    "Delete Server?",
+                    isPresented: $isDeleteServerConfirmationPresented,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete Server", role: .destructive) {
+                        confirmDeleteServer()
+                    }
+                    Button("Cancel", role: .cancel) {
+                        serverPendingDeletion = nil
+                    }
+                }
             } else {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
             }
+        }
+    }
+
+    private func handleProjectSearchChange(_ newValue: String) {
+        if !newValue.isEmpty {
+            selectedMode = .projects
+        }
+    }
+
+    private func handleSelectedModeChange(_ newValue: ProjectSessionMode) {
+        guard newValue == .sessions else { return }
+        if skipNextAllSessionsRefresh {
+            skipNextAllSessionsRefresh = false
+            return
+        }
+        isSessionRefreshRequested = true
+        Task {
+            await model.selectAllSessionsAndRefresh()
+            isSessionRefreshRequested = false
+        }
+    }
+
+    private func handleArchivedSessionsChange() {
+        guard model.isAppServerConnected else { return }
+        isSessionRefreshRequested = true
+        Task {
+            await model.refreshThreads()
+            isSessionRefreshRequested = false
+        }
+    }
+
+    private func deleteServer(_ server: ServerRecord) {
+        Task { await model.deleteServer(server) }
+    }
+
+    private func confirmDeleteServer() {
+        guard let server = serverPendingDeletion else { return }
+        serverPendingDeletion = nil
+        deleteServer(server)
+    }
+
+    @ViewBuilder
+    private func serverControlsSection(_ server: ServerRecord) -> some View {
+        Section {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(server.endpointLabel)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(model.connectionState.label)
+                        .font(.caption)
+                        .foregroundStyle(statusColor)
+                    if let reconnectStatus = model.appServerReconnectStatus {
+                        Text(reconnectStatus.label)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                Spacer()
+                if model.isBusy {
+                    ProgressView()
+                }
+            }
+            HStack {
+                Button {
+                    Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
+                } label: {
+                    ServerActionButtonLabel(
+                        title: model.isAppServerConnected ? "Reconnect" : "Connect",
+                        systemImage: "point.3.connected.trianglepath.dotted"
+                    )
+                }
+                .frame(maxWidth: .infinity)
+                .disabled(model.connectionState == .connecting)
+                .accessibilityIdentifier("connectButton")
+                Button {
+                    showingTerminal = true
+                } label: {
+                    ServerActionButtonLabel(title: "Terminal", systemImage: "terminal")
+                }
+                .frame(maxWidth: .infinity)
+                .disabled(serverControlsDisabled)
+                .accessibilityIdentifier("terminalButton")
+                Button {
+                    showingDiagnostics = true
+                } label: {
+                    ServerActionButtonLabel(title: "Doctor", systemImage: "stethoscope")
+                }
+                .frame(maxWidth: .infinity)
+                .disabled(serverControlsDisabled || model.isRunningConnectionDiagnostics)
+                .accessibilityIdentifier("connectionDiagnosticsButton")
+            }
+            .buttonStyle(.bordered)
+
+            Picker("List", selection: $selectedMode) {
+                ForEach(ProjectSessionMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
         }
     }
 
@@ -437,15 +395,6 @@ struct ProjectSessionListView: View {
         serverContentDisabled ? 0.42 : 1
     }
 
-    private var loadingStatusTitle: String {
-        switch selectedMode {
-        case .projects:
-            "Loading projects..."
-        case .sessions:
-            "Loading sessions..."
-        }
-    }
-
     private var statusColor: Color {
         switch model.connectionState {
         case .connected: .green
@@ -457,7 +406,7 @@ struct ProjectSessionListView: View {
 
     private var sessionsUnavailableTitle: String {
         if isSessionRefreshRequested || model.isRefreshingSessions {
-            return "Loading Sessions"
+            return "Loading Sessions..."
         }
         return model.connectionState == .connected ? "No Sessions" : "Connect to Load Sessions"
     }
@@ -495,18 +444,116 @@ struct ProjectSessionListView: View {
         return "No Projects"
     }
 
-    private func projectRow(_ project: ProjectRecord) -> some View {
-        Button {
-            model.selectProject(project.id)
-            if selectedMode == .sessions {
-                skipNextAllSessionsRefresh = false
-            } else {
-                skipNextAllSessionsRefresh = true
-                selectedMode = .sessions
+}
+
+private struct LoadingSection: View {
+    let isLoading: Bool
+    let title: String
+
+    @ViewBuilder
+    var body: some View {
+        if isLoading {
+            Section {
+                LoadingListStatusRow(title: title)
+                    .listRowSeparator(.hidden)
             }
-            Task { await model.refreshThreads() }
-        } label: {
-            ProjectRow(project: project, selected: project.id == model.selectedProjectID)
+        }
+    }
+}
+
+private struct ProjectSectionsContent: View {
+    let sections: ProjectListSections
+    let unavailableTitle: String
+    let serverContentDisabled: Bool
+    let contentOpacity: Double
+    @Binding var showInactiveDiscoveredProjects: Bool
+    @Binding var showsArchivedSessions: Bool
+    @Binding var selectedMode: ProjectSessionMode
+    @Binding var skipNextAllSessionsRefresh: Bool
+
+    @ViewBuilder
+    var body: some View {
+        if sections.showInactiveDiscoveredFilter {
+            Section {
+                Toggle("Show inactive discovered projects", isOn: $showInactiveDiscoveredProjects)
+                    .font(.subheadline)
+            }
+            .disabled(serverContentDisabled)
+            .opacity(contentOpacity)
+        }
+
+        if sections.showArchivedSessionFilter {
+            Section {
+                Toggle("Show archived sessions", isOn: $showsArchivedSessions)
+                    .font(.subheadline)
+            }
+            .disabled(serverContentDisabled)
+            .opacity(contentOpacity)
+        }
+
+        ProjectListSection(
+            title: "Favorites",
+            projects: sections.favorites,
+            serverContentDisabled: serverContentDisabled,
+            contentOpacity: contentOpacity,
+            selectedMode: $selectedMode,
+            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
+        )
+
+        ProjectListSection(
+            title: sections.discoveredTitle,
+            projects: sections.discovered,
+            serverContentDisabled: serverContentDisabled,
+            contentOpacity: contentOpacity,
+            selectedMode: $selectedMode,
+            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
+        )
+
+        if sections.isEmpty {
+            Section {
+                ContentUnavailableView(unavailableTitle, systemImage: "folder")
+                    .frame(maxWidth: .infinity, minHeight: 260)
+                    .listRowSeparator(.hidden)
+            }
+        }
+    }
+}
+
+private struct ProjectListSection: View {
+    let title: String
+    let projects: [ProjectRecord]
+    let serverContentDisabled: Bool
+    let contentOpacity: Double
+    @Binding var selectedMode: ProjectSessionMode
+    @Binding var skipNextAllSessionsRefresh: Bool
+
+    @ViewBuilder
+    var body: some View {
+        if !projects.isEmpty {
+            Section(title) {
+                ForEach(projects) { project in
+                    ProjectActionRow(
+                        project: project,
+                        selectedMode: $selectedMode,
+                        skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
+                    )
+                }
+            }
+            .disabled(serverContentDisabled)
+            .opacity(contentOpacity)
+        }
+    }
+}
+
+private struct ProjectActionRow: View {
+    @EnvironmentObject private var model: AppViewModel
+    let project: ProjectRecord
+    @Binding var selectedMode: ProjectSessionMode
+    @Binding var skipNextAllSessionsRefresh: Bool
+
+    var body: some View {
+        Button(action: openProject) {
+            ProjectRow(project: project)
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("projectRow")
@@ -523,6 +570,170 @@ struct ProjectSessionListView: View {
                     model.removeProject(project)
                 } label: {
                     Label("Remove", systemImage: "minus.circle")
+                }
+            }
+        }
+    }
+
+    private func openProject() {
+        model.selectProject(project.id)
+        if selectedMode == .sessions {
+            skipNextAllSessionsRefresh = false
+        } else {
+            skipNextAllSessionsRefresh = true
+            selectedMode = .sessions
+        }
+        Task { await model.refreshThreads() }
+    }
+}
+
+private struct SelectedServerMenu: View {
+    let server: ServerRecord
+    @Binding var editingServer: ServerRecord?
+    @Binding var serverPendingDeletion: ServerRecord?
+    @Binding var isDeleteServerConfirmationPresented: Bool
+
+    var body: some View {
+        Menu {
+            Button {
+                editingServer = server
+            } label: {
+                Label("Edit Settings", systemImage: "pencil")
+            }
+
+            Button(role: .destructive) {
+                serverPendingDeletion = server
+                isDeleteServerConfirmationPresented = true
+            } label: {
+                Label("Delete Server", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Server Actions")
+    }
+}
+
+private struct SelectedServerToolbar: ToolbarContent {
+    let server: ServerRecord
+    let disabled: Bool
+    @Binding var showingProjectAdd: Bool
+    @Binding var editingServer: ServerRecord?
+    @Binding var serverPendingDeletion: ServerRecord?
+    @Binding var isDeleteServerConfirmationPresented: Bool
+
+    var body: some ToolbarContent {
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            RefreshProjectsButton(disabled: disabled)
+            AddProjectButton(showingProjectAdd: $showingProjectAdd, disabled: disabled)
+            SelectedServerMenu(
+                server: server,
+                editingServer: $editingServer,
+                serverPendingDeletion: $serverPendingDeletion,
+                isDeleteServerConfirmationPresented: $isDeleteServerConfirmationPresented
+            )
+        }
+    }
+}
+
+private struct RefreshProjectsButton: View {
+    @EnvironmentObject private var model: AppViewModel
+    let disabled: Bool
+
+    var body: some View {
+        Button {
+            Task { await model.refreshProjects() }
+        } label: {
+            Image(systemName: "arrow.clockwise")
+        }
+        .disabled(disabled)
+        .accessibilityLabel("Refresh Projects")
+    }
+}
+
+private struct AddProjectButton: View {
+    @Binding var showingProjectAdd: Bool
+    let disabled: Bool
+
+    var body: some View {
+        Button {
+            showingProjectAdd = true
+        } label: {
+            Image(systemName: "folder.badge.plus")
+        }
+        .disabled(disabled)
+        .accessibilityLabel("Add Project")
+    }
+}
+
+private struct ProjectSessionScopeRow: View {
+    let project: ProjectRecord
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Sessions in \(project.displayName)")
+                    .font(.subheadline.weight(.semibold))
+                Text(project.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct SessionsContent: View {
+    let selectedProject: ProjectRecord?
+    let isShowingAllSessions: Bool
+    @Binding var showsArchivedSessions: Bool
+    let sections: [SessionListSection]
+    let selectedThreadID: String?
+    let serverContentDisabled: Bool
+    let contentOpacity: Double
+    let onOpen: (CodexThread) -> Void
+
+    @ViewBuilder
+    var body: some View {
+        Section {
+            if let project = selectedProject, !isShowingAllSessions {
+                ProjectSessionScopeRow(project: project)
+            }
+            Toggle("Show archived sessions", isOn: $showsArchivedSessions)
+                .font(.subheadline)
+        }
+        .disabled(serverContentDisabled)
+        .opacity(contentOpacity)
+
+        SessionSectionsList(
+            sections: sections,
+            selectedThreadID: selectedThreadID,
+            onOpen: onOpen
+        )
+        .disabled(serverContentDisabled)
+        .opacity(contentOpacity)
+    }
+}
+
+private struct SessionSectionsList: View {
+    let sections: [SessionListSection]
+    let selectedThreadID: String?
+    let onOpen: (CodexThread) -> Void
+
+    var body: some View {
+        ForEach(sections) { sessionSection in
+            Section(sessionSection.title) {
+                ForEach(sessionSection.threads) { thread in
+                    Button {
+                        onOpen(thread)
+                    } label: {
+                        ThreadRow(thread: thread, selected: thread.id == selectedThreadID)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("threadRow")
                 }
             }
         }
@@ -671,12 +882,11 @@ struct ConnectionDiagnosticsView: View {
 
 struct ProjectRow: View {
     let project: ProjectRecord
-    let selected: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: selected ? "folder.fill" : "folder")
-                .foregroundStyle(selected ? .blue : .secondary)
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 3) {
                 Text(project.displayName)
                     .font(.subheadline.weight(.medium))
@@ -684,30 +894,6 @@ struct ProjectRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if project.discovered {
-                    Text(
-                        project.discoveredSessionCount > 0
-                            ? "\(project.discoveredSessionCount) active \(project.discoveredSessionCount == 1 ? "session" : "sessions")"
-                            : "No active sessions"
-                    )
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if project.archivedSessionCount > 0 {
-                        Text("\(project.archivedSessionCount) archived \(project.archivedSessionCount == 1 ? "session" : "sessions")")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if project.activeChatCount > 0 {
-                        Text("\(project.activeChatCount) loaded in app-server")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if project.sessionPaths.count > 1 {
-                        Text("\(project.sessionPaths.count) worktree paths grouped")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
             }
             Spacer()
             if project.isFavorite {

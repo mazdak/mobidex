@@ -308,7 +308,7 @@ struct ConversationView: View {
 
     private var projectEmptyTitle: String {
         if model.isRefreshingSessions {
-            return "Loading Sessions"
+            return "Loading Sessions..."
         }
         return model.canSendMessage ? "No Sessions" : "Connect to Create a Session"
     }

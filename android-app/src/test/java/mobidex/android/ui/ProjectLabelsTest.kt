@@ -11,33 +11,6 @@ import mobidex.android.model.ServerRecord
 
 class ProjectLabelsTest {
     @Test
-    fun loadedAppServerCountIsNotConfusedWithDiscoveredSessionCount() {
-        val project = ProjectRecord(
-            path = "/srv/app",
-            discovered = true,
-            discoveredSessionCount = 60,
-            activeChatCount = 2,
-            sessionPaths = listOf("/srv/app", "/srv/app/.codex/worktrees/abc/app"),
-        )
-
-        assertEquals(
-            listOf("2 loaded in app-server", "60 discovered sessions", "2 worktree paths grouped"),
-            projectSupportingLabels(project),
-        )
-    }
-
-    @Test
-    fun macOSProtectedProjectsDoNotShowPrivacyWarningInRows() {
-        val project = ProjectRecord(
-            path = "/Users/yesh/Documents/work/ResQlaw",
-            discovered = true,
-            discoveredSessionCount = 1,
-        )
-
-        assertEquals(listOf("1 discovered session"), projectSupportingLabels(project))
-    }
-
-    @Test
     fun macOSProtectedWarningIncludesICloudAndVolumes() {
         assertEquals(
             "macOS may block SSH access to this protected location. Move it outside protected folders or grant Full Disk Access to the SSH/Remote Login service.",
@@ -52,28 +25,6 @@ class ProjectLabelsTest {
     }
 
     @Test
-    fun discoveredSessionCountIsNeverRenderedAsActiveSessions() {
-        val project = ProjectRecord(
-            path = "/srv/app",
-            discovered = true,
-            discoveredSessionCount = 60,
-        )
-
-        assertEquals(listOf("60 discovered sessions"), projectSupportingLabels(project))
-    }
-
-    @Test
-    fun archivedSessionCountIsRenderedAsHistoricalContext() {
-        val project = ProjectRecord(
-            path = "/srv/archive",
-            discovered = true,
-            archivedSessionCount = 3,
-        )
-
-        assertEquals(listOf("3 archived sessions"), projectSupportingLabels(project))
-    }
-
-    @Test
     fun sessionEmptyTitleShowsLoadingBeforeFinalEmptyState() {
         val loading = MobidexUiState(
             connectionState = ServerConnectionState.Connected,
@@ -82,7 +33,7 @@ class ProjectLabelsTest {
         val connected = MobidexUiState(connectionState = ServerConnectionState.Connected)
         val disconnected = MobidexUiState(connectionState = ServerConnectionState.Disconnected)
 
-        assertEquals("Loading Sessions", sessionEmptyTitle(loading))
+        assertEquals("Loading Sessions...", sessionEmptyTitle(loading))
         assertEquals("No Sessions", sessionEmptyTitle(connected))
         assertEquals("Connect to Load Sessions", sessionEmptyTitle(disconnected))
     }
@@ -96,7 +47,7 @@ class ProjectLabelsTest {
         val loading = busyConnected.copy(isRefreshingSessions = true)
 
         assertEquals("No Sessions", projectSessionEmptyTitle(busyConnected))
-        assertEquals("Loading Sessions", projectSessionEmptyTitle(loading))
+        assertEquals("Loading Sessions...", projectSessionEmptyTitle(loading))
     }
 
     @Test
