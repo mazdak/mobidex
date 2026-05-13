@@ -57,6 +57,26 @@ struct RootView: View {
     }
 }
 
+private struct ServerActionButtonLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.title3)
+                .imageScale(.medium)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.footnote.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity, minHeight: 58)
+        .accessibilityLabel(title)
+    }
+}
+
 struct ServerSidebarView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -191,25 +211,28 @@ struct ProjectSessionListView: View {
                             Button {
                                 Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
                             } label: {
-                                Label(
-                                    model.isAppServerConnected ? "Reconnect" : "Connect",
+                                ServerActionButtonLabel(
+                                    title: model.isAppServerConnected ? "Reconnect" : "Connect",
                                     systemImage: "point.3.connected.trianglepath.dotted"
                                 )
                             }
+                            .frame(maxWidth: .infinity)
                             .disabled(model.connectionState == .connecting)
                             .accessibilityIdentifier("connectButton")
                             Button {
                                 showingTerminal = true
                             } label: {
-                                Label("Terminal", systemImage: "terminal")
+                                ServerActionButtonLabel(title: "Terminal", systemImage: "terminal")
                             }
+                            .frame(maxWidth: .infinity)
                             .disabled(serverControlsDisabled)
                             .accessibilityIdentifier("terminalButton")
                             Button {
                                 showingDiagnostics = true
                             } label: {
-                                Label("Doctor", systemImage: "stethoscope")
+                                ServerActionButtonLabel(title: "Doctor", systemImage: "stethoscope")
                             }
+                            .frame(maxWidth: .infinity)
                             .disabled(serverControlsDisabled || model.isRunningConnectionDiagnostics)
                             .accessibilityIdentifier("connectionDiagnosticsButton")
                         }
