@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SWIFT_SOURCE="$ROOT_DIR/Sources/Mobidex/Services/RemoteCodexDiscovery.swift"
+DISCOVERY_SOURCE="$ROOT_DIR/shared-core/src/commonMain/kotlin/mobidex/shared/RemoteCodexDiscovery.kt"
 WORK_DIR="$(mktemp -d)"
 PYTHON_SOURCE="$WORK_DIR/discovery.py"
 SHELL_COMMAND="$WORK_DIR/discovery-command.sh"
@@ -14,11 +14,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ruby -0ne 'match = $_.match(/static let pythonSource = #"""\n(.*?)\n"""#/m); abort("Could not extract pythonSource") unless match; print match[1]' \
-  "$SWIFT_SOURCE" >"$PYTHON_SOURCE"
+ruby -0ne 'match = $_.match(/val pythonSource: String = """\n(.*?)\n"""\.trimIndent\(\)/m); abort("Could not extract pythonSource") unless match; print match[1]' \
+  "$DISCOVERY_SOURCE" >"$PYTHON_SOURCE"
 
-EXPECTED_SWIFT_LINE=$'    static let shellCommand = "python3 - <<\'PY\'\\n\\(pythonSource)\\nPY\\nmobidex_status=$?;exit $mobidex_status"'
-if ! grep -Fxq "$EXPECTED_SWIFT_LINE" "$SWIFT_SOURCE"; then
+EXPECTED_KOTLIN_LINE='            "python3 - <<'\''PY'\''\n$pythonSource\nPY\nmobidex_status=\$?;exit \$mobidex_status",'
+if ! grep -Fxq "$EXPECTED_KOTLIN_LINE" "$DISCOVERY_SOURCE"; then
   echo "RemoteCodexDiscovery.shellCommand does not preserve the heredoc terminator before Citadel's ;exit suffix." >&2
   exit 1
 fi
@@ -169,12 +169,15 @@ by_path = {project["path"]: project for project in projects}
 
 assert [project["path"] for project in projects] == [app_dir, remote_dir, zero_dir], projects
 assert by_path[app_dir]["discoveredSessionCount"] == 2, projects
+assert by_path[app_dir]["archivedSessionCount"] == 1, projects
 assert set(by_path[app_dir]["sessionPaths"]) == {app_dir, worktree_dir}, projects
-assert by_path[app_dir]["lastDiscoveredAt"] == 1770000400, projects
+assert by_path[app_dir]["lastDiscoveredAt"] == 1770000500, projects
 assert by_path[remote_dir]["discoveredSessionCount"] == 1, projects
+assert by_path[remote_dir]["archivedSessionCount"] == 0, projects
 assert by_path[remote_dir]["sessionPaths"] == [remote_dir], projects
 assert by_path[remote_dir]["lastDiscoveredAt"] == 1770000350, projects
 assert by_path[zero_dir]["discoveredSessionCount"] == 0, projects
+assert by_path[zero_dir]["archivedSessionCount"] == 0, projects
 assert by_path[zero_dir]["sessionPaths"] == [zero_dir], projects
 assert by_path[zero_dir]["lastDiscoveredAt"] is None, projects
 assert worktree_main not in by_path, projects
@@ -254,6 +257,7 @@ assert projects == [
         "path": config_dir,
         "sessionPaths": [config_dir],
         "discoveredSessionCount": 0,
+        "archivedSessionCount": 0,
         "lastDiscoveredAt": projects[0]["lastDiscoveredAt"],
     }
 ], projects

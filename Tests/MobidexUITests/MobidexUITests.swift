@@ -21,11 +21,12 @@ final class MobidexUITests: XCTestCase {
         XCTAssertTrue(connectButton.waitForExistence(timeout: timeout), "Connect button did not appear.")
         connectButton.tap()
 
-        let projectRow = app.buttons["projectRow"].firstMatch
-        XCTAssertTrue(projectRow.waitForExistence(timeout: timeout), "Seeded project row did not appear.")
-        projectRow.tap()
-
         let newSessionButton = app.buttons["projectNewSessionButton"]
+        if !waitForEnabled(newSessionButton, timeout: 5) {
+            let projectRow = app.buttons["projectRow"].firstMatch
+            XCTAssertTrue(projectRow.waitForExistence(timeout: timeout), "Seeded project row did not appear.")
+            projectRow.tap()
+        }
         XCTAssertTrue(waitForEnabled(newSessionButton, timeout: timeout), "New Session button did not become enabled after opening the seeded project.")
         newSessionButton.tap()
 
@@ -99,6 +100,9 @@ final class MobidexUITests: XCTestCase {
         }
         if let expectedText = environment["MOBIDEX_UI_SMOKE_EXPECTED_TEXT"] {
             launchEnvironment["MOBIDEX_SMOKE_EXPECTED_TEXT"] = expectedText
+        }
+        if let targetShellRCFile = environment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"] {
+            launchEnvironment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"] = targetShellRCFile
         }
         return launchEnvironment
     }

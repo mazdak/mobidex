@@ -194,7 +194,9 @@ struct ProjectSessionListView: View {
                             showsArchivedSessions: $model.showsArchivedSessions,
                             selectedMode: $selectedMode,
                             skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
-                        )
+                        ) {
+                            promoteDetailIfCompact()
+                        }
                     case .sessions:
                         SessionsContent(
                             selectedProject: model.selectedProject,
@@ -470,6 +472,7 @@ private struct ProjectSectionsContent: View {
     @Binding var showsArchivedSessions: Bool
     @Binding var selectedMode: ProjectSessionMode
     @Binding var skipNextAllSessionsRefresh: Bool
+    let onOpenProject: () -> Void
 
     @ViewBuilder
     var body: some View {
@@ -497,7 +500,8 @@ private struct ProjectSectionsContent: View {
             serverContentDisabled: serverContentDisabled,
             contentOpacity: contentOpacity,
             selectedMode: $selectedMode,
-            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
+            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh,
+            onOpenProject: onOpenProject
         )
 
         ProjectListSection(
@@ -506,7 +510,8 @@ private struct ProjectSectionsContent: View {
             serverContentDisabled: serverContentDisabled,
             contentOpacity: contentOpacity,
             selectedMode: $selectedMode,
-            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
+            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh,
+            onOpenProject: onOpenProject
         )
 
         if sections.isEmpty {
@@ -526,6 +531,7 @@ private struct ProjectListSection: View {
     let contentOpacity: Double
     @Binding var selectedMode: ProjectSessionMode
     @Binding var skipNextAllSessionsRefresh: Bool
+    let onOpenProject: () -> Void
 
     @ViewBuilder
     var body: some View {
@@ -535,7 +541,8 @@ private struct ProjectListSection: View {
                     ProjectActionRow(
                         project: project,
                         selectedMode: $selectedMode,
-                        skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
+                        skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh,
+                        onOpenProject: onOpenProject
                     )
                 }
             }
@@ -550,6 +557,7 @@ private struct ProjectActionRow: View {
     let project: ProjectRecord
     @Binding var selectedMode: ProjectSessionMode
     @Binding var skipNextAllSessionsRefresh: Bool
+    let onOpenProject: () -> Void
 
     var body: some View {
         Button(action: openProject) {
@@ -583,6 +591,7 @@ private struct ProjectActionRow: View {
             skipNextAllSessionsRefresh = true
             selectedMode = .sessions
         }
+        onOpenProject()
         Task { await model.refreshThreads() }
     }
 }

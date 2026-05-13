@@ -27,6 +27,7 @@ run_smoke() {
 
   MOBIDEX_SMOKE_AUTH=password \
   MOBIDEX_SMOKE_MODE="$mode" \
+  MOBIDEX_SMOKE_SERVER_ID="$(uuidgen)" \
   MOBIDEX_SMOKE_TIMEOUT="$TIMEOUT" \
   MOBIDEX_SCREENSHOT_PATH="$screenshot_path" \
     "$ROOT_DIR/Scripts/verify-inapp-ssh-smoke.sh"
