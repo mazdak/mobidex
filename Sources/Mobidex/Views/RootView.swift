@@ -171,6 +171,8 @@ struct ProjectSessionListView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(server.endpointLabel)
                                     .font(.subheadline)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
                                 Text(model.connectionState.label)
                                     .font(.caption)
                                     .foregroundStyle(statusColor)
@@ -189,7 +191,10 @@ struct ProjectSessionListView: View {
                             Button {
                                 Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
                             } label: {
-                                Text(model.isAppServerConnected ? "Reconnect" : "Connect")
+                                Label(
+                                    model.isAppServerConnected ? "Reconnect" : "Connect",
+                                    systemImage: "point.3.connected.trianglepath.dotted"
+                                )
                             }
                             .disabled(model.connectionState == .connecting)
                             .accessibilityIdentifier("connectButton")
@@ -203,7 +208,7 @@ struct ProjectSessionListView: View {
                             Button {
                                 showingDiagnostics = true
                             } label: {
-                                Label("Diagnostics", systemImage: "stethoscope")
+                                Label("Doctor", systemImage: "stethoscope")
                             }
                             .disabled(serverControlsDisabled || model.isRunningConnectionDiagnostics)
                             .accessibilityIdentifier("connectionDiagnosticsButton")
@@ -549,6 +554,21 @@ struct ConnectionDiagnosticsView: View {
                         diagnosticRow("Auth method", report.authMethod)
                         diagnosticRow("Failure stage", report.failureStage ?? "none")
                         diagnosticRow("SSH host key fingerprint", report.hostKeyFingerprint ?? "not observed")
+                        if let pinned = report.pinnedHostKeyFingerprint {
+                            diagnosticRow("Pinned SSH host key fingerprint", pinned)
+                        }
+                    }
+                    if let note = report.doctorNote {
+                        Section("Doctor") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(note.title)
+                                    .font(.subheadline.weight(.semibold))
+                                Text(note.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                        }
                     }
                     Section("Resolved Addresses") {
                         if report.resolvedAddresses.isEmpty {

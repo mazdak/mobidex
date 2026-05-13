@@ -62,6 +62,7 @@ struct SSHDiagnosticReport: Equatable {
     var resolvedAddresses: [String]
     var tcpResults: [SSHDiagnosticTCPResult]
     var hostKeyFingerprint: String?
+    var pinnedHostKeyFingerprint: String?
     var authMethod: String
     var failureStage: String?
     var rawUnderlyingErrorType: String?
@@ -70,11 +71,101 @@ struct SSHDiagnosticReport: Equatable {
     var appServerResult: String?
 
     var summary: String {
+        if let doctorNote {
+            return doctorNote.title
+        }
         if let failureStage {
             return "Failed at \(failureStage)"
         }
         return "Diagnostics passed"
     }
+
+    var doctorNote: SSHDiagnosticDoctorNote? {
+        switch failureStage {
+        case "credential":
+            return SSHDiagnosticDoctorNote(
+                title: "Failed before SSH: saved credentials could not be loaded.",
+                detail: "The app could not read the saved password or private key from local storage, so it did not reach the SSH server. Re-enter the credential for this server and try again."
+            )
+        case "DNS":
+            return SSHDiagnosticDoctorNote(
+                title: "Failed at DNS: the host name did not resolve.",
+                detail: "The app could not turn \(host) into an IP address. Check the saved host name, that Tailscale MagicDNS is available on this device if this is a `.ts.net` name, and that the device has network access."
+            )
+        case "TCP":
+            return tcpDoctorNote
+        case "SSH handshake":
+            if let hostKeyFingerprint,
+               let pinnedHostKeyFingerprint,
+               hostKeyFingerprint != pinnedHostKeyFingerprint {
+                return SSHDiagnosticDoctorNote(
+                    title: "Failed at SSH handshake: the server signature changed.",
+                    detail: "The app reached SSH, but the host key no longer matches the saved fingerprint. This can be expected after reinstalling the Mac or regenerating SSH host keys; otherwise it may mean the host name now points to a different SSH server. Only trust the new key if you recognize this server."
+                )
+            }
+            return SSHDiagnosticDoctorNote(
+                title: "Failed at SSH handshake.",
+                detail: "The app opened the TCP connection but SSH did not complete its handshake. Check that the service on this port is SSH, that the server allows this client, and that no firewall or proxy is interrupting the connection."
+            )
+        case "auth":
+            return SSHDiagnosticDoctorNote(
+                title: "Failed at auth: credentials were not accepted.",
+                detail: "The app reached the SSH server, but the saved password or private key did not authenticate. Check the username, password or key, and the server's SSH authentication settings."
+            )
+        case "remote command":
+            return SSHDiagnosticDoctorNote(
+                title: "Failed at remote command.",
+                detail: "SSH connected and authenticated, but the remote readiness command did not complete. Check the user's shell startup files, PATH, permissions, and whether the SSH session can run non-interactive commands."
+            )
+        case "app-server":
+            return SSHDiagnosticDoctorNote(
+                title: "Failed at app-server startup.",
+                detail: "SSH works, but Codex app-server did not initialize. Check the configured Codex path, shell startup file, and whether `codex app-server --listen stdio://` runs successfully in the same account."
+            )
+        default:
+            return nil
+        }
+    }
+
+}
+
+struct SSHDiagnosticDoctorNote: Equatable {
+    var title: String
+    var detail: String
+}
+
+private extension SSHDiagnosticReport {
+    var tcpDoctorNote: SSHDiagnosticDoctorNote? {
+        guard failureStage == "TCP",
+              !resolvedAddresses.isEmpty,
+              !tcpResults.isEmpty,
+              !tcpResults.contains(where: { $0.result == "connected" })
+        else {
+            return nil
+        }
+
+        let endpoint = host
+        if host.localizedCaseInsensitiveContains(".ts.net") || resolvedAddresses.contains(where: isTailscaleAddress) {
+            return SSHDiagnosticDoctorNote(
+                title: "Failed at TCP: Tailscale host resolved, but the configured SSH port did not open.",
+                detail: "The app resolved \(endpoint), so the saved host is being parsed correctly. A timeout here means this iPhone could not open an SSH TCP connection to the Tailscale address. Check that Tailscale is connected on the iPhone, the tailnet ACL and macOS firewall allow the configured SSH port, and Remote Login is enabled on the Mac. A successful ping from your laptop only proves laptop reachability."
+            )
+        }
+
+        return SSHDiagnosticDoctorNote(
+            title: "Failed at TCP: host resolved, but the configured SSH port did not open.",
+            detail: "The app resolved \(endpoint), so the saved host is being parsed correctly. A timeout here means this device could not open an SSH TCP connection to the resolved address. Check the network path, firewall, and that sshd is listening on the configured port."
+        )
+    }
+}
+
+private func isTailscaleAddress(_ value: String) -> Bool {
+    let address = value.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    let parts = address.split(separator: ".").compactMap { Int($0) }
+    guard parts.count == 4 else {
+        return false
+    }
+    return parts[0] == 100 && (64...127).contains(parts[1])
 }
 
 protocol SSHService: Sendable {
@@ -175,6 +266,11 @@ final class CitadelSSHService: TerminalSSHService {
             resolvedAddresses: [],
             tcpResults: [],
             hostKeyFingerprint: nil,
+            pinnedHostKeyFingerprint: SSHHostKeyPinStore.fingerprint(
+                serverID: server.id,
+                legacyHost: server.host,
+                legacyPort: server.port
+            ),
             authMethod: authLabel,
             failureStage: nil,
             rawUnderlyingErrorType: nil,

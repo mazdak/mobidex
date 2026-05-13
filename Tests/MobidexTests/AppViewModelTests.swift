@@ -3,6 +3,94 @@ import NIOCore
 @testable import Mobidex
 
 final class AppViewModelTests: XCTestCase {
+    func testTailscaleTCPTimeoutDiagnosticExplainsDeviceReachability() {
+        let report = SSHDiagnosticReport(
+            host: "them4maxmacbookpro.tail866988.ts.net:22",
+            resolvedAddresses: ["100.86.24.81"],
+            tcpResults: [
+                SSHDiagnosticTCPResult(address: "100.86.24.81", result: "timed out")
+            ],
+            hostKeyFingerprint: nil,
+            pinnedHostKeyFingerprint: nil,
+            authMethod: "password",
+            failureStage: "TCP",
+            rawUnderlyingErrorType: nil,
+            rawUnderlyingError: nil,
+            remoteCommandResult: nil,
+            appServerResult: nil
+        )
+
+        XCTAssertEqual(report.summary, "Failed at TCP: Tailscale host resolved, but the configured SSH port did not open.")
+        XCTAssertEqual(report.doctorNote?.title, report.summary)
+        XCTAssertTrue(report.doctorNote?.detail.contains("saved host is being parsed correctly") == true)
+        XCTAssertTrue(report.doctorNote?.detail.contains("ping from your laptop") == true)
+        XCTAssertFalse(report.doctorNote?.title.contains("22") == true)
+        XCTAssertFalse(report.doctorNote?.detail.contains("TCP 22") == true)
+    }
+
+    func testGenericTCPTimeoutDiagnosticDoesNotHardCodeDefaultSSHPort() {
+        let report = SSHDiagnosticReport(
+            host: "build.example.com:2222",
+            resolvedAddresses: ["203.0.113.10"],
+            tcpResults: [
+                SSHDiagnosticTCPResult(address: "203.0.113.10", result: "timed out")
+            ],
+            hostKeyFingerprint: nil,
+            pinnedHostKeyFingerprint: nil,
+            authMethod: "password",
+            failureStage: "TCP",
+            rawUnderlyingErrorType: nil,
+            rawUnderlyingError: nil,
+            remoteCommandResult: nil,
+            appServerResult: nil
+        )
+
+        XCTAssertEqual(report.summary, "Failed at TCP: host resolved, but the configured SSH port did not open.")
+        XCTAssertFalse(report.doctorNote?.title.contains("22") == true)
+        XCTAssertFalse(report.doctorNote?.detail.contains("TCP 22") == true)
+    }
+
+    func testCredentialDiagnosticDoesNotClaimSSHWasReached() {
+        let report = SSHDiagnosticReport(
+            host: "build.example.com:22",
+            resolvedAddresses: [],
+            tcpResults: [],
+            hostKeyFingerprint: nil,
+            pinnedHostKeyFingerprint: nil,
+            authMethod: "password",
+            failureStage: "credential",
+            rawUnderlyingErrorType: "KeychainError",
+            rawUnderlyingError: "missing",
+            remoteCommandResult: nil,
+            appServerResult: nil
+        )
+
+        XCTAssertEqual(report.summary, "Failed before SSH: saved credentials could not be loaded.")
+        XCTAssertTrue(report.doctorNote?.detail.contains("did not reach the SSH server") == true)
+    }
+
+    func testHostKeyChangeDiagnosticShowsServerSignatureProblem() {
+        let report = SSHDiagnosticReport(
+            host: "build.example.com:22",
+            resolvedAddresses: ["203.0.113.10"],
+            tcpResults: [
+                SSHDiagnosticTCPResult(address: "203.0.113.10", result: "connected")
+            ],
+            hostKeyFingerprint: "SHA256:new",
+            pinnedHostKeyFingerprint: "SHA256:old",
+            authMethod: "password",
+            failureStage: "SSH handshake",
+            rawUnderlyingErrorType: "Mobidex.SSHServiceError",
+            rawUnderlyingError: "hostKeyChanged",
+            remoteCommandResult: nil,
+            appServerResult: nil
+        )
+
+        XCTAssertEqual(report.summary, "Failed at SSH handshake: the server signature changed.")
+        XCTAssertTrue(report.doctorNote?.detail.contains("host key no longer matches") == true)
+        XCTAssertTrue(report.doctorNote?.detail.contains("different SSH server") == true)
+    }
+
     @MainActor
     func testSaveServerRejectsMissingHostBeforePersistence() async throws {
         let repository = InMemoryServerRepository()
@@ -4698,6 +4786,7 @@ private final class BlockingOpenSSHService: SSHService, @unchecked Sendable {
             resolvedAddresses: [],
             tcpResults: [],
             hostKeyFingerprint: nil,
+            pinnedHostKeyFingerprint: nil,
             authMethod: server.authMethod.label.lowercased(),
             failureStage: nil,
             rawUnderlyingErrorType: nil,
@@ -4823,6 +4912,7 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
             resolvedAddresses: [],
             tcpResults: [],
             hostKeyFingerprint: nil,
+            pinnedHostKeyFingerprint: nil,
             authMethod: server.authMethod.label.lowercased(),
             failureStage: testConnectionError == nil ? nil : "SSH handshake",
             rawUnderlyingErrorType: testConnectionError.map { String(reflecting: type(of: $0)) },
@@ -4926,6 +5016,7 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
             resolvedAddresses: [],
             tcpResults: [],
             hostKeyFingerprint: nil,
+            pinnedHostKeyFingerprint: nil,
             authMethod: server.authMethod.label.lowercased(),
             failureStage: testConnectionError == nil ? nil : "SSH handshake",
             rawUnderlyingErrorType: testConnectionError.map { String(reflecting: type(of: $0)) },

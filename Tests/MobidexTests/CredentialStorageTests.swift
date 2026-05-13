@@ -263,6 +263,7 @@ private struct CredentialStorageStubSSHService: SSHService {
             resolvedAddresses: [],
             tcpResults: [],
             hostKeyFingerprint: nil,
+            pinnedHostKeyFingerprint: nil,
             authMethod: server.authMethod.label.lowercased(),
             failureStage: nil,
             rawUnderlyingErrorType: nil,
