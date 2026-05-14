@@ -596,14 +596,18 @@ if [[ "\$1" == "app-server" && "\$2" == "--listen" && "\$3" == "stdio://" ]]; th
   exec python3 $quoted_fake_codex_server $quoted_smoke_cwd $quoted_steer_text stdio
 fi
 if [[ "\$1" == "app-server" && "\$2" == "--listen" && "\$3" == unix://* ]]; then
-  socket="\${CODEX_APP_SERVER_SOCK:-\${CODEX_HOME:-\$HOME/.codex}/app-server-control/app-server-control.sock}"
+  socket="\${CODEX_HOME:-\$HOME/.codex}/app-server-control/app-server-control.sock"
   if [[ "\$3" == unix:///* ]]; then
     socket="\${3#unix://}"
   fi
   exec python3 $quoted_fake_codex_server $quoted_smoke_cwd $quoted_steer_text listen-unix "\$socket"
 fi
 if [[ "\$1" == "app-server" && "\$2" == "proxy" ]]; then
-  socket=""
+  if [[ "\${3:-}" == "--help" ]]; then
+    echo "usage: codex app-server proxy [--sock PATH]"
+    exit 0
+  fi
+  socket="\${CODEX_HOME:-\$HOME/.codex}/app-server-control/app-server-control.sock"
   shift 2
   while [[ "\$#" -gt 0 ]]; do
     case "\$1" in

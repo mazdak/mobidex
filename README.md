@@ -14,7 +14,7 @@ This is a native SwiftUI app, not Expo React Native. The hard part is native SSH
 - Configure the remote Codex executable path per server; it defaults to `codex`.
 - Discover projects and session counts from remote Codex data under `CODEX_HOME` or `~/.codex`.
 - Add a project manually by remote folder path.
-- Start the configured Codex executable with `app-server --listen stdio://` over SSH.
+- Start or reuse Codex's default unix-socket app-server daemon with `app-server --listen unix://`, then attach over SSH with `app-server proxy`.
 - List and read Codex threads through app-server JSON-RPC.
 - Include all app-server thread source kinds when listing sessions so CLI, VS Code, exec, app-server, and subagent sessions can appear.
 - Render user/assistant messages, reasoning, plans, commands, file changes, tools, agent events, web searches, media placeholders, reviews, compaction, and unknown item types.

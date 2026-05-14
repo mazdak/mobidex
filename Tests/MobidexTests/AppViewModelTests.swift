@@ -1487,7 +1487,7 @@ final class AppViewModelTests: XCTestCase {
             credentialStore: credentials,
             sshService: StubSSHService(
                 openAppServerError: SSHServiceError.appServerClosed(
-                    command: "codex app-server --listen stdio://",
+                    command: "codex app-server proxy",
                     details: nil
                 )
             )
@@ -1497,7 +1497,7 @@ final class AppViewModelTests: XCTestCase {
 
         XCTAssertEqual(
             viewModel.statusMessage,
-            "SSH connected, but the server closed the app-server session while starting `codex app-server --listen stdio://`. Check the Codex path and that Codex app-server can run on the server."
+            "SSH connected, but the server closed the app-server session while starting `codex app-server proxy`. Check the Codex path and that Codex app-server can run on the server."
         )
     }
 

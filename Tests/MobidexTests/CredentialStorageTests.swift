@@ -144,15 +144,15 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertTrue(server.appServerProxyCommand.contains("command -v codex"))
         XCTAssertTrue(server.appServerProxyCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zshrc'"))
-        XCTAssertTrue(server.appServerProxyCommand.contains("socket_root=\"${CODEX_HOME:-$HOME/.codex}\""))
+        XCTAssertTrue(server.appServerProxyCommand.contains("app-server proxy --help"))
+        XCTAssertTrue(server.appServerProxyCommand.contains("default_socket=\"${CODEX_HOME:-$HOME/.codex}/app-server-control/app-server-control.sock\""))
         XCTAssertTrue(server.appServerProxyCommand.contains("app-server-control/app-server-control.sock"))
-        XCTAssertTrue(server.appServerProxyCommand.contains("app-server --listen \"unix://$socket\""))
-        XCTAssertTrue(server.appServerProxyCommand.contains("app-server proxy --sock \"$socket\""))
-        XCTAssertTrue(server.appServerProxyCommand.contains("socket_probe_attempted=0"))
-        XCTAssertTrue(server.appServerProxyCommand.contains("[ \"$socket_probe_attempted\" -eq 1 ]"))
-        XCTAssertTrue(server.appServerProxyCommand.contains("python3 -c"))
-        XCTAssertTrue(server.appServerProxyCommand.contains("ruby -rsocket"))
-        XCTAssertTrue(server.appServerProxyCommand.contains("perl -MIO::Socket::UNIX"))
+        XCTAssertTrue(server.appServerProxyCommand.contains("mkdir -p \"$socket_dir\""))
+        XCTAssertTrue(server.appServerProxyCommand.contains("app-server --listen unix://"))
+        XCTAssertTrue(server.appServerProxyCommand.contains("exec \"$codex_bin\" app-server proxy"))
+        XCTAssertFalse(server.appServerProxyCommand.contains("proxy --sock"))
+        XCTAssertFalse(server.appServerProxyCommand.contains("unix://$socket"))
+        XCTAssertFalse(server.appServerProxyCommand.contains("socket_probe_attempted"))
         XCTAssertFalse(server.appServerProxyCommand.contains("stdio://"))
     }
 
@@ -181,8 +181,9 @@ final class CredentialStorageTests: XCTestCase {
         )
 
         XCTAssertTrue(server.appServerProxyCommand.contains("codex_bin=\"${HOME}\"/'.bun/bin/codex'"))
-        XCTAssertTrue(server.appServerProxyCommand.contains("\"$codex_bin\" app-server --listen \"unix://$socket\""))
-        XCTAssertTrue(server.appServerProxyCommand.contains("exec \"$codex_bin\" app-server proxy --sock \"$socket\""))
+        XCTAssertTrue(server.appServerProxyCommand.contains("\"$codex_bin\" app-server --listen unix://"))
+        XCTAssertTrue(server.appServerProxyCommand.contains("exec \"$codex_bin\" app-server proxy"))
+        XCTAssertFalse(server.appServerProxyCommand.contains("proxy --sock"))
     }
 
     func testUserDefaultsRepositoryUsesCurrentStorageKey() throws {

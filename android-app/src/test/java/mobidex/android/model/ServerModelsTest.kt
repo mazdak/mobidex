@@ -25,7 +25,7 @@ class ServerModelsTest {
     }
 
     @Test
-    fun appServerProxyCommandUsesSharedControlSocketLaunchShape() {
+    fun appServerProxyCommandUsesSharedDefaultUnixSocketProxyLaunchShape() {
         val server = ServerRecord(
             displayName = "Server",
             host = "host",
@@ -35,8 +35,10 @@ class ServerModelsTest {
         )
 
         assertContains(server.appServerProxyCommand, "codex_bin=\"\${HOME}\"/'.bun/bin/codex'")
-        assertContains(server.appServerProxyCommand, "app-server --listen \"unix://\$socket\"")
-        assertContains(server.appServerProxyCommand, "app-server proxy --sock \"\$socket\"")
+        assertContains(server.appServerProxyCommand, "app-server proxy --help")
+        assertContains(server.appServerProxyCommand, "app-server --listen unix://")
+        assertContains(server.appServerProxyCommand, "exec \"\$codex_bin\" app-server proxy")
+        assertFalse(server.appServerProxyCommand.contains("proxy --sock"))
         assertFalse(server.appServerProxyCommand.contains("stdio://"))
     }
 }

@@ -120,7 +120,7 @@ struct SSHDiagnosticReport: Equatable {
         case "app-server":
             return SSHDiagnosticDoctorNote(
                 title: "Failed at app-server startup.",
-                detail: "SSH works, but Codex app-server did not initialize. Check the configured Codex path, shell startup file, and whether `codex app-server --listen stdio://` runs successfully in the same account."
+                detail: "SSH works, but Codex app-server did not initialize. Check the configured Codex path, shell startup file, and whether `codex app-server --listen unix://` and `codex app-server proxy` run successfully in the same account."
             )
         default:
             return nil

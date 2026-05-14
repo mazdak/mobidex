@@ -81,14 +81,14 @@ object RemoteCodexAppServerCommand {
 
     private fun appServerProxyScript(codexExecutable: String): String =
         listOf(
-            "socket_root=\"\${CODEX_HOME:-\$HOME/.codex}\"",
-            "socket=\"\${CODEX_APP_SERVER_SOCK:-\$socket_root/app-server-control/app-server-control.sock}\"",
-            "socket_dir=\"\$(dirname \"\$socket\")\"",
+            "if ! $codexExecutable app-server proxy --help >/dev/null 2>&1; then echo 'codex app-server proxy is not supported by the configured Codex executable.' >&2; exit 127; fi",
+            "default_socket=\"\${CODEX_HOME:-\$HOME/.codex}/app-server-control/app-server-control.sock\"",
+            "socket_dir=\"\$(dirname \"\$default_socket\")\"",
+            "log_path=\"\${TMPDIR:-/tmp}/mobidex-codex-app-server-unix.log\"",
             "mkdir -p \"\$socket_dir\"",
-            "if [ -S \"\$socket\" ]; then socket_probe_attempted=0; socket_probe_status=0; if command -v python3 >/dev/null 2>&1; then socket_probe_attempted=1; python3 -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.settimeout(0.5); s.connect(sys.argv[1]); s.close()' \"\$socket\" 2>/dev/null; socket_probe_status=\$?; elif command -v python >/dev/null 2>&1; then socket_probe_attempted=1; python -c 'import socket, sys; s = socket.socket(socket.AF_UNIX); s.settimeout(0.5); s.connect(sys.argv[1]); s.close()' \"\$socket\" 2>/dev/null; socket_probe_status=\$?; elif command -v ruby >/dev/null 2>&1; then socket_probe_attempted=1; ruby -rsocket -e 'UNIXSocket.open(ARGV[0]).close' \"\$socket\" 2>/dev/null; socket_probe_status=\$?; elif command -v perl >/dev/null 2>&1; then socket_probe_attempted=1; perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Peer => shift) or exit 1' \"\$socket\" 2>/dev/null; socket_probe_status=\$?; fi; if [ \"\$socket_probe_attempted\" -eq 1 ] && [ \"\$socket_probe_status\" -ne 0 ]; then rm -f \"\$socket\"; fi; fi",
-            "if [ ! -S \"\$socket\" ]; then nohup $codexExecutable app-server --listen \"unix://\$socket\" >>\"\$socket_dir/app-server.log\" 2>&1 < /dev/null & i=0; while [ \"\$i\" -lt 50 ] && [ ! -S \"\$socket\" ]; do i=\$((i + 1)); sleep 0.1; done; fi",
-            "if [ ! -S \"\$socket\" ]; then echo \"codex app-server control socket was not created at \$socket\" >&2; exit 127; fi",
-            "exec $codexExecutable app-server proxy --sock \"\$socket\"",
+            "nohup $codexExecutable app-server --listen unix:// >>\"\$log_path\" 2>&1 < /dev/null & i=0; while [ \"\$i\" -lt 50 ] && [ ! -S \"\$default_socket\" ]; do i=\$((i + 1)); sleep 0.1; done",
+            "if [ ! -S \"\$default_socket\" ]; then echo \"codex app-server default control socket was not created at \$default_socket; see \$log_path\" >&2; exit 127; fi",
+            "exec $codexExecutable app-server proxy",
         ).joinToString("; ")
 
     private fun shellEnvironmentBootstrapCommand(targetShellRCFile: String): String =

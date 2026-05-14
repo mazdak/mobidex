@@ -46,7 +46,7 @@ class RemoteCodexAppServerCommandTest {
     }
 
     @Test
-    fun proxyCommandUsesControlSocketAndConfiguredShellRC() {
+    fun proxyCommandUsesDefaultUnixSocketProxyAndConfiguredShellRC() {
         val command = RemoteCodexAppServerCommand.proxyCommand(
             codexPath = "codex",
             targetShellRCFile = "\$HOME/.zshrc",
@@ -54,11 +54,16 @@ class RemoteCodexAppServerCommandTest {
 
         assertContains(command, "mobidex_shell_rc=\"\${HOME}\"/'.zshrc'")
         assertContains(command, "command -v codex")
+        assertContains(command, "app-server proxy --help")
+        assertContains(command, "default_socket=\"\${CODEX_HOME:-\$HOME/.codex}/app-server-control/app-server-control.sock\"")
         assertContains(command, "app-server-control/app-server-control.sock")
-        assertContains(command, "app-server --listen \"unix://\$socket\"")
-        assertContains(command, "app-server proxy --sock \"\$socket\"")
-        assertContains(command, "socket_probe_attempted=0")
-        assertContains(command, "python3 -c")
+        assertContains(command, "mkdir -p \"\$socket_dir\"")
+        assertContains(command, "app-server --listen unix://")
+        assertContains(command, "exec \"\$codex_bin\" app-server proxy")
+        assertFalse(command.contains("proxy --sock"))
+        assertFalse(command.contains("unix://\$socket"))
+        assertFalse(command.contains("socket_probe_attempted"))
+        assertFalse(command.contains("&;"))
         assertFalse(command.contains("stdio://"))
     }
 
@@ -70,7 +75,8 @@ class RemoteCodexAppServerCommandTest {
         )
 
         assertContains(command, "codex_bin=\"\${HOME}\"/'.bun/bin/codex'")
-        assertContains(command, "\"\$codex_bin\" app-server --listen \"unix://\$socket\"")
-        assertContains(command, "exec \"\$codex_bin\" app-server proxy --sock \"\$socket\"")
+        assertContains(command, "\"\$codex_bin\" app-server --listen unix://")
+        assertContains(command, "exec \"\$codex_bin\" app-server proxy")
+        assertFalse(command.contains("proxy --sock"))
     }
 }
