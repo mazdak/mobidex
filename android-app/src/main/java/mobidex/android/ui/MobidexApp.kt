@@ -728,7 +728,7 @@ private fun ProjectList(
         LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
             section("Projects", sections.projects) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
             if (sections.isEmpty) {
-                item { EmptyState(projectEmptyTitle(state, sections, search), "Use the folder-plus button to add projects.", Icons.Default.Folder) }
+                item { EmptyState(projectEmptyTitle(state, sections, search), "Add a project to get started.", Icons.Default.Folder) }
             }
         }
     }
@@ -821,6 +821,17 @@ private fun ThreadList(
                         Text("Sessions in ${project.displayName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    Button(
+                        onClick = {
+                            model.startNewSession()
+                            onOpenDetail()
+                        },
+                        enabled = state.canCreateSession && !contentDisabled,
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("New Session")
+                    }
                 }
             }
         }
@@ -843,7 +854,11 @@ private fun ThreadList(
         if (sections.isEmpty()) {
             EmptyState(
                 sessionEmptyTitle(state),
-                "Sessions from CLI, VS Code, exec, and app-server sources appear here.",
+                if (!state.isShowingAllSessions && state.selectedProject != null && state.connectionState == ServerConnectionState.Connected) {
+                    "Start a new session for this project."
+                } else {
+                    "Sessions you open will show up here."
+                },
                 Icons.Default.Description,
             )
         } else {
@@ -904,7 +919,7 @@ private fun ConversationPane(state: MobidexUiState, model: AppViewModel, modifie
             ProjectHeader(project, state, model)
             EmptyState(
                 projectSessionEmptyTitle(state),
-                "Start a session from this project.",
+                "Start a new session for this project.",
                 Icons.Default.Description,
                 Modifier.weight(1f),
             )
@@ -942,14 +957,14 @@ private fun macOSPrivacyWarningForConversation(state: MobidexUiState): String? =
 internal fun sessionEmptyTitle(state: MobidexUiState): String =
     when {
         state.isRefreshingSessions -> "Loading Sessions..."
-        state.connectionState == ServerConnectionState.Connected -> "No Sessions"
+        state.connectionState == ServerConnectionState.Connected -> "No Sessions Yet"
         else -> "Connect to Load Sessions"
     }
 
 internal fun projectSessionEmptyTitle(state: MobidexUiState): String =
     when {
         state.isRefreshingSessions -> "Loading Sessions..."
-        state.connectionState == ServerConnectionState.Connected -> "No Sessions"
+        state.connectionState == ServerConnectionState.Connected -> "No Sessions Yet"
         else -> "Connect to Create a Session"
     }
 

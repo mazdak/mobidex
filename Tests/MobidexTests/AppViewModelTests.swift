@@ -1540,7 +1540,7 @@ final class AppViewModelTests: XCTestCase {
 
     @MainActor
     func testStartNewSessionCreatesAndSelectsThreadWhenConnected() async throws {
-        let project = ProjectRecord(path: "/srv/app")
+        let project = ProjectRecord(path: "/srv/app", isAdded: true)
         let server = ServerRecord(
             displayName: "Build Box",
             host: "build.example.com",
@@ -1585,6 +1585,7 @@ final class AppViewModelTests: XCTestCase {
         """)
         await connectTask.value
         XCTAssertEqual(viewModel.selectedThreadID, "thread-1")
+        XCTAssertTrue(viewModel.canCreateSession)
 
         cursor = transport.sentLinesSnapshot.count
         let newSessionTask = Task { await viewModel.startNewSession() }

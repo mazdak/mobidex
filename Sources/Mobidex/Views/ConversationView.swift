@@ -50,7 +50,8 @@ struct ConversationView: View {
                 Divider()
                 ContentUnavailableView(
                     projectEmptyTitle,
-                    systemImage: "bubble.left.and.bubble.right"
+                    systemImage: "bubble.left.and.bubble.right",
+                    description: Text(projectEmptyDescription)
                 )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -310,7 +311,11 @@ struct ConversationView: View {
         if model.isRefreshingSessions {
             return "Loading Sessions..."
         }
-        return model.canSendMessage ? "No Sessions" : "Connect to Create a Session"
+        return model.canSendMessage ? "No Sessions Yet" : "Connect to Create a Session"
+    }
+
+    private var projectEmptyDescription: String {
+        model.canSendMessage ? "Start a new session for this project." : "Connect to start a session for this project."
     }
 
     private func scrollToConversationBottom(_ proxy: ScrollViewProxy) {

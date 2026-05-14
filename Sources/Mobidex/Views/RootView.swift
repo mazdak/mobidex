@@ -198,21 +198,28 @@ struct ProjectSessionListView: View {
                         SessionsContent(
                             selectedProject: model.selectedProject,
                             isShowingAllSessions: model.isShowingAllSessions,
+                            canCreateSession: model.canCreateSession,
                             showsArchivedSessions: $model.showsArchivedSessions,
                             sections: sessionSections,
                             selectedThreadID: model.selectedThreadID,
                             serverContentDisabled: serverContentDisabled,
-                            contentOpacity: contentOpacity
-                        ) { thread in
-                            promoteDetailIfCompact()
-                            Task { await model.openThread(thread) }
-                        }
+                            contentOpacity: contentOpacity,
+                            onStartNewSession: {
+                                promoteDetailIfCompact()
+                                Task { await model.startNewSession() }
+                            },
+                            onOpen: { thread in
+                                promoteDetailIfCompact()
+                                Task { await model.openThread(thread) }
+                            }
+                        )
 
                         if sessionSections.isEmpty {
                             Section("Sessions") {
                                 ContentUnavailableView(
                                     sessionsUnavailableTitle,
-                                    systemImage: "bubble.left.and.bubble.right"
+                                    systemImage: "bubble.left.and.bubble.right",
+                                    description: Text(sessionsUnavailableDescription)
                                 )
                                     .frame(maxWidth: .infinity, minHeight: 260)
                                     .listRowSeparator(.hidden)
@@ -398,7 +405,14 @@ struct ProjectSessionListView: View {
         if isSessionRefreshRequested || model.isRefreshingSessions {
             return "Loading Sessions..."
         }
-        return model.connectionState == .connected ? "No Sessions" : "Connect to Load Sessions"
+        return model.connectionState == .connected ? "No Sessions Yet" : "Connect to Load Sessions"
+    }
+
+    private var sessionsUnavailableDescription: String {
+        if !model.isShowingAllSessions, model.selectedProject != nil, model.connectionState == .connected {
+            return "Start a new session for this project."
+        }
+        return "Sessions you open will show up here."
     }
 
     private func promoteDetailIfCompact() {
@@ -508,7 +522,7 @@ private struct ProjectSectionsContent: View {
                 ContentUnavailableView(
                     unavailableTitle,
                     systemImage: "folder",
-                    description: Text("Use the folder-plus button in the toolbar to add projects.")
+                    description: Text("Add a project to get started.")
                 )
                     .frame(maxWidth: .infinity, minHeight: 260)
                     .listRowSeparator(.hidden)
@@ -661,6 +675,8 @@ private struct AddProjectButton: View {
 
 private struct ProjectSessionScopeRow: View {
     let project: ProjectRecord
+    let canCreateSession: Bool
+    let onStartNewSession: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -674,6 +690,13 @@ private struct ProjectSessionScopeRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            Spacer()
+            Button(action: onStartNewSession) {
+                Label("New Session", systemImage: "plus.bubble")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canCreateSession)
+            .accessibilityIdentifier("projectNewSessionButton")
         }
         .padding(.vertical, 2)
     }
@@ -682,18 +705,24 @@ private struct ProjectSessionScopeRow: View {
 private struct SessionsContent: View {
     let selectedProject: ProjectRecord?
     let isShowingAllSessions: Bool
+    let canCreateSession: Bool
     @Binding var showsArchivedSessions: Bool
     let sections: [SessionListSection]
     let selectedThreadID: String?
     let serverContentDisabled: Bool
     let contentOpacity: Double
+    let onStartNewSession: () -> Void
     let onOpen: (CodexThread) -> Void
 
     @ViewBuilder
     var body: some View {
         Section {
             if let project = selectedProject, !isShowingAllSessions {
-                ProjectSessionScopeRow(project: project)
+                ProjectSessionScopeRow(
+                    project: project,
+                    canCreateSession: canCreateSession && !serverContentDisabled,
+                    onStartNewSession: onStartNewSession
+                )
             }
             Toggle("Show archived sessions", isOn: $showsArchivedSessions)
                 .font(.subheadline)

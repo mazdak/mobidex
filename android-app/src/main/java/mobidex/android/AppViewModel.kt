@@ -105,7 +105,7 @@ data class MobidexUiState(
         get() = connectionState == ServerConnectionState.Connected
 
     val canCreateSession: Boolean
-        get() = connectionState == ServerConnectionState.Connected && selectedProject != null && selectedThread == null && !isBusy
+        get() = connectionState == ServerConnectionState.Connected && selectedProject != null && !isBusy
 
     val activeTurnID: String?
         get() = selectedThread?.turns?.lastOrNull { it.status == "inProgress" }?.id
@@ -615,13 +615,19 @@ class AppViewModel(
         viewModelScope.launch {
             runBusy("Starting session") {
                 val state = _state.value
-                val client = appServer ?: return@runBusy
-                val requestServerID = state.selectedServerID
-                val requestProjectID = state.selectedProjectID
-                val requestThreadID = state.selectedThreadID
-                val cwd = state.selectedProject?.path ?: return@runBusy
-                val thread = client.startThread(cwd)
-                hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID)
+            val client = appServer ?: return@runBusy
+            val requestServerID = state.selectedServerID
+            val requestProjectID = state.selectedProjectID
+            val requestThreadID = state.selectedThreadID
+            val cwd = state.selectedProject?.path ?: return@runBusy
+            val thread = client.startThread(cwd)
+            hydrateConversationIfCurrent(
+                thread,
+                requestServerID,
+                requestProjectID,
+                requestThreadID,
+                clearPerThreadState = true,
+            )
                 _state.update { current ->
                     if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                         current
@@ -1240,16 +1246,26 @@ class AppViewModel(
         requestServerID: String?,
         requestProjectID: String?,
         requestThreadID: String?,
+        clearPerThreadState: Boolean = false,
     ) {
         _state.update { state ->
             if (state.selectedServerID != requestServerID || state.selectedProjectID != requestProjectID || state.selectedThreadID != requestThreadID) {
                 state
             } else {
-                state.copy(
+                var next = state.copy(
                     selectedThreadID = thread.id,
                     selectedThread = thread,
                     conversationSections = thread.conversationSections(),
                 )
+                if (clearPerThreadState) {
+                    next = next.copy(
+                        pendingApprovals = emptyList(),
+                        diffSnapshot = GitDiffSnapshot.Empty,
+                        isRefreshingChanges = false,
+                        tokenUsagePercent = null,
+                    )
+                }
+                next
             }
         }
     }

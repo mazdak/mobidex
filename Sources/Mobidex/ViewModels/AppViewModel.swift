@@ -257,7 +257,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var canCreateSession: Bool {
-        appServer != nil && selectedProject != nil && selectedThread == nil && !isSessionMutationInFlight
+        appServer != nil && selectedProject != nil && !isSessionMutationInFlight
     }
 
     var sessionSections: [SessionListSection] {
@@ -938,6 +938,9 @@ final class AppViewModel: ObservableObject {
             }
             selectedThreadID = thread.id
             selectedThreadTokenUsage = nil
+            changedFiles = []
+            diffSnapshot = .empty
+            pendingApprovals = []
             hydrateConversation(from: thread)
             suppressThreadAutoSelection = false
             threads = sortedThreads([thread] + threads.filter { $0.id != thread.id })
