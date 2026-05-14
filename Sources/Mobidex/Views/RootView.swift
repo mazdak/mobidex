@@ -165,7 +165,7 @@ struct ProjectSessionListView: View {
     @State private var showingProjectAdd = false
     @State private var selectedMode: ProjectSessionMode = .projects
     @State private var projectSearchText = ""
-    @State private var showInactiveDiscoveredProjects = false
+    @State private var sessionSearchText = ""
     @State private var isSessionRefreshRequested = false
     @State private var skipNextAllSessionsRefresh = false
     @State private var showingTerminal = false
@@ -190,19 +190,16 @@ struct ProjectSessionListView: View {
                             unavailableTitle: projectsUnavailableTitle(server: server, sections: sections),
                             serverContentDisabled: serverContentDisabled,
                             contentOpacity: contentOpacity,
-                            showInactiveDiscoveredProjects: $showInactiveDiscoveredProjects,
-                            showsArchivedSessions: $model.showsArchivedSessions,
                             selectedMode: $selectedMode,
                             skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
-                        ) {
-                            promoteDetailIfCompact()
-                        }
+                        ) {}
                     case .sessions:
+                        let sessionSections = filteredSessionSections(model.sessionSections)
                         SessionsContent(
                             selectedProject: model.selectedProject,
                             isShowingAllSessions: model.isShowingAllSessions,
                             showsArchivedSessions: $model.showsArchivedSessions,
-                            sections: model.sessionSections,
+                            sections: sessionSections,
                             selectedThreadID: model.selectedThreadID,
                             serverContentDisabled: serverContentDisabled,
                             contentOpacity: contentOpacity
@@ -211,7 +208,7 @@ struct ProjectSessionListView: View {
                             Task { await model.openThread(thread) }
                         }
 
-                        if model.threads.isEmpty {
+                        if sessionSections.isEmpty {
                             Section("Sessions") {
                                 ContentUnavailableView(
                                     sessionsUnavailableTitle,
@@ -231,10 +228,7 @@ struct ProjectSessionListView: View {
                     ConnectionDiagnosticsView()
                         .environmentObject(model)
                 }
-                .searchable(text: $projectSearchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "Search Projects")
-                .onChange(of: projectSearchText) { _, newValue in
-                    handleProjectSearchChange(newValue)
-                }
+                .searchable(text: searchTextBinding, placement: .navigationBarDrawer(displayMode: .automatic), prompt: searchPrompt)
                 .onChange(of: selectedMode) { _, newValue in
                     handleSelectedModeChange(newValue)
                 }
@@ -272,12 +266,6 @@ struct ProjectSessionListView: View {
             } else {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
             }
-        }
-    }
-
-    private func handleProjectSearchChange(_ newValue: String) {
-        if !newValue.isEmpty {
-            selectedMode = .projects
         }
     }
 
@@ -424,13 +412,47 @@ struct ProjectSessionListView: View {
         projectSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var trimmedSessionSearch: String {
+        sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var searchPrompt: String {
+        selectedMode == .sessions ? "Search Sessions" : "Search Projects"
+    }
+
+    private var searchTextBinding: Binding<String> {
+        Binding(
+            get: { selectedMode == .sessions ? sessionSearchText : projectSearchText },
+            set: { value in
+                if selectedMode == .sessions {
+                    sessionSearchText = value
+                } else {
+                    projectSearchText = value
+                }
+            }
+        )
+    }
+
     private func projectSections(from projects: [ProjectRecord]) -> ProjectListSections {
         ProjectListSections(
-            projects: projects,
+            projects: projects.filter(\.isAddedToProjectList),
             searchText: trimmedProjectSearch,
-            showInactiveDiscoveredProjects: showInactiveDiscoveredProjects,
-            showArchivedSessionProjects: model.showsArchivedSessions
+            showInactiveDiscoveredProjects: false,
+            showArchivedSessionProjects: false
         )
+    }
+
+    private func filteredSessionSections(_ sections: [SessionListSection]) -> [SessionListSection] {
+        let query = trimmedSessionSearch
+        guard !query.isEmpty else { return sections }
+        return sections.compactMap { section in
+            let threads = section.threads.filter {
+                $0.title.localizedCaseInsensitiveContains(query) ||
+                    $0.cwd.localizedCaseInsensitiveContains(query)
+            }
+            guard !threads.isEmpty else { return nil }
+            return SessionListSection(id: section.id, title: section.title, threads: threads)
+        }
     }
 
     private func projectsUnavailableTitle(server: ServerRecord, sections: ProjectListSections) -> String {
@@ -439,9 +461,6 @@ struct ProjectSessionListView: View {
         }
         if model.isDiscoveringProjects {
             return "Loading Projects"
-        }
-        if !server.projects.isEmpty && sections.showArchivedSessionFilter && !model.showsArchivedSessions {
-            return "No Active Projects"
         }
         return "No Projects"
     }
@@ -468,45 +487,15 @@ private struct ProjectSectionsContent: View {
     let unavailableTitle: String
     let serverContentDisabled: Bool
     let contentOpacity: Double
-    @Binding var showInactiveDiscoveredProjects: Bool
-    @Binding var showsArchivedSessions: Bool
     @Binding var selectedMode: ProjectSessionMode
     @Binding var skipNextAllSessionsRefresh: Bool
     let onOpenProject: () -> Void
 
     @ViewBuilder
     var body: some View {
-        if sections.showInactiveDiscoveredFilter {
-            Section {
-                Toggle("Show inactive discovered projects", isOn: $showInactiveDiscoveredProjects)
-                    .font(.subheadline)
-            }
-            .disabled(serverContentDisabled)
-            .opacity(contentOpacity)
-        }
-
-        if sections.showArchivedSessionFilter {
-            Section {
-                Toggle("Show archived sessions", isOn: $showsArchivedSessions)
-                    .font(.subheadline)
-            }
-            .disabled(serverContentDisabled)
-            .opacity(contentOpacity)
-        }
-
         ProjectListSection(
-            title: "Favorites",
-            projects: sections.favorites,
-            serverContentDisabled: serverContentDisabled,
-            contentOpacity: contentOpacity,
-            selectedMode: $selectedMode,
-            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh,
-            onOpenProject: onOpenProject
-        )
-
-        ProjectListSection(
-            title: sections.discoveredTitle,
-            projects: sections.discovered,
+            title: "Projects",
+            projects: sections.projects,
             serverContentDisabled: serverContentDisabled,
             contentOpacity: contentOpacity,
             selectedMode: $selectedMode,
@@ -516,7 +505,11 @@ private struct ProjectSectionsContent: View {
 
         if sections.isEmpty {
             Section {
-                ContentUnavailableView(unavailableTitle, systemImage: "folder")
+                ContentUnavailableView(
+                    unavailableTitle,
+                    systemImage: "folder",
+                    description: Text("Use the folder-plus button in the toolbar to add projects.")
+                )
                     .frame(maxWidth: .infinity, minHeight: 260)
                     .listRowSeparator(.hidden)
             }
@@ -566,19 +559,10 @@ private struct ProjectActionRow: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("projectRow")
         .swipeActions {
-            Button {
-                _ = model.setProjectFavorite(project, isFavorite: !project.isFavorite)
+            Button(role: .destructive) {
+                model.removeProject(project)
             } label: {
-                Label(project.isFavorite ? "Unfavorite" : "Favorite", systemImage: project.isFavorite ? "star.slash" : "star")
-            }
-            .tint(.yellow)
-
-            if !project.discovered {
-                Button(role: .destructive) {
-                    model.removeProject(project)
-                } label: {
-                    Label("Remove", systemImage: "minus.circle")
-                }
+                Label("Remove", systemImage: "minus.circle")
             }
         }
     }
@@ -905,11 +889,6 @@ struct ProjectRow: View {
                     .lineLimit(1)
             }
             Spacer()
-            if project.isFavorite {
-                Image(systemName: "star.fill")
-                    .font(.body)
-                    .foregroundStyle(.yellow)
-            }
         }
     }
 }

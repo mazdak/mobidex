@@ -10,19 +10,19 @@ final class ProjectListProjectionTests: XCTestCase {
         XCTAssertNotNil(ProjectRecord(path: "/Users/yesh/Code/app", sessionPaths: ["/Users/yesh/Desktop/app"]).macOSPrivacyWarning)
     }
 
-    func testSeparatesFavoritesFromActiveDiscoveredProjects() throws {
-        let favoriteWithoutChats = ProjectRecord(path: "/srv/favorite", discovered: false, isFavorite: true)
+    func testSeparatesAddedFromActiveDiscoveredProjects() throws {
+        let addedWithoutChats = ProjectRecord(path: "/srv/added", discovered: false, isAdded: true)
         let activeDiscovered = ProjectRecord(path: "/srv/active", discovered: true, discoveredSessionCount: 2)
         let inactiveDiscovered = ProjectRecord(path: "/srv/inactive", discovered: true)
 
         let sections = ProjectListSections(
-            projects: [inactiveDiscovered, activeDiscovered, favoriteWithoutChats],
+            projects: [inactiveDiscovered, activeDiscovered, addedWithoutChats],
             searchText: "",
             showInactiveDiscoveredProjects: false,
             showArchivedSessionProjects: false
         )
 
-        XCTAssertEqual(sections.favorites.map(\.path), ["/srv/favorite"])
+        XCTAssertEqual(sections.projects.map(\.path), ["/srv/added"])
         XCTAssertEqual(sections.discovered.map(\.path), ["/srv/active"])
         XCTAssertTrue(sections.showInactiveDiscoveredFilter)
         XCTAssertEqual(sections.discoveredTitle, "Discovered")
@@ -54,7 +54,7 @@ final class ProjectListProjectionTests: XCTestCase {
             showArchivedSessionProjects: false
         )
 
-        XCTAssertTrue(sections.favorites.isEmpty)
+        XCTAssertTrue(sections.projects.isEmpty)
         XCTAssertEqual(sections.discovered.map(\.path), ["/srv/inactive-match"])
         XCTAssertEqual(sections.discoveredTitle, "Discovered")
     }
@@ -69,7 +69,7 @@ final class ProjectListProjectionTests: XCTestCase {
             showInactiveDiscoveredProjects: false,
             showArchivedSessionProjects: false
         )
-        XCTAssertEqual(defaultSections.favorites.map(\.path), ["/srv/manual"])
+        XCTAssertEqual(defaultSections.projects.map(\.path), ["/srv/manual"])
         XCTAssertTrue(defaultSections.added.isEmpty)
 
         let searchSections = ProjectListSections(
@@ -78,7 +78,7 @@ final class ProjectListProjectionTests: XCTestCase {
             showInactiveDiscoveredProjects: false,
             showArchivedSessionProjects: false
         )
-        XCTAssertEqual(searchSections.favorites.map(\.path), ["/srv/manual"])
+        XCTAssertEqual(searchSections.projects.map(\.path), ["/srv/manual"])
         XCTAssertTrue(searchSections.added.isEmpty)
         XCTAssertTrue(searchSections.discovered.isEmpty)
     }

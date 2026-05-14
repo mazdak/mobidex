@@ -48,6 +48,7 @@ interface MobidexSshService {
     suspend fun testConnection(server: ServerRecord, credential: SSHCredential)
     suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject>
     suspend fun listDirectories(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
+    suspend fun createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
     suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String>
     suspend fun openAppServer(server: ServerRecord, credential: SSHCredential): CodexAppServerClient
     suspend fun openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential): RemoteTerminalSession
@@ -77,6 +78,11 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
     override suspend fun listDirectories(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =
         withClient(server, credential) { client ->
             RemoteDirectoryBrowser.decodeListing(client.execString(RemoteDirectoryBrowser.shellCommand(path)))
+        }
+
+    override suspend fun createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =
+        withClient(server, credential) { client ->
+            RemoteDirectoryBrowser.decodeListing(client.execString(RemoteDirectoryBrowser.createDirectoryShellCommand(parentPath, folderName)))
         }
 
     override suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String> =

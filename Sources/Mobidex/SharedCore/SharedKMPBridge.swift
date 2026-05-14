@@ -110,6 +110,10 @@ enum SharedKMPBridge {
         MobidexShared.RemoteDirectoryBrowser.shared.shellCommand(path: path)
     }
 
+    static func remoteDirectoryCreateShellCommand(parentPath: String, folderName: String) -> String {
+        MobidexShared.RemoteDirectoryBrowser.shared.createDirectoryShellCommand(parentPath: parentPath, folderName: folderName)
+    }
+
     static func decodeRemoteDirectoryListing(from output: String) throws -> RemoteDirectoryListing {
         toRemoteDirectoryListing(try MobidexShared.RemoteDirectoryBrowser.shared.decodeListing(output: output))
     }
@@ -206,7 +210,7 @@ enum SharedKMPBridge {
             showArchivedSessionProjects: showArchivedSessionProjects
         )
         return ProjectListSections(
-            favorites: sections.favorites.map { toProjectRecord($0, existing: existingByPath[$0.path]) },
+            projects: sections.projects.map { toProjectRecord($0, existing: existingByPath[$0.path]) },
             discovered: sections.discovered.map { toProjectRecord($0, existing: existingByPath[$0.path]) },
             added: sections.added.map { toProjectRecord($0, existing: existingByPath[$0.path]) },
             showInactiveDiscoveredFilter: sections.showInactiveDiscoveredFilter,
@@ -449,7 +453,7 @@ enum SharedKMPBridge {
             activeChatCount: Int32(record.activeChatCount),
             lastDiscoveredAtEpochSeconds: kotlinLong(from: record.lastDiscoveredAt),
             lastActiveChatAtEpochSeconds: kotlinLong(from: record.lastActiveChatAt),
-            isFavorite: record.isFavorite
+            isAdded: record.isAdded
         )
     }
 
@@ -469,7 +473,7 @@ enum SharedKMPBridge {
             activeChatCount: Int(record.activeChatCount),
             lastDiscoveredAt: date(from: record.lastDiscoveredAtEpochSeconds),
             lastActiveChatAt: date(from: record.lastActiveChatAtEpochSeconds),
-            isFavorite: record.isFavorite
+            isAdded: record.isAdded
         )
     }
 

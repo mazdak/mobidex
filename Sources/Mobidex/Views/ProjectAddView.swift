@@ -4,6 +4,7 @@ struct ProjectAddView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var model: AppViewModel
     @State private var path = ""
+    @State private var discoverySearchText = ""
     @State private var validationMessage: String?
     @State private var showingBrowser = false
 
@@ -22,6 +23,47 @@ struct ProjectAddView: View {
                             Image(systemName: "folder")
                         }
                         .accessibilityLabel("Browse Remote Folders")
+                    }
+                }
+
+                Section {
+                    Button {
+                        Task { await model.refreshProjects() }
+                    } label: {
+                        Label("Discover Projects", systemImage: "magnifyingglass")
+                    }
+                    .disabled(model.isDiscoveringProjects)
+
+                    if model.isDiscoveringProjects {
+                        HStack {
+                            ProgressView()
+                            Text("Discovering projects")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    TextField("Search discovered projects", text: $discoverySearchText)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("Discovery")
+                }
+
+                Section("Discovered Projects") {
+                    if discoveredProjects.isEmpty {
+                        ContentUnavailableView("No Discovered Projects", systemImage: "folder.badge.questionmark")
+                            .frame(maxWidth: .infinity, minHeight: 160)
+                            .listRowSeparator(.hidden)
+                    } else {
+                        ForEach(discoveredProjects) { project in
+                            Button {
+                                path = project.path
+                                add()
+                            } label: {
+                                ProjectRow(project: project)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
 
@@ -65,6 +107,17 @@ struct ProjectAddView: View {
             validationMessage = model.statusMessage ?? "Mobidex could not save this project."
         }
     }
+
+    private var discoveredProjects: [ProjectRecord] {
+        let query = discoverySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (model.selectedServer?.projects ?? [])
+            .filter { $0.discovered && !$0.isAddedToProjectList }
+            .filter {
+                query.isEmpty ||
+                    $0.displayName.localizedCaseInsensitiveContains(query) ||
+                    $0.path.localizedCaseInsensitiveContains(query)
+            }
+    }
 }
 
 private struct RemoteDirectoryBrowserView: View {
@@ -73,6 +126,7 @@ private struct RemoteDirectoryBrowserView: View {
     @State private var currentPath: String
     @State private var entries: [RemoteDirectoryEntry] = []
     @State private var isLoading = false
+    @State private var folderName = ""
     @State private var errorMessage: String?
     let onSelect: (String) -> Void
 
@@ -97,6 +151,21 @@ private struct RemoteDirectoryBrowserView: View {
                         } label: {
                             Label("Parent Folder", systemImage: "arrow.up")
                         }
+                    }
+                }
+                Section("Create Folder") {
+                    HStack(spacing: 8) {
+                        TextField("Folder name", text: $folderName)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onSubmit { Task { await createFolder() } }
+                        Button {
+                            Task { await createFolder() }
+                        } label: {
+                            Image(systemName: "folder.badge.plus")
+                        }
+                        .disabled(folderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isLoading)
+                        .accessibilityLabel("Create Folder")
                     }
                 }
                 Section("Folders") {
@@ -163,6 +232,22 @@ private struct RemoteDirectoryBrowserView: View {
             errorMessage = error.localizedDescription
         }
         isLoading = false
+    }
+
+    @MainActor
+    private func createFolder() async {
+        let name = folderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        isLoading = true
+        errorMessage = nil
+        do {
+            let listing = try await model.createRemoteDirectory(parentPath: currentPath, folderName: name)
+            folderName = ""
+            await load(listing.path)
+        } catch {
+            errorMessage = error.localizedDescription
+            isLoading = false
+        }
     }
 }
 

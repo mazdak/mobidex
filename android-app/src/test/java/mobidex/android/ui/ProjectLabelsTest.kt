@@ -53,7 +53,7 @@ class ProjectLabelsTest {
     @Test
     fun projectEmptyTitleUsesDedicatedProjectDiscoveryState() {
         val sections = AndroidProjectListSections(
-            favorites = emptyList(),
+            projects = emptyList(),
             discovered = emptyList(),
             added = emptyList(),
             showInactiveDiscoveredFilter = false,
@@ -71,9 +71,9 @@ class ProjectLabelsTest {
     }
 
     @Test
-    fun projectEmptyTitleNamesHiddenArchivedOnlyProjects() {
+    fun projectEmptyTitleIgnoresHiddenArchivedOnlyProjects() {
         val sections = AndroidProjectListSections(
-            favorites = emptyList(),
+            projects = emptyList(),
             discovered = emptyList(),
             added = emptyList(),
             showInactiveDiscoveredFilter = false,
@@ -89,7 +89,7 @@ class ProjectLabelsTest {
         )
 
         assertEquals(
-            "No Active Projects",
+            "No Projects",
             projectEmptyTitle(MobidexUiState(selectedServerID = archivedOnlyServer.id, servers = listOf(archivedOnlyServer)), sections, ""),
         )
     }

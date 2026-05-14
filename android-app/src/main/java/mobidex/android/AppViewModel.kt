@@ -75,6 +75,7 @@ data class MobidexUiState(
     val servers: List<ServerRecord> = emptyList(),
     val selectedServerID: String? = null,
     val selectedProjectID: String? = null,
+    val isShowingAllSessions: Boolean = false,
     val threads: List<CodexThread> = emptyList(),
     val selectedThreadID: String? = null,
     val selectedThread: CodexThread? = null,
@@ -111,7 +112,7 @@ data class MobidexUiState(
 }
 
 data class AndroidProjectListSections(
-    val favorites: List<ProjectRecord>,
+    val projects: List<ProjectRecord>,
     val discovered: List<ProjectRecord>,
     val added: List<ProjectRecord>,
     val showInactiveDiscoveredFilter: Boolean,
@@ -119,8 +120,14 @@ data class AndroidProjectListSections(
     val discoveredTitle: String,
 ) {
     val isEmpty: Boolean
-        get() = favorites.isEmpty() && discovered.isEmpty() && added.isEmpty()
+        get() = projects.isEmpty() && discovered.isEmpty() && added.isEmpty()
 }
+
+data class AndroidSessionListSection(
+    val id: String,
+    val title: String,
+    val threads: List<CodexThread>,
+)
 
 class AppViewModel(
     context: Context,
@@ -159,7 +166,8 @@ class AppViewModel(
             val server = state.servers.firstOrNull { it.id == serverID }
             state.copy(
                 selectedServerID = serverID,
-                selectedProjectID = server?.projects?.firstOrNull()?.id,
+                selectedProjectID = server?.projects?.firstAddedProjectID,
+                isShowingAllSessions = false,
                 threads = emptyList(),
                 selectedThreadID = null,
                 selectedThread = null,
@@ -202,6 +210,24 @@ class AppViewModel(
         _state.update { state ->
             state.copy(
                 selectedProjectID = projectID,
+                isShowingAllSessions = false,
+                threads = emptyList(),
+                selectedThreadID = null,
+                selectedThread = null,
+                conversationSections = emptyList(),
+                diffSnapshot = GitDiffSnapshot.Empty,
+                tokenUsagePercent = null,
+            )
+        }
+        refreshThreads(refreshGeneration = refreshGeneration)
+    }
+
+    fun selectAllSessionsAndRefresh() {
+        val refreshGeneration = beginSessionRefresh()
+        _state.update { state ->
+            state.copy(
+                selectedProjectID = null,
+                isShowingAllSessions = true,
                 threads = emptyList(),
                 selectedThreadID = null,
                 selectedThread = null,
@@ -267,6 +293,12 @@ class AppViewModel(
         return sshService.listDirectories(path, server, credentialStore.loadCredential(server.id))
     }
 
+    suspend fun createRemoteDirectory(parentPath: String, folderName: String): RemoteDirectoryListing {
+        val state = _state.value
+        val server = state.selectedServer ?: error("Select a server before creating folders.")
+        return sshService.createDirectory(parentPath, folderName, server, credentialStore.loadCredential(server.id))
+    }
+
     fun loadCredential(serverID: String, onLoaded: (SSHCredential) -> Unit) {
         viewModelScope.launch { onLoaded(credentialStore.loadCredential(serverID)) }
     }
@@ -301,7 +333,8 @@ class AppViewModel(
                     val saved = state.copy(
                         servers = updated,
                         selectedServerID = next.id,
-                        selectedProjectID = next.projects.firstOrNull()?.id,
+                        selectedProjectID = next.projects.firstAddedProjectID,
+                        isShowingAllSessions = false,
                         connectionState = if (editedSelectedServer) ServerConnectionState.Disconnected else state.connectionState,
                         failureMessage = null,
                         statusMessage = "Saved ${next.displayName}.",
@@ -326,7 +359,8 @@ class AppViewModel(
                     val deleted = state.copy(
                         servers = updated,
                         selectedServerID = updated.firstOrNull()?.id,
-                        selectedProjectID = updated.firstOrNull()?.projects?.firstOrNull()?.id,
+                        selectedProjectID = updated.firstOrNull()?.projects?.firstAddedProjectID,
+                        isShowingAllSessions = false,
                         connectionState = if (wasSelected) ServerConnectionState.Disconnected else state.connectionState,
                         failureMessage = null,
                         statusMessage = "Deleted ${server.displayName}.",
@@ -348,9 +382,15 @@ class AppViewModel(
                 require(trimmed.isNotBlank()) { "Enter a remote project path." }
                 val state = _state.value
                 val server = state.selectedServer ?: error("Select a server before adding a project.")
-                require(server.projects.none { it.path == trimmed }) { "That project is already saved." }
-                val project = ProjectRecord(path = trimmed, isFavorite = true)
-                val updatedServer = server.copy(projects = server.projects + project, updatedAtEpochSeconds = Instant.now().epochSecond)
+                val existing = server.projects.firstOrNull { it.path == trimmed }
+                require(existing?.isAdded != true) { "That project is already in the list." }
+                val project = existing?.copy(isAdded = true) ?: ProjectRecord(path = trimmed, isAdded = true)
+                val updatedProjects = if (existing == null) {
+                    server.projects + project
+                } else {
+                    server.projects.map { if (it.id == existing.id) project else it }
+                }
+                val updatedServer = server.copy(projects = updatedProjects, updatedAtEpochSeconds = Instant.now().epochSecond)
                 val updated = state.servers.upsert(updatedServer)
                 repository.saveServers(updated)
                 _state.update {
@@ -363,7 +403,7 @@ class AppViewModel(
                         conversationSections = emptyList(),
                         diffSnapshot = GitDiffSnapshot.Empty,
                         tokenUsagePercent = null,
-                        statusMessage = "Saved ${project.displayName} as a favorite.",
+                        statusMessage = "Added ${project.displayName}.",
                     )
                 }
             }
@@ -374,7 +414,12 @@ class AppViewModel(
         viewModelScope.launch {
             val state = _state.value
             val server = state.selectedServer ?: return@launch
-            val updatedServer = server.copy(projects = server.projects.filterNot { it.id == project.id })
+            val updatedProjects = if (project.discovered) {
+                server.projects.map { if (it.id == project.id) it.copy(isAdded = false) else it }
+            } else {
+                server.projects.filterNot { it.id == project.id }
+            }
+            val updatedServer = server.copy(projects = updatedProjects)
             val updated = state.servers.upsert(updatedServer)
             repository.saveServers(updated)
             resetSessionRefreshTracking()
@@ -382,18 +427,18 @@ class AppViewModel(
                 val removedSelectedProject = current.selectedProjectID == project.id
                 val next = current.copy(
                     servers = updated,
-                    selectedProjectID = if (removedSelectedProject) updatedServer.projects.firstOrNull()?.id else current.selectedProjectID,
+                    selectedProjectID = if (removedSelectedProject) updatedServer.projects.firstAddedProjectID else current.selectedProjectID,
                 )
                 if (removedSelectedProject) next.clearingSessionScope() else next
             }
         }
     }
 
-    fun setProjectFavorite(project: ProjectRecord, favorite: Boolean) {
+    fun setProjectAdded(project: ProjectRecord, added: Boolean) {
         viewModelScope.launch {
             val state = _state.value
             val server = state.selectedServer ?: return@launch
-            val updatedServer = server.copy(projects = server.projects.map { if (it.id == project.id) it.copy(isFavorite = favorite) else it })
+            val updatedServer = server.copy(projects = server.projects.map { if (it.id == project.id) it.copy(isAdded = added) else it })
             val updated = state.servers.upsert(updatedServer)
             repository.saveServers(updated)
             _state.update { it.copy(servers = updated) }
@@ -446,10 +491,14 @@ class AppViewModel(
 
     fun refreshProjects() {
         viewModelScope.launch {
-            runBusy("Syncing projects") {
+            runBusy("Discovering projects") {
                 val server = _state.value.selectedServer ?: return@runBusy
-                val client = appServer ?: error("Connect to the server before syncing projects.")
-                refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = true)
+                val client = appServer
+                if (client != null) {
+                    refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = true)
+                } else {
+                    refreshProjectsFromSsh(server)
+                }
             }
         }
     }
@@ -467,9 +516,10 @@ class AppViewModel(
                     val client = appServer ?: return@runBusy
                     val requestServerID = state.selectedServerID
                     val requestProjectID = state.selectedProjectID
+                    val requestAllSessions = state.isShowingAllSessions
                     val project = state.selectedProject
-                    val cwd = project?.path
-                    val sessionPaths = project?.sessionPaths ?: emptyList()
+                    val cwd = if (state.isShowingAllSessions) null else project?.path
+                    val sessionPaths = if (state.isShowingAllSessions) emptyList() else project?.sessionPaths ?: emptyList()
                     val includeArchived = state.showsArchivedSessions
                     val loaded = if (sessionPaths.isEmpty()) {
                         client.listThreads(cwd, includeArchived = includeArchived)
@@ -497,6 +547,7 @@ class AppViewModel(
                         if (appServer !== client ||
                             current.selectedServerID != requestServerID ||
                             current.selectedProjectID != requestProjectID ||
+                            current.isShowingAllSessions != requestAllSessions ||
                             current.showsArchivedSessions != includeArchived
                         ) {
                             current
@@ -535,8 +586,10 @@ class AppViewModel(
 
     fun openThread(thread: CodexThread) {
         viewModelScope.launch {
-            val requestServerID = _state.value.selectedServerID
-            val requestProjectID = _state.value.selectedProjectID
+            val requestState = _state.value
+            val requestServerID = requestState.selectedServerID
+            val requestProjectID = requestState.selectedProjectID
+            val shouldPromoteProject = requestState.isShowingAllSessions
             _state.update {
                 it.copy(
                     selectedThreadID = thread.id,
@@ -550,6 +603,9 @@ class AppViewModel(
                 val client = appServer ?: return@runBusy
                 val hydrated = client.resumeThread(thread.id)
                 hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, thread.id)
+                if (shouldPromoteProject) {
+                    promoteProjectToProjectList(hydrated)
+                }
                 refreshProjectsForCurrentScope(client, requestServerID)
             }
         }
@@ -772,7 +828,8 @@ class AppViewModel(
                 it.copy(
                     servers = servers,
                     selectedServerID = servers.firstOrNull()?.id,
-                    selectedProjectID = servers.firstOrNull()?.projects?.firstOrNull()?.id,
+                    selectedProjectID = servers.firstOrNull()?.projects?.firstAddedProjectID,
+                    isShowingAllSessions = false,
                 )
             }
         }.onFailure { error -> _state.update { it.copy(statusMessage = error.message) } }
@@ -825,7 +882,11 @@ class AppViewModel(
             }
             _state.update {
                 if (projectSyncStillCurrent(server.id, client)) {
-                    val selectedProjectID = repairedSelectedProjectID(it.selectedProjectID, refreshed)
+                    val selectedProjectID = if (it.isShowingAllSessions) {
+                        null
+                    } else {
+                        repairedSelectedProjectID(it.selectedProjectID, refreshed)
+                    }
                     val projectSelectionChanged = selectedProjectID != it.selectedProjectID
                     it.copy(
                         servers = updatedServers,
@@ -840,6 +901,45 @@ class AppViewModel(
                     )
                 } else {
                     it
+                }
+            }
+        } finally {
+            _state.update { it.copy(isDiscoveringProjects = false) }
+        }
+    }
+
+    private suspend fun refreshProjectsFromSsh(server: ServerRecord) {
+        _state.update { it.copy(isDiscoveringProjects = true) }
+        try {
+            val discoveredProjects = sshService.discoverProjects(server, credentialStore.loadCredential(server.id))
+            val current = _state.value
+            if (current.selectedServerID != server.id) return
+            val currentServer = current.servers.firstOrNull { it.id == server.id } ?: return
+            val refreshed = refreshedProjects(currentServer.projects, discoveredProjects, emptyList())
+            val updatedServer = currentServer.copy(projects = refreshed, updatedAtEpochSeconds = Instant.now().epochSecond)
+            val updatedServers = current.servers.upsert(updatedServer)
+            repository.saveServers(updatedServers)
+            _state.update {
+                if (it.selectedServerID != server.id) {
+                    it
+                } else {
+                    val selectedProjectID = if (it.isShowingAllSessions) {
+                        null
+                    } else {
+                        repairedSelectedProjectID(it.selectedProjectID, refreshed)
+                    }
+                    val projectSelectionChanged = selectedProjectID != it.selectedProjectID
+                    it.copy(
+                        servers = updatedServers,
+                        selectedProjectID = selectedProjectID,
+                        threads = if (projectSelectionChanged) emptyList() else it.threads,
+                        selectedThreadID = if (projectSelectionChanged) null else it.selectedThreadID,
+                        selectedThread = if (projectSelectionChanged) null else it.selectedThread,
+                        conversationSections = if (projectSelectionChanged) emptyList() else it.conversationSections,
+                        diffSnapshot = if (projectSelectionChanged) GitDiffSnapshot.Empty else it.diffSnapshot,
+                        tokenUsagePercent = if (projectSelectionChanged) null else it.tokenUsagePercent,
+                        statusMessage = "Projects discovered.",
+                    )
                 }
             }
         } finally {
@@ -912,7 +1012,7 @@ class AppViewModel(
                 activeChatCount = shared.activeChatCount,
                 lastDiscoveredAtEpochSeconds = shared.lastDiscoveredAtEpochSeconds,
                 lastActiveChatAtEpochSeconds = shared.lastActiveChatAtEpochSeconds,
-                isFavorite = previous?.isFavorite ?: shared.isFavorite,
+                isAdded = previous?.isAdded ?: shared.isAdded,
             )
         }
     }
@@ -929,8 +1029,8 @@ class AppViewModel(
         }
 
     private fun repairedSelectedProjectID(selectedProjectID: String?, projects: List<ProjectRecord>): String? = when {
-        selectedProjectID != null && projects.any { it.id == selectedProjectID } -> selectedProjectID
-        else -> projects.firstOrNull()?.id
+        selectedProjectID != null && projects.any { it.id == selectedProjectID && it.isAdded } -> selectedProjectID
+        else -> projects.firstAddedProjectID
     }
 
     private fun ProjectRecord.toSharedProject(): mobidex.shared.ProjectRecord =
@@ -944,7 +1044,7 @@ class AppViewModel(
             activeChatCount = activeChatCount,
             lastDiscoveredAtEpochSeconds = lastDiscoveredAtEpochSeconds,
             lastActiveChatAtEpochSeconds = lastActiveChatAtEpochSeconds,
-            isFavorite = isFavorite,
+            isAdded = isAdded,
         )
 
     fun projectSections(searchText: String, showInactive: Boolean, showArchived: Boolean): AndroidProjectListSections {
@@ -957,13 +1057,40 @@ class AppViewModel(
             showArchivedSessionProjects = showArchived,
         )
         return AndroidProjectListSections(
-            favorites = sections.favorites.mapNotNull { projectsByPath[it.path] },
+            projects = sections.projects.mapNotNull { projectsByPath[it.path] },
             discovered = sections.discovered.mapNotNull { projectsByPath[it.path] },
             added = sections.added.mapNotNull { projectsByPath[it.path] },
             showInactiveDiscoveredFilter = sections.showInactiveDiscoveredFilter,
             showArchivedSessionFilter = sections.showArchivedSessionFilter,
             discoveredTitle = sections.discoveredTitle,
         )
+    }
+
+    fun sessionSections(searchText: String): List<AndroidSessionListSection> {
+        val state = _state.value
+        val query = searchText.trim()
+        val matchingThreads = state.threads.filter { thread ->
+            query.isEmpty() ||
+                thread.title.contains(query, ignoreCase = true) ||
+                thread.cwd.contains(query, ignoreCase = true)
+        }
+        val threadsByID = matchingThreads.associateBy { it.id }
+        return SessionListSections.from(
+            sessions = matchingThreads.map {
+                CodexThreadSummary(
+                    id = it.id,
+                    cwd = it.cwd,
+                    updatedAtEpochSeconds = it.updatedAtEpochSeconds,
+                )
+            },
+            projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+        ).map { section ->
+            AndroidSessionListSection(
+                id = section.id,
+                title = section.title,
+                threads = section.sessionIds.mapNotNull { threadsByID[it] },
+            )
+        }.filter { it.threads.isNotEmpty() }
     }
 
     private fun startEventLoop(client: CodexAppServerClient) {
@@ -1084,6 +1211,27 @@ class AppViewModel(
                 selectedThread = thread,
                 conversationSections = thread.conversationSections(),
             )
+        }
+    }
+
+    private suspend fun promoteProjectToProjectList(thread: CodexThread) {
+        val state = _state.value
+        val server = state.selectedServer ?: return
+        val existing = server.projects.firstOrNull { it.path == thread.cwd || thread.cwd in it.sessionPaths }
+        val updatedProject = existing?.copy(isAdded = true) ?: ProjectRecord(path = thread.cwd, isAdded = true)
+        if (existing?.isAdded == true) return
+        val updatedServer = server.copy(
+            projects = if (existing == null) {
+                server.projects + updatedProject
+            } else {
+                server.projects.map { if (it.id == existing.id) updatedProject else it }
+            },
+            updatedAtEpochSeconds = Instant.now().epochSecond,
+        )
+        val updated = state.servers.upsert(updatedServer)
+        repository.saveServers(updated)
+        _state.update {
+            if (it.selectedServerID == server.id) it.copy(servers = updated) else it
         }
     }
 
@@ -1421,6 +1569,9 @@ private fun List<ServerRecord>.clearingAppServerProjectState(): List<ServerRecor
 
 private fun List<ServerRecord>.upsert(server: ServerRecord): List<ServerRecord> =
     if (any { it.id == server.id }) map { if (it.id == server.id) server else it } else this + server
+
+private val List<ProjectRecord>.firstAddedProjectID: String?
+    get() = firstOrNull { it.isAdded }?.id
 
 private fun List<CodexTurn>.upsert(turn: CodexTurn): List<CodexTurn> =
     if (any { it.id == turn.id }) map { if (it.id == turn.id) turn else it } else this + turn

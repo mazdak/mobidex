@@ -6,19 +6,19 @@ import kotlin.test.assertTrue
 
 class SharedCoreParityTest {
     @Test
-    fun separatesFavoritesFromActiveDiscoveredProjects() {
-        val favoriteWithoutChats = ProjectRecord(path = "/srv/favorite", discovered = false, isFavorite = true)
+    fun separatesAddedFromActiveDiscoveredProjects() {
+        val addedWithoutChats = ProjectRecord(path = "/srv/added", discovered = false, isAdded = true)
         val activeDiscovered = ProjectRecord(path = "/srv/active", discovered = true, discoveredSessionCount = 2)
         val inactiveDiscovered = ProjectRecord(path = "/srv/inactive", discovered = true)
 
         val sections = ProjectListSections.from(
-            projects = listOf(inactiveDiscovered, activeDiscovered, favoriteWithoutChats),
+            projects = listOf(inactiveDiscovered, activeDiscovered, addedWithoutChats),
             searchText = "",
             showInactiveDiscoveredProjects = false,
             showArchivedSessionProjects = false,
         )
 
-        assertEquals(listOf("/srv/favorite"), sections.favorites.map { it.path })
+        assertEquals(listOf("/srv/added"), sections.projects.map { it.path })
         assertEquals(listOf("/srv/active"), sections.discovered.map { it.path })
         assertTrue(sections.showInactiveDiscoveredFilter)
         assertEquals("Discovered", sections.discoveredTitle)
@@ -36,7 +36,7 @@ class SharedCoreParityTest {
             showArchivedSessionProjects = false,
         )
 
-        assertTrue(sections.favorites.isEmpty())
+        assertTrue(sections.projects.isEmpty())
         assertEquals(listOf("/srv/inactive-match"), sections.discovered.map { it.path })
     }
 

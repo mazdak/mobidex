@@ -173,6 +173,7 @@ protocol SSHService: Sendable {
     func diagnoseConnection(server: ServerRecord, credential: SSHCredential) async -> SSHDiagnosticReport
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject]
     func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
+    func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String]
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient
 }
@@ -360,6 +361,18 @@ final class CitadelSSHService: TerminalSSHService {
         try await withClient(server: server, credential: credential) { client in
             let output = try await client.executeCommand(
                 SharedKMPBridge.remoteDirectoryBrowserShellCommand(path: path),
+                maxResponseSize: 1_000_000,
+                mergeStreams: false,
+                inShell: true
+            )
+            return try SharedKMPBridge.decodeRemoteDirectoryListing(from: String(buffer: output))
+        }
+    }
+
+    func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        try await withClient(server: server, credential: credential) { client in
+            let output = try await client.executeCommand(
+                SharedKMPBridge.remoteDirectoryCreateShellCommand(parentPath: parentPath, folderName: folderName),
                 maxResponseSize: 1_000_000,
                 mergeStreams: false,
                 inShell: true

@@ -1,7 +1,7 @@
 import Foundation
 
 struct ProjectListSections: Equatable {
-    var favorites: [ProjectRecord]
+    var projects: [ProjectRecord]
     var discovered: [ProjectRecord]
     var added: [ProjectRecord]
     var showInactiveDiscoveredFilter: Bool
@@ -9,18 +9,18 @@ struct ProjectListSections: Equatable {
     var discoveredTitle: String
 
     var isEmpty: Bool {
-        favorites.isEmpty && discovered.isEmpty && added.isEmpty
+        projects.isEmpty && discovered.isEmpty && added.isEmpty
     }
 
     init(
-        favorites: [ProjectRecord],
+        projects: [ProjectRecord],
         discovered: [ProjectRecord],
         added: [ProjectRecord],
         showInactiveDiscoveredFilter: Bool,
         showArchivedSessionFilter: Bool,
         discoveredTitle: String
     ) {
-        self.favorites = favorites
+        self.projects = projects
         self.discovered = discovered
         self.added = added
         self.showInactiveDiscoveredFilter = showInactiveDiscoveredFilter

@@ -59,8 +59,6 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -335,7 +333,9 @@ private fun ProjectSessionPane(
     onOpenDetail: () -> Unit = {},
 ) {
     var mode by remember { mutableStateOf(ProjectSessionMode.Projects) }
-    var search by remember { mutableStateOf("") }
+    var projectSearch by remember { mutableStateOf("") }
+    var sessionSearch by remember { mutableStateOf("") }
+    var showingAllSessions by remember { mutableStateOf(true) }
     var showInactive by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     var serverPendingDeletion by remember { mutableStateOf<ServerRecord?>(null) }
@@ -378,8 +378,23 @@ private fun ProjectSessionPane(
             }
             SecondaryTabRow(selectedTabIndex = mode.ordinal) {
                 ProjectSessionMode.entries.forEach { item ->
-                    Tab(selected = mode == item, onClick = { mode = item }, text = { Text(item.label) })
+                    Tab(
+                        selected = mode == item,
+                        onClick = {
+                            mode = item
+                            if (item == ProjectSessionMode.Sessions) {
+                                showingAllSessions = true
+                            }
+                        },
+                        text = { Text(item.label) },
+                    )
                 }
+            }
+        }
+
+        LaunchedEffect(mode, showingAllSessions, state.selectedServerID) {
+            if (mode == ProjectSessionMode.Sessions && showingAllSessions && !state.isShowingAllSessions) {
+                model.selectAllSessionsAndRefresh()
             }
         }
 
@@ -392,8 +407,20 @@ private fun ProjectSessionPane(
             )
         } else {
             when (mode) {
-                ProjectSessionMode.Projects -> ProjectList(state, model, search, showInactive, { search = it }, { showInactive = it }, disabled = connectionMode, onOpenSessions = { mode = ProjectSessionMode.Sessions })
-                ProjectSessionMode.Sessions -> ThreadList(state, model, disabled = connectionMode, onOpenDetail = onOpenDetail)
+                ProjectSessionMode.Projects -> ProjectList(
+                    state,
+                    model,
+                    projectSearch,
+                    showInactive,
+                    { projectSearch = it },
+                    { showInactive = it },
+                    disabled = connectionMode,
+                    onOpenSessions = {
+                        showingAllSessions = false
+                        mode = ProjectSessionMode.Sessions
+                    },
+                )
+                ProjectSessionMode.Sessions -> ThreadList(state, model, sessionSearch, { sessionSearch = it }, disabled = connectionMode, onOpenDetail = onOpenDetail)
             }
         }
     }
@@ -698,29 +725,10 @@ private fun ProjectList(
         if (contentIsLoading) {
             LoadingListStatusRow("Loading projects...")
         }
-        if (sections.showInactiveDiscoveredFilter) {
-            FilterChip(
-                selected = showInactive,
-                onClick = { onShowInactiveChange(!showInactive) },
-                enabled = !contentIsLoading,
-                label = { Text("Show inactive discovered projects") },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).graphicsLayer { alpha = contentAlpha },
-            )
-        }
-        if (sections.showArchivedSessionFilter) {
-            FilterChip(
-                selected = state.showsArchivedSessions,
-                onClick = { model.setShowsArchivedSessions(!state.showsArchivedSessions) },
-                enabled = !contentIsLoading,
-                label = { Text("Show archived sessions") },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).graphicsLayer { alpha = contentAlpha },
-            )
-        }
         LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
-            section("Favorites", sections.favorites) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
-            section(sections.discoveredTitle, sections.discovered) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
+            section("Projects", sections.projects) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
             if (sections.isEmpty) {
-                item { EmptyState(projectEmptyTitle(state, sections, search), "Connect or add a project path.", Icons.Default.Folder) }
+                item { EmptyState(projectEmptyTitle(state, sections, search), "Use the folder-plus button to add projects.", Icons.Default.Folder) }
             }
         }
     }
@@ -742,7 +750,6 @@ internal fun projectEmptyTitle(state: MobidexUiState, sections: AndroidProjectLi
     when {
         search.trim().isNotEmpty() -> "No Matching Projects"
         state.isDiscoveringProjects -> "Loading Projects"
-        state.selectedServer?.projects?.isNotEmpty() == true && sections.showArchivedSessionFilter && !state.showsArchivedSessions -> "No Active Projects"
         else -> "No Projects"
     }
 
@@ -770,15 +777,8 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
         },
         leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
         trailingContent = {
-            Row {
-                IconButton(onClick = { model.setProjectFavorite(project, !project.isFavorite) }, enabled = enabled) {
-                    Icon(if (project.isFavorite) Icons.Default.Star else Icons.Default.StarBorder, contentDescription = "Favorite")
-                }
-                if (!project.discovered) {
-                    IconButton(onClick = { model.removeProject(project) }, enabled = enabled) {
-                        Icon(Icons.Default.Delete, contentDescription = "Remove Project")
-                    }
-                }
+            IconButton(onClick = { model.removeProject(project) }, enabled = enabled) {
+                Icon(Icons.Default.Delete, contentDescription = "Remove Project")
             }
         },
         modifier = Modifier
@@ -797,23 +797,42 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
 }
 
 @Composable
-private fun ThreadList(state: MobidexUiState, model: AppViewModel, disabled: Boolean = false, onOpenDetail: () -> Unit) {
+private fun ThreadList(
+    state: MobidexUiState,
+    model: AppViewModel,
+    search: String,
+    onSearchChange: (String) -> Unit,
+    disabled: Boolean = false,
+    onOpenDetail: () -> Unit,
+) {
     val contentDisabled = state.isRefreshingSessions || disabled
     val contentAlpha = if (contentDisabled) 0.42f else 1f
+    val sections = model.sessionSections(search)
     Column(Modifier.fillMaxSize()) {
-        state.selectedProject?.let { project ->
-            Row(
-                Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Column(Modifier.weight(1f)) {
-                    Text("Sessions in ${project.displayName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                    Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (!state.isShowingAllSessions) {
+            state.selectedProject?.let { project ->
+                Row(
+                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.weight(1f)) {
+                        Text("Sessions in ${project.displayName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
+        OutlinedTextField(
+            value = search,
+            onValueChange = onSearchChange,
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            placeholder = { Text("Search Sessions") },
+            modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
+            enabled = !contentDisabled,
+            singleLine = true,
+        )
         FilterChip(
             selected = state.showsArchivedSessions,
             onClick = { model.setShowsArchivedSessions(!state.showsArchivedSessions) },
@@ -821,7 +840,7 @@ private fun ThreadList(state: MobidexUiState, model: AppViewModel, disabled: Boo
             label = { Text("Show archived sessions") },
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).graphicsLayer { alpha = contentAlpha },
         )
-        if (state.threads.isEmpty()) {
+        if (sections.isEmpty()) {
             EmptyState(
                 sessionEmptyTitle(state),
                 "Sessions from CLI, VS Code, exec, and app-server sources appear here.",
@@ -829,29 +848,34 @@ private fun ThreadList(state: MobidexUiState, model: AppViewModel, disabled: Boo
             )
         } else {
             LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
-                items(state.threads, key = { it.id }) { thread ->
-                    ListItem(
-                        headlineContent = { Text(thread.title, fontWeight = if (thread.id == state.selectedThreadID) FontWeight.SemiBold else FontWeight.Normal) },
-                        supportingContent = {
-                            Column {
-                                Text(thread.cwd, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(thread.status.sessionLabel, color = threadStatusColor(thread))
-                            }
-                        },
-                        leadingContent = {
-                            Box(Modifier.size(10.dp).clip(CircleShape).background(threadStatusColor(thread)))
-                        },
-                        modifier = Modifier.background(if (thread.id == state.selectedThreadID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
-                    )
-                    TextButton(
-                        onClick = {
-                            model.openThread(thread)
-                            onOpenDetail()
-                        },
-                        enabled = !contentDisabled,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Open") }
-                    HorizontalDivider()
+                sections.forEach { section ->
+                    item(key = "section-${section.id}") {
+                        Text(section.title, modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 6.dp), style = MaterialTheme.typography.labelLarge)
+                    }
+                    items(section.threads, key = { it.id }) { thread ->
+                        ListItem(
+                            headlineContent = { Text(thread.title, fontWeight = if (thread.id == state.selectedThreadID) FontWeight.SemiBold else FontWeight.Normal) },
+                            supportingContent = {
+                                Column {
+                                    Text(thread.cwd, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(thread.status.sessionLabel, color = threadStatusColor(thread))
+                                }
+                            },
+                            leadingContent = {
+                                Box(Modifier.size(10.dp).clip(CircleShape).background(threadStatusColor(thread)))
+                            },
+                            modifier = Modifier.background(if (thread.id == state.selectedThreadID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
+                        )
+                        TextButton(
+                            onClick = {
+                                model.openThread(thread)
+                                onOpenDetail()
+                            },
+                            enabled = !contentDisabled,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Open") }
+                        HorizontalDivider()
+                    }
                 }
             }
         }
@@ -1436,22 +1460,68 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
 
 @Composable
 private fun ProjectAddDialog(model: AppViewModel, onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+    val state by model.state.collectAsState()
     var path by remember { mutableStateOf("") }
+    var discoverySearch by remember { mutableStateOf("") }
     var showingBrowser by remember { mutableStateOf(false) }
+    val discoveredProjects = state.selectedServer?.projects.orEmpty()
+        .filter { it.discovered && !it.isAdded }
+        .filter {
+            val query = discoverySearch.trim()
+            query.isEmpty() || it.displayName.contains(query, ignoreCase = true) || it.path.contains(query, ignoreCase = true)
+        }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Project") },
         text = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = path,
+                        onValueChange = { path = it },
+                        label = { Text("Remote Path") },
+                        placeholder = { Text("/home/user/project") },
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = { showingBrowser = true }) {
+                        Icon(Icons.Default.Folder, contentDescription = "Browse Remote Folders")
+                    }
+                }
+                OutlinedButton(onClick = { model.refreshProjects() }, enabled = !state.isDiscoveringProjects) {
+                    Icon(Icons.Default.Search, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Discover Projects")
+                }
                 OutlinedTextField(
-                    value = path,
-                    onValueChange = { path = it },
-                    label = { Text("Remote Path") },
-                    placeholder = { Text("/home/user/project") },
-                    modifier = Modifier.weight(1f),
+                    value = discoverySearch,
+                    onValueChange = { discoverySearch = it },
+                    label = { Text("Search discovered projects") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
                 )
-                IconButton(onClick = { showingBrowser = true }) {
-                    Icon(Icons.Default.Folder, contentDescription = "Browse Remote Folders")
+                if (state.isDiscoveringProjects) {
+                    LoadingListStatusRow("Discovering projects...")
+                }
+                LazyColumn(Modifier.height(220.dp)) {
+                    if (discoveredProjects.isEmpty()) {
+                        item { EmptyState("No Discovered Projects", "", Icons.Default.Folder, Modifier.height(180.dp)) }
+                    }
+                    items(discoveredProjects, key = { it.id }) { project ->
+                        ListItem(
+                            headlineContent = { Text(project.displayName, fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text(project.path, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        TextButton(
+                            onClick = {
+                                onAdd(project.path)
+                                onDismiss()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Add") }
+                        HorizontalDivider()
+                    }
                 }
             }
         },
@@ -1482,6 +1552,7 @@ private fun RemoteDirectoryBrowserDialog(
     var currentPath by remember { mutableStateOf(initialPath) }
     var entries by remember { mutableStateOf<List<RemoteDirectoryEntry>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
+    var folderName by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     fun load(path: String) {
@@ -1501,6 +1572,24 @@ private fun RemoteDirectoryBrowserDialog(
         }
     }
 
+    fun createFolder() {
+        val name = folderName.trim()
+        if (name.isEmpty()) return
+        scope.launch {
+            isLoading = true
+            errorMessage = null
+            runCatching { model.createRemoteDirectory(currentPath, name) }
+                .onSuccess { listing ->
+                    folderName = ""
+                    load(listing.path)
+                }
+                .onFailure { error ->
+                    errorMessage = error.message ?: "Could not create folder."
+                    isLoading = false
+                }
+        }
+    }
+
     LaunchedEffect(Unit) {
         load(initialPath)
     }
@@ -1516,6 +1605,18 @@ private fun RemoteDirectoryBrowserDialog(
                         Icon(Icons.Default.ArrowUpward, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("Parent Folder")
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = folderName,
+                        onValueChange = { folderName = it },
+                        label = { Text("New Folder") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                    IconButton(onClick = { createFolder() }, enabled = folderName.trim().isNotEmpty() && !isLoading) {
+                        Icon(Icons.Default.Add, contentDescription = "Create Folder")
                     }
                 }
                 if (isLoading) {

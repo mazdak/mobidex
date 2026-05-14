@@ -47,6 +47,32 @@ PY
         """.trimIndent()
     }
 
+    fun createDirectoryShellCommand(parentPath: String, folderName: String): String {
+        val encodedParentPath = JsonValueCodec.encode(jsonString(parentPath))
+        val encodedFolderName = JsonValueCodec.encode(jsonString(folderName))
+        return """
+python3 - <<'PY'
+import json
+import os
+
+parent_path = $encodedParentPath
+folder_name = $encodedFolderName
+try:
+    parent = os.path.realpath(os.path.expanduser(parent_path))
+    name = folder_name.strip()
+    if not name or "/" in name or name in (".", ".."):
+        raise ValueError("Enter a folder name, not a path.")
+    created_path = os.path.realpath(os.path.join(parent, name))
+    if os.path.commonpath([parent, created_path]) != parent:
+        raise ValueError("Folder must stay inside the current directory.")
+    os.makedirs(created_path, exist_ok=True)
+    print(json.dumps({"path": created_path, "entries": []}))
+except Exception as error:
+    print(json.dumps({"path": parent_path, "entries": [], "error": str(error)}))
+PY
+        """.trimIndent()
+    }
+
     @Throws(RemoteDirectoryBrowserException::class)
     fun decodeListing(output: String): RemoteDirectoryListing {
         try {

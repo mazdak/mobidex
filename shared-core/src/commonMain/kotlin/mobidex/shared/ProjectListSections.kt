@@ -1,7 +1,7 @@
 package mobidex.shared
 
 data class ProjectListSections(
-    val favorites: List<ProjectRecord>,
+    val projects: List<ProjectRecord>,
     val discovered: List<ProjectRecord>,
     val added: List<ProjectRecord>,
     val showInactiveDiscoveredFilter: Boolean,
@@ -9,7 +9,7 @@ data class ProjectListSections(
     val discoveredTitle: String = "Discovered",
 ) {
     val isEmpty: Boolean
-        get() = favorites.isEmpty() && discovered.isEmpty() && added.isEmpty()
+        get() = projects.isEmpty() && discovered.isEmpty() && added.isEmpty()
 
     companion object {
         fun from(
@@ -28,7 +28,7 @@ data class ProjectListSections(
             val sorted = matching.sortedWith(projectListComparator)
 
             return ProjectListSections(
-                favorites = sorted.filter { it.isFavorite || !it.discovered },
+                projects = sorted.filter { it.isAdded },
                 discovered = sorted.filter { project ->
                     val hasVisibleSessions = project.activeChatCount > 0 ||
                         project.discoveredSessionCount > 0 ||
@@ -41,7 +41,7 @@ data class ProjectListSections(
                                 project.discoveredSessionCount > 0
                             )
                     project.discovered &&
-                        !project.isFavorite &&
+                        !project.isAdded &&
                         (
                             hasVisibleSessions ||
                                 showInactiveDiscoveredProjects ||
@@ -51,19 +51,19 @@ data class ProjectListSections(
                 added = emptyList(),
                 showInactiveDiscoveredFilter = projects.any {
                     it.discovered &&
-                        !it.isFavorite &&
+                        !it.isAdded &&
                         it.activeChatCount == 0 &&
                         it.discoveredSessionCount == 0 &&
                         it.archivedSessionCount == 0
                 },
                 showArchivedSessionFilter = projects.any {
-                    it.discovered && !it.isFavorite && it.archivedSessionCount > 0
+                    it.discovered && !it.isAdded && it.archivedSessionCount > 0
                 },
             )
         }
 
         private val projectListComparator = Comparator<ProjectRecord> { lhs, rhs ->
-            compareByDescending<ProjectRecord> { it.isFavorite }
+            compareByDescending<ProjectRecord> { it.isAdded }
                 .thenByDescending { it.activeChatCount }
                 .thenByDescending { it.discoveredSessionCount }
                 .thenByDescending { it.archivedSessionCount }

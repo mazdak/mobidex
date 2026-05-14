@@ -37,7 +37,7 @@ class SharedPreferencesServerRepository(context: Context) : ServerRepository {
     }
 
     private companion object {
-        const val KEY = "mobidex.servers.android.v1"
+        const val KEY = "mobidex.servers.android.v2"
     }
 }
 

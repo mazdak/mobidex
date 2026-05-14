@@ -301,7 +301,7 @@ final class AppViewModel: ObservableObject {
         selectedServerID = serverID
         isShowingAllSessions = false
         selectedProjectID = serverID.flatMap { id in
-            servers.first { $0.id == id }?.projects.first?.id
+            servers.first { $0.id == id }?.projects.firstAddedProjectID
         }
         if let serverID {
             autoConnectAttemptedServerIDs.remove(serverID)
@@ -374,7 +374,7 @@ final class AppViewModel: ObservableObject {
     }
 
     @discardableResult
-    func setProjectFavorite(_ project: ProjectRecord, isFavorite: Bool) -> Bool {
+    func setProjectAdded(_ project: ProjectRecord, isAdded: Bool) -> Bool {
         guard let selectedServerID else {
             return false
         }
@@ -386,11 +386,11 @@ final class AppViewModel: ObservableObject {
             return false
         }
 
-        guard nextServers[serverIndex].projects[projectIndex].isFavorite != isFavorite else {
+        guard nextServers[serverIndex].projects[projectIndex].isAdded != isAdded else {
             return true
         }
 
-        nextServers[serverIndex].projects[projectIndex].isFavorite = isFavorite
+        nextServers[serverIndex].projects[projectIndex].isAdded = isAdded
         nextServers[serverIndex].updatedAt = .now
 
         do {
@@ -488,7 +488,7 @@ final class AppViewModel: ObservableObject {
             if shouldSelectSavedServer {
                 selectedServerID = next.id
                 isShowingAllSessions = false
-                selectedProjectID = next.projects.first?.id
+                selectedProjectID = next.projects.firstAddedProjectID
                 connectionState = .disconnected
                 resetSessionState(clearThreads: true)
             }
@@ -542,7 +542,7 @@ final class AppViewModel: ObservableObject {
             if selectedServerID == server.id {
                 selectedServerID = servers.first?.id
                 isShowingAllSessions = false
-                selectedProjectID = selectedServer?.projects.first?.id
+                selectedProjectID = selectedServer?.projects.firstAddedProjectID
                 resetSessionState(clearThreads: true)
             }
             statusMessage = "Deleted \(server.displayName)."
@@ -572,13 +572,18 @@ final class AppViewModel: ObservableObject {
             statusMessage = "The selected server is no longer available."
             return false
         }
-        guard !nextServers[index].projects.contains(where: { $0.path == trimmed }) else {
-            statusMessage = "That project is already saved."
-            return false
+        let project: ProjectRecord
+        if let projectIndex = nextServers[index].projects.firstIndex(where: { $0.path == trimmed }) {
+            guard !nextServers[index].projects[projectIndex].isAddedToProjectList else {
+                statusMessage = "That project is already in the list."
+                return false
+            }
+            nextServers[index].projects[projectIndex].isAdded = true
+            project = nextServers[index].projects[projectIndex]
+        } else {
+            project = ProjectRecord(path: trimmed, isAdded: true)
+            nextServers[index].projects.append(project)
         }
-
-        let project = ProjectRecord(path: trimmed, isFavorite: true)
-        nextServers[index].projects.append(project)
         nextServers[index].updatedAt = .now
 
         do {
@@ -587,7 +592,7 @@ final class AppViewModel: ObservableObject {
             isShowingAllSessions = false
             selectedProjectID = project.id
             resetSessionState(clearThreads: true)
-            statusMessage = "Saved \(project.displayName) as a favorite."
+            statusMessage = "Added \(project.displayName)."
             return true
         } catch {
             statusMessage = error.localizedDescription
@@ -603,6 +608,19 @@ final class AppViewModel: ObservableObject {
         return try await sshService.listDirectories(path: path, server: selectedServer, credential: credential)
     }
 
+    func createRemoteDirectory(parentPath: String, folderName: String) async throws -> RemoteDirectoryListing {
+        guard let selectedServer else {
+            throw SSHServiceError.remoteDirectoryBrowseFailed("Select a server before creating folders.")
+        }
+        let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
+        return try await sshService.createDirectory(
+            parentPath: parentPath,
+            folderName: folderName,
+            server: selectedServer,
+            credential: credential
+        )
+    }
+
     @discardableResult
     func removeProject(_ project: ProjectRecord) -> Bool {
         guard let selectedServerID else {
@@ -613,10 +631,15 @@ final class AppViewModel: ObservableObject {
         guard let index = nextServers.firstIndex(where: { $0.id == selectedServerID }) else {
             return false
         }
-        nextServers[index].projects.removeAll { $0.id == project.id }
+        if let projectIndex = nextServers[index].projects.firstIndex(where: { $0.id == project.id }),
+           nextServers[index].projects[projectIndex].discovered {
+            nextServers[index].projects[projectIndex].isAdded = false
+        } else {
+            nextServers[index].projects.removeAll { $0.id == project.id }
+        }
         nextServers[index].updatedAt = .now
         let removedSelectedProject = selectedProjectID == project.id
-        let nextSelectedProjectID = removedSelectedProject ? nextServers[index].projects.first?.id : selectedProjectID
+        let nextSelectedProjectID = removedSelectedProject ? nextServers[index].projects.firstAddedProjectID : selectedProjectID
 
         do {
             try persistServers(nextServers)
@@ -711,7 +734,7 @@ final class AppViewModel: ObservableObject {
             if selectedServerID == nil {
                 selectedServerID = servers.first?.id
                 isShowingAllSessions = false
-                selectedProjectID = selectedServer?.projects.first?.id
+                selectedProjectID = selectedServer?.projects.firstAddedProjectID
             }
         } catch {
             statusMessage = error.localizedDescription
@@ -798,7 +821,12 @@ final class AppViewModel: ObservableObject {
 
         var syncSucceeded = true
         syncSucceeded = await runOperation(.discoveringProjects, status: "Syncing projects") {
-            try await refreshProjectsUsingCredential(credential, server: targetServer, syncActiveChatCounts: syncActiveChatCounts)
+            try await refreshProjectsUsingCredential(
+                credential,
+                server: targetServer,
+                syncActiveChatCounts: syncActiveChatCounts,
+                includeRemoteDiscovery: false
+            )
         } && syncSucceeded
 
         guard connectionStillMatches(targetServer.id, generation: connectGeneration) else {
@@ -822,7 +850,12 @@ final class AppViewModel: ObservableObject {
         guard let selectedServer else { return }
         await runOperation(.discoveringProjects, status: "Discovering projects") {
             let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
-            try await refreshProjectsUsingCredential(credential, server: selectedServer, syncActiveChatCounts: true)
+            try await refreshProjectsUsingCredential(
+                credential,
+                server: selectedServer,
+                syncActiveChatCounts: true,
+                includeRemoteDiscovery: true
+            )
         }
     }
 
@@ -861,6 +894,7 @@ final class AppViewModel: ObservableObject {
 
     func openThread(_ thread: CodexThread) async {
         let scope = currentThreadLoadScope
+        let shouldPromoteProject = isShowingAllSessions
         suppressThreadAutoSelection = false
         selectedThreadID = thread.id
         selectedThreadTokenUsage = nil
@@ -879,6 +913,9 @@ final class AppViewModel: ObservableObject {
             }
             selectedThreadID = hydrated.id
             hydrateConversation(from: hydrated)
+            if shouldPromoteProject {
+                promoteProjectToProjectList(for: hydrated)
+            }
         }
     }
 
@@ -1287,7 +1324,7 @@ final class AppViewModel: ObservableObject {
             }
             selectedServerID = servers.first?.id
             isShowingAllSessions = false
-            selectedProjectID = selectedServer?.projects.first?.id
+            selectedProjectID = selectedServer?.projects.firstAddedProjectID
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1339,12 +1376,21 @@ final class AppViewModel: ObservableObject {
         }.value
     }
 
-    private func refreshProjectsUsingCredential(_ credential: SSHCredential, server: ServerRecord, syncActiveChatCounts: Bool) async throws {
+    private func refreshProjectsUsingCredential(
+        _ credential: SSHCredential,
+        server: ServerRecord,
+        syncActiveChatCounts: Bool,
+        includeRemoteDiscovery: Bool
+    ) async throws {
         let previousScope = currentThreadLoadScope
-        let discovered = try await sshService.discoverProjects(server: server, credential: credential)
         var nextServers = servers
         guard let index = nextServers.firstIndex(where: { $0.id == server.id }) else {
             return
+        }
+        let discovered = if includeRemoteDiscovery {
+            try await sshService.discoverProjects(server: server, credential: credential)
+        } else {
+            nextServers[index].projects.remoteDiscoverySnapshot
         }
 
         let openSessions: [CodexThread]?
@@ -1362,10 +1408,10 @@ final class AppViewModel: ObservableObject {
         let nextSelectedProjectID: UUID?
         if isShowingAllSessions {
             nextSelectedProjectID = nil
-        } else if nextServers[index].projects.contains(where: { $0.id == selectedProjectID }) {
+        } else if nextServers[index].projects.contains(where: { $0.id == selectedProjectID && $0.isAddedToProjectList }) {
             nextSelectedProjectID = selectedProjectID
         } else {
-            nextSelectedProjectID = nextServers[index].projects.first?.id
+            nextSelectedProjectID = nextServers[index].projects.firstAddedProjectID
         }
         try persistServers(nextServers)
         servers = nextServers
@@ -1471,6 +1517,33 @@ final class AppViewModel: ObservableObject {
         } catch {
             statusMessage = "Opened session history; live resume failed: \(error.localizedDescription)"
             return try await appServer.readThread(threadID: threadID)
+        }
+    }
+
+    private func promoteProjectToProjectList(for thread: CodexThread) {
+        guard let selectedServerID else { return }
+        var nextServers = servers
+        guard let serverIndex = nextServers.firstIndex(where: { $0.id == selectedServerID }) else {
+            return
+        }
+        let threadPath = thread.cwd
+        let projectIndex = nextServers[serverIndex].projects.firstIndex {
+            $0.path == threadPath || $0.sessionPaths.contains(threadPath)
+        }
+        if let projectIndex {
+            guard !nextServers[serverIndex].projects[projectIndex].isAddedToProjectList else {
+                return
+            }
+            nextServers[serverIndex].projects[projectIndex].isAdded = true
+        } else {
+            nextServers[serverIndex].projects.append(ProjectRecord(path: threadPath, isAdded: true))
+        }
+        nextServers[serverIndex].updatedAt = .now
+        do {
+            try persistServers(nextServers)
+            servers = nextServers
+        } catch {
+            statusMessage = error.localizedDescription
         }
     }
 

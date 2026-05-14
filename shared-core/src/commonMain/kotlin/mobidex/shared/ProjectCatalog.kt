@@ -12,7 +12,7 @@ object ProjectCatalog {
         for (path in recordsByPath.keys.toList()) {
             val record = recordsByPath[path] ?: continue
             if (!record.discovered || path in discoveredPaths) continue
-            if (record.isFavorite) {
+            if (record.isAdded) {
                 recordsByPath[path] = record.copy(
                     discovered = false,
                     sessionPaths = listOf(record.path),

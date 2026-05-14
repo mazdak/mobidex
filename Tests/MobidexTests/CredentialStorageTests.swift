@@ -248,7 +248,7 @@ final class CredentialStorageTests: XCTestCase {
         XCTAssertEqual(defaults.data(forKey: "mobidex.servers.v1"), v1StoragePayload)
         XCTAssertEqual(defaults.data(forKey: "mobidex.servers.v3"), v3StoragePayload)
         XCTAssertEqual(try repository.loadServers(), [server])
-        XCTAssertNotNil(defaults.data(forKey: "mobidex.servers.v4"))
+        XCTAssertNotNil(defaults.data(forKey: "mobidex.servers.v5"))
     }
 }
 
@@ -276,6 +276,9 @@ private struct CredentialStorageStubSSHService: SSHService {
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] { [] }
     func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
         RemoteDirectoryListing(path: path, entries: [])
+    }
+    func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
     }
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] { [] }
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {

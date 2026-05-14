@@ -114,7 +114,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
     var activeChatCount: Int
     var lastDiscoveredAt: Date?
     var lastActiveChatAt: Date?
-    var isFavorite: Bool
+    var isAdded: Bool
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -127,7 +127,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         case activeChatCount
         case lastDiscoveredAt
         case lastActiveChatAt
-        case isFavorite
+        case isAdded
     }
 
     init(
@@ -141,7 +141,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         activeChatCount: Int = 0,
         lastDiscoveredAt: Date? = nil,
         lastActiveChatAt: Date? = nil,
-        isFavorite: Bool = false
+        isAdded: Bool = false
     ) {
         self.id = id
         self.path = path
@@ -153,7 +153,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         self.activeChatCount = activeChatCount
         self.lastDiscoveredAt = lastDiscoveredAt
         self.lastActiveChatAt = lastActiveChatAt
-        self.isFavorite = isFavorite
+        self.isAdded = isAdded
     }
 
     init(from decoder: Decoder) throws {
@@ -171,7 +171,7 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         activeChatCount = try container.decode(Int.self, forKey: .activeChatCount)
         lastDiscoveredAt = try container.decodeIfPresent(Date.self, forKey: .lastDiscoveredAt)
         lastActiveChatAt = try container.decodeIfPresent(Date.self, forKey: .lastActiveChatAt)
-        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+        isAdded = try container.decodeIfPresent(Bool.self, forKey: .isAdded) ?? false
     }
 
     static func normalizedSessionPaths(_ paths: [String], primaryPath: String) -> [String] {
@@ -202,6 +202,30 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
         return components.count >= 4 &&
             components[2] == "Library" &&
             components[3] == "Mobile Documents"
+    }
+}
+
+extension ProjectRecord {
+    var isAddedToProjectList: Bool {
+        isAdded
+    }
+}
+
+extension [ProjectRecord] {
+    var firstAddedProjectID: UUID? {
+        first(where: \.isAddedToProjectList)?.id
+    }
+
+    var remoteDiscoverySnapshot: [RemoteProject] {
+        filter(\.discovered).map {
+            RemoteProject(
+                path: $0.path,
+                sessionPaths: $0.sessionPaths,
+                discoveredSessionCount: $0.discoveredSessionCount,
+                archivedSessionCount: $0.archivedSessionCount,
+                lastDiscoveredAt: $0.lastDiscoveredAt
+            )
+        }
     }
 }
 

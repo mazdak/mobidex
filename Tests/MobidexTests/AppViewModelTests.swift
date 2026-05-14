@@ -230,9 +230,10 @@ final class AppViewModelTests: XCTestCase {
 
         let project = try XCTUnwrap(viewModel.selectedServer?.projects.first)
         XCTAssertEqual(project.path, "/srv/app")
+        XCTAssertTrue(project.isAdded)
         XCTAssertEqual(viewModel.selectedProjectID, project.id)
         XCTAssertEqual(try repository.loadServers().first?.projects.first?.path, "/srv/app")
-        XCTAssertEqual(viewModel.statusMessage, "Saved app as a favorite.")
+        XCTAssertEqual(viewModel.statusMessage, "Added app.")
     }
 
     @MainActor
@@ -1252,7 +1253,7 @@ final class AppViewModelTests: XCTestCase {
         }
         try await waitForCredentialSaveStart(credentials)
 
-        XCTAssertTrue(viewModel.setProjectFavorite(project, isFavorite: true))
+        XCTAssertTrue(viewModel.setProjectAdded(project, isAdded: true))
 
         credentials.releaseSave()
         let saved = await saveTask.value
@@ -1260,8 +1261,8 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(saved)
         let savedServer = try XCTUnwrap(viewModel.servers.first)
         XCTAssertEqual(savedServer.displayName, "Renamed Box")
-        XCTAssertEqual(savedServer.projects.first?.isFavorite, true)
-        XCTAssertEqual(try repository.loadServers().first?.projects.first?.isFavorite, true)
+        XCTAssertEqual(savedServer.projects.first?.isAdded, true)
+        XCTAssertEqual(try repository.loadServers().first?.projects.first?.isAdded, true)
     }
 
     @MainActor
@@ -1501,7 +1502,7 @@ final class AppViewModelTests: XCTestCase {
         )
     }
 
-    func testProjectRecordDecodesMissingFavoriteAndSessionPathsWithDefaults() throws {
+    func testProjectRecordDecodesMissingAddedAndSessionPathsWithDefaults() throws {
         let data = Data("""
         {
           "id": "00000000-0000-0000-0000-000000000001",
@@ -1518,7 +1519,7 @@ final class AppViewModelTests: XCTestCase {
         decoder.dateDecodingStrategy = .secondsSince1970
         let project = try decoder.decode(ProjectRecord.self, from: data)
 
-        XCTAssertFalse(project.isFavorite)
+        XCTAssertFalse(project.isAdded)
         XCTAssertEqual(project.sessionPaths, ["/srv/app"])
     }
 
@@ -2296,7 +2297,7 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testProjectFavoritePersistsAndSurvivesDiscoveryRefresh() async throws {
+    func testProjectAddedPersistsAndSurvivesDiscoveryRefresh() async throws {
         let project = ProjectRecord(path: "/srv/app")
         let server = ServerRecord(
             displayName: "Build Box",
@@ -2316,14 +2317,14 @@ final class AppViewModelTests: XCTestCase {
             ])
         )
 
-        XCTAssertTrue(viewModel.setProjectFavorite(project, isFavorite: true))
+        XCTAssertTrue(viewModel.setProjectAdded(project, isAdded: true))
         var savedProject = try XCTUnwrap(try repository.loadServers().first?.projects.first)
-        XCTAssertTrue(savedProject.isFavorite)
+        XCTAssertTrue(savedProject.isAdded)
 
         await viewModel.refreshProjects()
 
         savedProject = try XCTUnwrap(viewModel.selectedServer?.projects.first)
-        XCTAssertTrue(savedProject.isFavorite)
+        XCTAssertTrue(savedProject.isAdded)
         XCTAssertEqual(savedProject.discoveredSessionCount, 4)
     }
 
@@ -2727,14 +2728,14 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testRefreshProjectsKeepsFavoriteStaleDiscoveredProject() async throws {
+    func testRefreshProjectsKeepsAddedStaleDiscoveredProject() async throws {
         let project = ProjectRecord(
             path: "/srv/app",
             displayName: "app",
             discovered: true,
             discoveredSessionCount: 3,
             lastDiscoveredAt: Date(timeIntervalSince1970: 1_770_000_300),
-            isFavorite: true
+            isAdded: true
         )
         let server = ServerRecord(
             displayName: "Build Box",
@@ -2759,7 +2760,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(refreshed.discovered)
         XCTAssertEqual(refreshed.discoveredSessionCount, 0)
         XCTAssertNil(refreshed.lastDiscoveredAt)
-        XCTAssertTrue(refreshed.isFavorite)
+        XCTAssertTrue(refreshed.isAdded)
     }
 
     @MainActor
@@ -4822,6 +4823,10 @@ private final class BlockingOpenSSHService: SSHService, @unchecked Sendable {
         RemoteDirectoryListing(path: path, entries: [])
     }
 
+    func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
+    }
+
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] {
         localPaths.map { "/tmp/mobidex-uploaded/\(URL(fileURLWithPath: $0).lastPathComponent)" }
     }
@@ -4956,6 +4961,10 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         RemoteDirectoryListing(path: path, entries: [])
     }
 
+    func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
+    }
+
     var stagedLocalPaths: [String] {
         lock.withLock { stagedLocalPathBatches.flatMap { $0 } }
     }
@@ -5053,6 +5062,10 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
 
     func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
         RemoteDirectoryListing(path: path, entries: [])
+    }
+
+    func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
     }
 
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] {
