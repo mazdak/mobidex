@@ -114,12 +114,31 @@ private enum TerminalSessionError: LocalizedError {
     }
 }
 
-private struct ThreadLoadScope: Equatable {
+private struct ThreadLoadScope: Equatable, Hashable {
     var serverID: UUID?
     var projectID: UUID?
     var cwd: String?
     var sessionPaths: Set<String>
     var includeArchivedSessions: Bool
+}
+
+private struct CachedThreadList {
+    var threads: [CodexThread]
+    var selectedThreadID: String?
+    var fetchedAt: Date
+}
+
+private struct ThreadDetailCacheKey: Hashable {
+    var serverID: UUID?
+    var threadID: String
+}
+
+private struct CachedThreadDetail {
+    var thread: CodexThread
+    var liveItems: [CodexThreadItem]
+    var sections: [ConversationSection]
+    var tokenUsage: CodexTokenUsage?
+    var fetchedAt: Date
 }
 
 private enum AppOperation: Hashable {
@@ -179,6 +198,8 @@ final class AppViewModel: ObservableObject {
     private let activeTurnRefreshIntervalNanoseconds: UInt64
     private let appServerReconnectDelayNanoseconds: UInt64
     private let maxAppServerReconnectAttempts: Int
+    private let sessionListCacheTTL: TimeInterval
+    private let threadDetailCacheTTL: TimeInterval
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
     private var appServer: CodexAppServerClient?
@@ -196,6 +217,9 @@ final class AppViewModel: ObservableObject {
     private var suppressThreadAutoSelection = false
     private var autoConnectAttemptedServerIDs = Set<UUID>()
     private var appServerReconnectAttemptsByServerID: [UUID: Int] = [:]
+    private var threadListCache: [ThreadLoadScope: CachedThreadList] = [:]
+    private var threadDetailCache: [ThreadDetailCacheKey: CachedThreadDetail] = [:]
+    private var suppressNextConversationDetailCache = false
 
     init(
         repository: ServerRepository,
@@ -204,6 +228,8 @@ final class AppViewModel: ObservableObject {
         activeTurnRefreshIntervalNanoseconds: UInt64 = 1_000_000_000,
         appServerReconnectDelayNanoseconds: UInt64 = 500_000_000,
         maxAppServerReconnectAttempts: Int = 3,
+        sessionListCacheTTL: TimeInterval = SharedKMPBridge.defaultSessionListCacheTTL,
+        threadDetailCacheTTL: TimeInterval = SharedKMPBridge.defaultThreadDetailCacheTTL,
         loadServersOnInit: Bool = true
     ) {
         self.repository = repository
@@ -212,6 +238,8 @@ final class AppViewModel: ObservableObject {
         self.activeTurnRefreshIntervalNanoseconds = activeTurnRefreshIntervalNanoseconds
         self.appServerReconnectDelayNanoseconds = appServerReconnectDelayNanoseconds
         self.maxAppServerReconnectAttempts = maxAppServerReconnectAttempts
+        self.sessionListCacheTTL = sessionListCacheTTL
+        self.threadDetailCacheTTL = threadDetailCacheTTL
         if loadServersOnInit {
             loadServers()
         }
@@ -360,6 +388,9 @@ final class AppViewModel: ObservableObject {
         isShowingAllSessions = false
         suppressThreadAutoSelection = true
         selectedProjectID = projectID
+        if restoreCachedSessionState(for: currentThreadLoadScope) {
+            return
+        }
         resetSessionState(clearThreads: true)
     }
 
@@ -370,6 +401,9 @@ final class AppViewModel: ObservableObject {
         isShowingAllSessions = true
         suppressThreadAutoSelection = true
         selectedProjectID = nil
+        if restoreCachedSessionState(for: currentThreadLoadScope) {
+            return
+        }
         resetSessionState(clearThreads: true)
     }
 
@@ -575,7 +609,7 @@ final class AppViewModel: ObservableObject {
         let project: ProjectRecord
         if let projectIndex = nextServers[index].projects.firstIndex(where: { $0.path == trimmed }) {
             guard !nextServers[index].projects[projectIndex].isAddedToProjectList else {
-                statusMessage = "That project is already in the list."
+                statusMessage = "That project is already saved."
                 return false
             }
             nextServers[index].projects[projectIndex].isAdded = true
@@ -591,6 +625,7 @@ final class AppViewModel: ObservableObject {
             servers = nextServers
             isShowingAllSessions = false
             selectedProjectID = project.id
+            invalidateSessionCaches(for: selectedServerID)
             resetSessionState(clearThreads: true)
             statusMessage = "Added \(project.displayName)."
             return true
@@ -645,6 +680,7 @@ final class AppViewModel: ObservableObject {
             try persistServers(nextServers)
             servers = nextServers
             selectedProjectID = nextSelectedProjectID
+            invalidateSessionCaches(for: selectedServerID)
             if removedSelectedProject {
                 isShowingAllSessions = false
                 resetSessionState(clearThreads: true)
@@ -825,7 +861,7 @@ final class AppViewModel: ObservableObject {
                 credential,
                 server: targetServer,
                 syncActiveChatCounts: syncActiveChatCounts,
-                includeRemoteDiscovery: false
+                includeRemoteDiscovery: true
             )
         } && syncSucceeded
 
@@ -838,7 +874,7 @@ final class AppViewModel: ObservableObject {
         }
 
         syncSucceeded = await runOperation(.refreshingSessions, status: "Refreshing sessions") {
-            try await loadThreads()
+            try await loadThreads(forceReload: true)
         } && syncSucceeded
 
         if syncSucceeded, connectionState == .connected, connectionGeneration == connectGeneration {
@@ -881,15 +917,30 @@ final class AppViewModel: ObservableObject {
 
     func refreshThreads() async {
         await runOperation(.refreshingSessions, status: "Refreshing sessions") {
-            try await loadThreads()
+            try await loadThreads(forceReload: true)
+        }
+    }
+
+    func refreshThreadsIfNeeded() async {
+        let scope = currentThreadLoadScope
+        if restoreCachedSessionState(for: scope), canUseCachedSessionState(for: scope) {
+            return
+        }
+        await runOperation(.refreshingSessions, status: "Refreshing sessions") {
+            try await loadThreads(forceReload: false)
         }
     }
 
     func selectAllSessionsAndRefresh() async {
         await runOperation(.refreshingSessions, status: "Refreshing sessions") {
             selectAllSessions()
-            try await loadThreads()
+            try await loadThreads(forceReload: true)
         }
+    }
+
+    func selectAllSessionsAndRefreshIfNeeded() async {
+        selectAllSessions()
+        await refreshThreadsIfNeeded()
     }
 
     func openThread(_ thread: CodexThread) async {
@@ -944,6 +995,9 @@ final class AppViewModel: ObservableObject {
             hydrateConversation(from: thread)
             suppressThreadAutoSelection = false
             threads = sortedThreads([thread] + threads.filter { $0.id != thread.id })
+            invalidateSessionCaches(for: selectedServerID)
+            cacheThreadList(threads, scope: currentThreadLoadScope)
+            cacheThreadDetail(thread: thread, liveItems: liveItems, sections: conversationSections)
             statusMessage = "New session created."
         }
     }
@@ -1188,7 +1242,7 @@ final class AppViewModel: ObservableObject {
                 }
             }
             if shouldHydrateThreadsAfterSend {
-                try await loadThreads()
+                try await loadThreads(forceReload: true)
             } else {
                 await refreshThreadListAfterEvent()
             }
@@ -1314,6 +1368,119 @@ final class AppViewModel: ObservableObject {
             sessionPaths: Set(selectedProject?.sessionPaths ?? selectedProject.map { [$0.path] } ?? []),
             includeArchivedSessions: showsArchivedSessions
         )
+    }
+
+    private func threadDetailCacheKey(threadID: String) -> ThreadDetailCacheKey {
+        ThreadDetailCacheKey(serverID: selectedServerID, threadID: threadID)
+    }
+
+    private func cacheThreadList(_ threads: [CodexThread], scope: ThreadLoadScope) {
+        threadListCache[scope] = CachedThreadList(
+            threads: threads,
+            selectedThreadID: selectedThreadID,
+            fetchedAt: .now
+        )
+        for thread in threads where !thread.turns.isEmpty {
+            cacheThreadDetail(thread: thread, liveItems: thread.turns.flatMap(\.items), sections: SharedKMPBridge.conversationSections(from: thread))
+        }
+    }
+
+    private func cacheThreadDetail(thread: CodexThread, liveItems: [CodexThreadItem], sections: [ConversationSection]) {
+        threadDetailCache[threadDetailCacheKey(threadID: thread.id)] = CachedThreadDetail(
+            thread: thread,
+            liveItems: liveItems,
+            sections: sections,
+            tokenUsage: selectedThreadID == thread.id ? selectedThreadTokenUsage : nil,
+            fetchedAt: .now
+        )
+    }
+
+    private func restoreCachedSessionState(for scope: ThreadLoadScope) -> Bool {
+        guard let cachedList = threadListCache[scope] else {
+            return false
+        }
+        let previousThreadID = selectedThreadID
+        threads = cachedList.threads
+        selectedThreadID = cachedSelectedThreadID(in: cachedList)
+        pendingApprovals = []
+        if previousThreadID != selectedThreadID {
+            selectedThreadTokenUsage = nil
+        }
+        guard let selectedThreadID else {
+            selectedThread = nil
+            liveItems = []
+            selectedThreadTokenUsage = nil
+            publishConversationSections([])
+            changedFiles = []
+            diffSnapshot = .empty
+            clearSelectedThreadLoads()
+            refreshQueuedTurnInputCount()
+            return true
+        }
+        if let detail = threadDetailCache[threadDetailCacheKey(threadID: selectedThreadID)],
+           isCacheEntryFresh(fetchedAt: detail.fetchedAt, ttl: threadDetailCacheTTL) {
+            selectedThread = detail.thread
+            liveItems = detail.liveItems
+            selectedThreadTokenUsage = detail.tokenUsage
+            publishConversationSections(detail.sections)
+        } else if let summary = cachedList.threads.first(where: { $0.id == selectedThreadID }) {
+            selectedThreadTokenUsage = nil
+            hydrateConversation(from: summary, cacheDetail: false)
+        } else {
+            selectedThread = nil
+            liveItems = []
+            selectedThreadTokenUsage = nil
+            publishConversationSections([])
+        }
+        changedFiles = []
+        diffSnapshot = .empty
+        clearSelectedThreadLoads()
+        refreshQueuedTurnInputCount()
+        return true
+    }
+
+    private func canUseCachedSessionState(for scope: ThreadLoadScope) -> Bool {
+        guard let cachedList = threadListCache[scope],
+              isSessionListCacheFresh(for: scope)
+        else {
+            return false
+        }
+        guard let selectedThreadID = cachedSelectedThreadID(in: cachedList) else {
+            return true
+        }
+        guard let detail = threadDetailCache[threadDetailCacheKey(threadID: selectedThreadID)] else {
+            return false
+        }
+        return isCacheEntryFresh(fetchedAt: detail.fetchedAt, ttl: threadDetailCacheTTL)
+    }
+
+    private func cachedSelectedThreadID(in cachedList: CachedThreadList) -> String? {
+        if let selectedThreadID = cachedList.selectedThreadID,
+           cachedList.threads.contains(where: { $0.id == selectedThreadID }) {
+            return selectedThreadID
+        }
+        return suppressThreadAutoSelection ? nil : cachedList.threads.first?.id
+    }
+
+    private func isSessionListCacheFresh(for scope: ThreadLoadScope, now: Date = .now) -> Bool {
+        guard let entry = threadListCache[scope] else {
+            return false
+        }
+        return isCacheEntryFresh(fetchedAt: entry.fetchedAt, ttl: sessionListCacheTTL, now: now)
+    }
+
+    private func isCacheEntryFresh(fetchedAt: Date, ttl: TimeInterval, now: Date = .now) -> Bool {
+        let elapsed = now.timeIntervalSince(fetchedAt)
+        return ttl > 0 && elapsed >= 0 && elapsed < ttl
+    }
+
+    private func invalidateSessionCaches(for serverID: UUID?) {
+        threadListCache = threadListCache.filter { key, _ in
+            key.serverID != serverID
+        }
+        threadDetailCache = threadDetailCache.filter { key, _ in
+            key.serverID != serverID
+        }
     }
 
     private func loadServers() {
@@ -1460,17 +1627,21 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func loadThreads() async throws {
+    private func loadThreads(forceReload: Bool) async throws {
         guard let appServer else {
             return
         }
         let scope = currentThreadLoadScope
+        if !forceReload, restoreCachedSessionState(for: scope), canUseCachedSessionState(for: scope) {
+            return
+        }
         let loadedThreads = try await listThreads(matching: scope)
         guard currentThreadLoadScope == scope else {
             return
         }
         let prioritizedThreads = sortedThreads(loadedThreads)
         threads = prioritizedThreads
+        cacheThreadList(prioritizedThreads, scope: scope)
 
         let currentSelection = selectedThreadID.flatMap { id in
             prioritizedThreads.first { $0.id == id }
@@ -1500,7 +1671,7 @@ final class AppViewModel: ObservableObject {
 
         selectedThreadID = threadToShow.id
         if selectedThread?.id != threadToShow.id {
-            hydrateConversation(from: threadToShow)
+            hydrateConversation(from: threadToShow, cacheDetail: false)
         }
 
         beginSelectedThreadLoad(threadID: threadToShow.id)
@@ -1722,7 +1893,9 @@ final class AppViewModel: ObservableObject {
             guard currentThreadLoadScope == scope else {
                 return
             }
-            threads = sortedThreads(loadedThreads)
+            let sorted = sortedThreads(loadedThreads)
+            threads = sorted
+            cacheThreadList(sorted, scope: scope)
             if let selectedSummary = loadedThreads.first(where: { $0.id == selectedThreadID }),
                selectedSummary.status.isActive {
                 applySelectedThreadStatus(selectedSummary.status)
@@ -1740,7 +1913,9 @@ final class AppViewModel: ObservableObject {
             guard currentThreadLoadScope == scope else {
                 return
             }
-            threads = sortedThreads(loadedThreads)
+            let sorted = sortedThreads(loadedThreads)
+            threads = sorted
+            cacheThreadList(sorted, scope: scope)
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1936,10 +2111,21 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func hydrateConversation(from thread: CodexThread) {
+    private func hydrateConversation(from thread: CodexThread, cacheDetail: Bool = true) {
         selectedThread = thread
         liveItems = thread.turns.flatMap(\.items)
+        if !cacheDetail {
+            suppressNextConversationDetailCache = true
+        }
+        defer {
+            if !cacheDetail {
+                suppressNextConversationDetailCache = false
+            }
+        }
         rebuildConversationFromLiveItems()
+        if cacheDetail {
+            cacheThreadList(threads, scope: currentThreadLoadScope)
+        }
         refreshQueuedTurnInputCount()
         if thread.status.isActive {
             scheduleActiveTurnRefresh(threadID: thread.id, scope: currentThreadLoadScope)
@@ -2067,6 +2253,9 @@ final class AppViewModel: ObservableObject {
     private func publishConversationSections(_ nextSections: [ConversationSection]) {
         let didChange = conversationSections != nextSections
         conversationSections = nextSections
+        if let selectedThread, !suppressNextConversationDetailCache {
+            cacheThreadDetail(thread: selectedThread, liveItems: liveItems, sections: nextSections)
+        }
         conversationRevision += 1
         conversationRenderToken += 1
         conversationRenderDigest = Self.conversationRenderDigest(for: nextSections)

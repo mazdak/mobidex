@@ -36,6 +36,7 @@ enum SharedKMPBridge {
     typealias SharedCodexSessionItemWebSearch = MobidexShared.CodexSessionItemWebSearch
     typealias SharedCodexSessionThread = MobidexShared.CodexSessionThread
     typealias SharedCodexSessionTurn = MobidexShared.CodexSessionTurn
+    typealias SharedCodexSessionCachePolicy = MobidexShared.CodexSessionCachePolicy
     typealias SharedCodexThreadSummary = MobidexShared.CodexThreadSummary
     typealias SharedCodexTurnOptions = MobidexShared.CodexTurnOptions
     typealias SharedConversationSection = MobidexShared.ConversationSection
@@ -66,6 +67,14 @@ enum SharedKMPBridge {
 
     static var defaultTargetShellRCFile: String {
         MobidexShared.RemoteServerLaunchDefaults.shared.targetShellRCFile
+    }
+
+    static var defaultSessionListCacheTTL: TimeInterval {
+        TimeInterval(MobidexShared.CodexSessionCachePolicy.shared.DEFAULT_SESSION_LIST_TTL_SECONDS)
+    }
+
+    static var defaultThreadDetailCacheTTL: TimeInterval {
+        TimeInterval(MobidexShared.CodexSessionCachePolicy.shared.DEFAULT_THREAD_DETAIL_TTL_SECONDS)
     }
 
     static func normalizedRemoteLaunchConfig(codexPath: String?, targetShellRCFile: String?) -> (codexPath: String, targetShellRCFile: String) {

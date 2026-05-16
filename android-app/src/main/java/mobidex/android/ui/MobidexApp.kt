@@ -38,6 +38,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -53,6 +55,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
@@ -72,6 +75,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -98,6 +102,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -821,16 +826,14 @@ private fun ThreadList(
                         Text("Sessions in ${project.displayName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    Button(
+                    IconButton(
                         onClick = {
                             model.startNewSession()
                             onOpenDetail()
                         },
                         enabled = state.canCreateSession && !contentDisabled,
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("New Session")
+                        Icon(Icons.Default.Add, contentDescription = "New Session")
                     }
                 }
             }
@@ -1028,10 +1031,8 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
             Text(project.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Button(onClick = { model.startNewSession() }, enabled = state.canCreateSession) {
-            Icon(Icons.Default.Add, contentDescription = null)
-            Spacer(Modifier.width(6.dp))
-            Text("New Session")
+        IconButton(onClick = { model.startNewSession() }, enabled = state.canCreateSession) {
+            Icon(Icons.Default.Add, contentDescription = "New Session")
         }
     }
     HorizontalDivider()
@@ -1041,13 +1042,77 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
 private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: Modifier = Modifier) {
     var composer by remember { mutableStateOf("") }
     var attachmentUris by remember(state.selectedThreadID) { mutableStateOf<List<Uri>>(emptyList()) }
-    Column(modifier) {
-        LazyColumn(Modifier.weight(1f), reverseLayout = false) {
-            items(state.pendingApprovals, key = { it.id }) { approval ->
-                ApprovalCard(approval, model)
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    var shouldFollowTail by remember(state.selectedThreadID) { mutableStateOf(true) }
+    var isNearBottom by remember(state.selectedThreadID) { mutableStateOf(true) }
+    var programmaticScrollInProgress by remember(state.selectedThreadID) { mutableStateOf(false) }
+    val timelineItemCount = state.pendingApprovals.size + state.conversationSections.size
+    val tailSignature = state.conversationSections.lastOrNull()?.let { "${it.id}:${it.body.length}:${it.status}" }
+        ?: state.pendingApprovals.lastOrNull()?.id
+
+    LaunchedEffect(listState, state.selectedThreadID, timelineItemCount) {
+        snapshotFlow {
+            Triple(
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+                listState.isScrollInProgress,
+            )
+        }.collect {
+            val near = listState.isNearTimelineBottom()
+            isNearBottom = near
+            if (near) {
+                shouldFollowTail = true
+            } else if (!programmaticScrollInProgress) {
+                shouldFollowTail = false
             }
-            items(state.conversationSections, key = { it.id }) { section ->
-                ConversationSectionRow(section)
+        }
+    }
+
+    LaunchedEffect(state.selectedThreadID, timelineItemCount, tailSignature, shouldFollowTail) {
+        if (!shouldFollowTail || timelineItemCount == 0) return@LaunchedEffect
+        programmaticScrollInProgress = true
+        try {
+            listState.animateScrollToItem(timelineItemCount - 1)
+            isNearBottom = true
+        } finally {
+            programmaticScrollInProgress = false
+        }
+    }
+
+    Column(modifier) {
+        Box(Modifier.weight(1f)) {
+            LazyColumn(Modifier.fillMaxSize(), state = listState, reverseLayout = false) {
+                items(state.pendingApprovals, key = { it.id }) { approval ->
+                    ApprovalCard(approval, model)
+                }
+                items(state.conversationSections, key = { it.id }) { section ->
+                    ConversationSectionRow(section)
+                }
+            }
+            if (!isNearBottom && timelineItemCount > 0) {
+                FloatingActionButton(
+                    onClick = {
+                        shouldFollowTail = true
+                        isNearBottom = true
+                        coroutineScope.launch {
+                            programmaticScrollInProgress = true
+                            try {
+                                listState.animateScrollToItem(timelineItemCount - 1)
+                            } finally {
+                                programmaticScrollInProgress = false
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(18.dp)
+                        .size(44.dp),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to latest message")
+                }
             }
         }
         Composer(
@@ -1077,6 +1142,17 @@ private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: M
             },
         )
     }
+}
+
+private fun LazyListState.isNearTimelineBottom(bufferItems: Int = 2, bufferPixels: Int = 96): Boolean {
+    val info = layoutInfo
+    if (info.totalItemsCount == 0) return true
+    val lastVisible = info.visibleItemsInfo.lastOrNull() ?: return false
+    val lastIndex = info.totalItemsCount - 1
+    if (lastVisible.index < lastIndex) {
+        return lastVisible.index >= lastIndex - bufferItems
+    }
+    return lastVisible.offset + lastVisible.size <= info.viewportEndOffset + bufferPixels
 }
 
 @Composable

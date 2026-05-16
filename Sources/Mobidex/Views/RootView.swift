@@ -284,7 +284,7 @@ struct ProjectSessionListView: View {
         }
         isSessionRefreshRequested = true
         Task {
-            await model.selectAllSessionsAndRefresh()
+            await model.selectAllSessionsAndRefreshIfNeeded()
             isSessionRefreshRequested = false
         }
     }
@@ -590,7 +590,7 @@ private struct ProjectActionRow: View {
             selectedMode = .sessions
         }
         onOpenProject()
-        Task { await model.refreshThreads() }
+        Task { await model.refreshThreadsIfNeeded() }
     }
 }
 
@@ -692,10 +692,15 @@ private struct ProjectSessionScopeRow: View {
             }
             Spacer()
             Button(action: onStartNewSession) {
-                Label("New Session", systemImage: "plus.bubble")
+                Image(systemName: "plus.bubble")
+                    .font(.title3)
+                    .frame(width: 44, height: 44)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
+            .foregroundStyle(canCreateSession ? Color.accentColor : Color.secondary)
+            .contentShape(Circle())
             .disabled(!canCreateSession)
+            .accessibilityLabel("New Session")
             .accessibilityIdentifier("projectNewSessionButton")
         }
         .padding(.vertical, 2)

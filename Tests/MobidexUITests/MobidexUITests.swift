@@ -104,6 +104,9 @@ final class MobidexUITests: XCTestCase {
         if let targetShellRCFile = environment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"] {
             launchEnvironment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"] = targetShellRCFile
         }
+        if let serverID = environment["MOBIDEX_SMOKE_SERVER_ID"] {
+            launchEnvironment["MOBIDEX_SMOKE_SERVER_ID"] = serverID
+        }
         return launchEnvironment
     }
 

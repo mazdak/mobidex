@@ -12,6 +12,7 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -58,6 +59,7 @@ import mobidex.android.service.turnOptions
 import mobidex.shared.CodexAccessMode
 import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
+import mobidex.shared.CodexSessionCachePolicy
 import mobidex.shared.CodexThreadSummary
 import mobidex.shared.GitDiffSnapshot
 import mobidex.shared.JsonValue
@@ -129,6 +131,33 @@ data class AndroidSessionListSection(
     val threads: List<CodexThread>,
 )
 
+private const val MAX_APP_SERVER_RECONNECT_ATTEMPTS = 3
+
+private data class ThreadScopeCacheKey(
+    val serverID: String?,
+    val projectID: String?,
+    val cwd: String?,
+    val sessionPaths: List<String>,
+    val isShowingAllSessions: Boolean,
+    val includeArchivedSessions: Boolean,
+)
+
+private data class ThreadDetailCacheKey(
+    val serverID: String?,
+    val threadID: String,
+)
+
+private data class CachedThreadList(
+    val threads: List<CodexThread>,
+    val selectedThreadID: String?,
+    val fetchedAtEpochSeconds: Long,
+)
+
+private data class CachedThreadDetail(
+    val thread: CodexThread,
+    val fetchedAtEpochSeconds: Long,
+)
+
 class AppViewModel(
     context: Context,
     private val repository: ServerRepository,
@@ -146,6 +175,11 @@ class AppViewModel(
     private var sessionRefreshGeneration = 0L
     private var isSendingInput = false
     private val queuedTurnInputsByThreadID = mutableMapOf<String, MutableList<List<CodexInputItem>>>()
+    private val threadListCache = mutableMapOf<ThreadScopeCacheKey, CachedThreadList>()
+    private val threadDetailCache = mutableMapOf<ThreadDetailCacheKey, CachedThreadDetail>()
+    private val reconnectAttemptsByServerID = mutableMapOf<String, Int>()
+    private var reconnectJob: Job? = null
+    private var suppressThreadAutoSelection = false
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences("mobidex", Context.MODE_PRIVATE)
 
@@ -166,7 +200,7 @@ class AppViewModel(
             val server = state.servers.firstOrNull { it.id == serverID }
             state.copy(
                 selectedServerID = serverID,
-                selectedProjectID = server?.projects?.firstAddedProjectID,
+                selectedProjectID = server?.projects?.firstSavedProjectID,
                 isShowingAllSessions = false,
                 threads = emptyList(),
                 selectedThreadID = null,
@@ -206,7 +240,8 @@ class AppViewModel(
     }
 
     fun selectProject(projectID: String?) {
-        val refreshGeneration = beginSessionRefresh()
+        resetSessionRefreshTracking()
+        suppressThreadAutoSelection = true
         _state.update { state ->
             state.copy(
                 selectedProjectID = projectID,
@@ -219,11 +254,12 @@ class AppViewModel(
                 tokenUsagePercent = null,
             )
         }
-        refreshThreads(refreshGeneration = refreshGeneration)
+        refreshThreadsIfNeeded()
     }
 
     fun selectAllSessionsAndRefresh() {
-        val refreshGeneration = beginSessionRefresh()
+        resetSessionRefreshTracking()
+        suppressThreadAutoSelection = true
         _state.update { state ->
             state.copy(
                 selectedProjectID = null,
@@ -236,7 +272,7 @@ class AppViewModel(
                 tokenUsagePercent = null,
             )
         }
-        refreshThreads(refreshGeneration = refreshGeneration)
+        refreshThreadsIfNeeded()
     }
 
     fun dismissMacOSPrivacyWarningForever() {
@@ -254,7 +290,8 @@ class AppViewModel(
 
     fun setShowsArchivedSessions(show: Boolean) {
         if (_state.value.showsArchivedSessions == show) return
-        val refreshGeneration = beginSessionRefresh()
+        resetSessionRefreshTracking()
+        suppressThreadAutoSelection = true
         _state.update {
             it.copy(
                 showsArchivedSessions = show,
@@ -265,7 +302,7 @@ class AppViewModel(
                 tokenUsagePercent = null,
             )
         }
-        refreshThreads(refreshGeneration = refreshGeneration)
+        refreshThreadsIfNeeded()
     }
 
     suspend fun openTerminalSession(columns: Int = 80, rows: Int = 24): RemoteTerminalSession {
@@ -333,7 +370,7 @@ class AppViewModel(
                     val saved = state.copy(
                         servers = updated,
                         selectedServerID = next.id,
-                        selectedProjectID = next.projects.firstAddedProjectID,
+                        selectedProjectID = next.projects.firstSavedProjectID,
                         isShowingAllSessions = false,
                         connectionState = if (editedSelectedServer) ServerConnectionState.Disconnected else state.connectionState,
                         failureMessage = null,
@@ -359,7 +396,7 @@ class AppViewModel(
                     val deleted = state.copy(
                         servers = updated,
                         selectedServerID = updated.firstOrNull()?.id,
-                        selectedProjectID = updated.firstOrNull()?.projects?.firstAddedProjectID,
+                        selectedProjectID = updated.firstOrNull()?.projects?.firstSavedProjectID,
                         isShowingAllSessions = false,
                         connectionState = if (wasSelected) ServerConnectionState.Disconnected else state.connectionState,
                         failureMessage = null,
@@ -370,6 +407,7 @@ class AppViewModel(
                 credentialStore.deleteCredential(server.id)
                 hostKeyStore.deleteHostKeyFingerprint(server.id)
                 repository.saveServers(updated)
+                invalidateSessionCaches(server.id)
                 if (wasSelected) disconnectInternal(updateState = false)
             }
         }
@@ -383,7 +421,7 @@ class AppViewModel(
                 val state = _state.value
                 val server = state.selectedServer ?: error("Select a server before adding a project.")
                 val existing = server.projects.firstOrNull { it.path == trimmed }
-                require(existing?.isAdded != true) { "That project is already in the list." }
+                require(existing?.isSavedProject != true) { "That project is already saved." }
                 val project = existing?.copy(isAdded = true) ?: ProjectRecord(path = trimmed, isAdded = true)
                 val updatedProjects = if (existing == null) {
                     server.projects + project
@@ -393,6 +431,7 @@ class AppViewModel(
                 val updatedServer = server.copy(projects = updatedProjects, updatedAtEpochSeconds = Instant.now().epochSecond)
                 val updated = state.servers.upsert(updatedServer)
                 repository.saveServers(updated)
+                invalidateSessionCaches(server.id)
                 _state.update {
                     it.copy(
                         servers = updated,
@@ -422,12 +461,13 @@ class AppViewModel(
             val updatedServer = server.copy(projects = updatedProjects)
             val updated = state.servers.upsert(updatedServer)
             repository.saveServers(updated)
+            invalidateSessionCaches(server.id)
             resetSessionRefreshTracking()
             _state.update { current ->
                 val removedSelectedProject = current.selectedProjectID == project.id
                 val next = current.copy(
                     servers = updated,
-                    selectedProjectID = if (removedSelectedProject) updatedServer.projects.firstAddedProjectID else current.selectedProjectID,
+                    selectedProjectID = if (removedSelectedProject) updatedServer.projects.firstSavedProjectID else current.selectedProjectID,
                 )
                 if (removedSelectedProject) next.clearingSessionScope() else next
             }
@@ -441,6 +481,7 @@ class AppViewModel(
             val updatedServer = server.copy(projects = server.projects.map { if (it.id == project.id) it.copy(isAdded = added) else it })
             val updated = state.servers.upsert(updatedServer)
             repository.saveServers(updated)
+            invalidateSessionCaches(server.id)
             _state.update { it.copy(servers = updated) }
         }
     }
@@ -458,6 +499,8 @@ class AppViewModel(
     fun connectSelectedServer() {
         viewModelScope.launch {
             val server = _state.value.selectedServer ?: return@launch
+            reconnectJob?.cancel()
+            reconnectJob = null
             disconnectInternal(updateState = false)
             _state.update { it.copy(connectionState = ServerConnectionState.Connecting, failureMessage = null, statusMessage = "Connecting") }
             runBusy("Connecting", marksFailure = true) {
@@ -473,7 +516,20 @@ class AppViewModel(
                 var refreshHandedOff = false
                 try {
                     _state.update { it.copy(connectionState = ServerConnectionState.Connected, statusMessage = "Server connected.") }
-                    refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = false)
+                    reconnectAttemptsByServerID.remove(server.id)
+                    runCatching {
+                        refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = true)
+                    }.recoverCatching {
+                        refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = false)
+                    }.onFailure { error ->
+                        _state.update { it.copy(statusMessage = error.message ?: "Project refresh failed after connect.") }
+                    }
+                    _state.value.selectedThreadID?.let { threadID ->
+                        runCatching { client.resumeThread(threadID) }
+                            .recoverCatching { client.readThread(threadID) }
+                            .getOrNull()
+                            ?.let { hydrateConversation(it) }
+                    }
                     refreshThreads(refreshGeneration = refreshGeneration)
                     refreshHandedOff = true
                 } finally {
@@ -486,7 +542,12 @@ class AppViewModel(
     }
 
     fun disconnect(updateState: Boolean = true) {
-        viewModelScope.launch { disconnectInternal(updateState) }
+        viewModelScope.launch {
+            reconnectJob?.cancel()
+            reconnectJob = null
+            _state.value.selectedServerID?.let { reconnectAttemptsByServerID.remove(it) }
+            disconnectInternal(updateState)
+        }
     }
 
     fun refreshProjects() {
@@ -505,15 +566,28 @@ class AppViewModel(
 
     fun refreshThreads() {
         val refreshGeneration = beginSessionRefresh()
-        refreshThreads(refreshGeneration = refreshGeneration)
+        refreshThreads(refreshGeneration = refreshGeneration, forceReload = true)
     }
 
-    private fun refreshThreads(refreshGeneration: Long) {
+    private fun refreshThreadsIfNeeded() {
+        val cacheKey = currentThreadScopeCacheKey()
+        if (restoreCachedSessionState(cacheKey) && canUseCachedSessionState(cacheKey)) {
+            return
+        }
+        val refreshGeneration = beginSessionRefresh()
+        refreshThreads(refreshGeneration = refreshGeneration, forceReload = false)
+    }
+
+    private fun refreshThreads(refreshGeneration: Long, forceReload: Boolean = true) {
         viewModelScope.launch {
             try {
                 runBusy("Refreshing sessions") {
                     val state = _state.value
                     val client = appServer ?: return@runBusy
+                    val cacheKey = currentThreadScopeCacheKey(state)
+                    if (!forceReload && restoreCachedSessionState(cacheKey) && canUseCachedSessionState(cacheKey)) {
+                        return@runBusy
+                    }
                     val requestServerID = state.selectedServerID
                     val requestProjectID = state.selectedProjectID
                     val requestAllSessions = state.isShowingAllSessions
@@ -521,6 +595,7 @@ class AppViewModel(
                     val cwd = if (state.isShowingAllSessions) null else project?.path
                     val sessionPaths = if (state.isShowingAllSessions) emptyList() else project?.sessionPaths ?: emptyList()
                     val includeArchived = state.showsArchivedSessions
+                    var selectedThreadIDToHydrate: String? = null
                     val loaded = if (sessionPaths.isEmpty()) {
                         client.listThreads(cwd, includeArchived = includeArchived)
                     } else {
@@ -552,8 +627,20 @@ class AppViewModel(
                         ) {
                             current
                         } else {
-                            current.copy(threads = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds })
+                            val sorted = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds }
+                            cacheThreads(cacheKey, sorted)
+                            val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
+                            if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
+                                selectedThreadIDToHydrate = selectedID
+                            }
+                            current.copy(threads = sorted)
                         }
+                    }
+                    selectedThreadIDToHydrate?.let { threadID ->
+                        runCatching { client.resumeThread(threadID) }
+                            .recoverCatching { client.readThread(threadID) }
+                            .getOrNull()
+                            ?.let { hydrated -> hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, threadID) }
                     }
                 }
             } finally {
@@ -584,8 +671,102 @@ class AppViewModel(
         _state.update { it.copy(isRefreshingSessions = false) }
     }
 
+    private fun currentThreadScopeCacheKey(state: MobidexUiState = _state.value): ThreadScopeCacheKey {
+        val project = state.selectedProject
+        return ThreadScopeCacheKey(
+            serverID = state.selectedServerID,
+            projectID = if (state.isShowingAllSessions) null else state.selectedProjectID,
+            cwd = if (state.isShowingAllSessions) null else project?.path,
+            sessionPaths = if (state.isShowingAllSessions) emptyList() else project?.sessionPaths.orEmpty().sorted(),
+            isShowingAllSessions = state.isShowingAllSessions,
+            includeArchivedSessions = state.showsArchivedSessions,
+        )
+    }
+
+    private fun cacheThreads(cacheKey: ThreadScopeCacheKey, threads: List<CodexThread>) {
+        threadListCache[cacheKey] = CachedThreadList(
+            threads = threads,
+            selectedThreadID = _state.value.selectedThreadID,
+            fetchedAtEpochSeconds = Instant.now().epochSecond,
+        )
+    }
+
+    private fun cacheThreadDetail(serverID: String?, thread: CodexThread) {
+        threadDetailCache[ThreadDetailCacheKey(serverID, thread.id)] = CachedThreadDetail(
+            thread = thread,
+            fetchedAtEpochSeconds = Instant.now().epochSecond,
+        )
+    }
+
+    private fun cacheCurrentSelectedThreadDetail() {
+        val state = _state.value
+        val thread = state.selectedThread ?: return
+        cacheThreadDetail(state.selectedServerID, thread)
+    }
+
+    private fun restoreCachedSessionState(cacheKey: ThreadScopeCacheKey): Boolean {
+        val cached = threadListCache[cacheKey] ?: return false
+        _state.update { state ->
+            val selectedID = cachedSelectedThreadID(cached)
+            val detail = selectedID
+                ?.let { id -> threadDetailCache[ThreadDetailCacheKey(cacheKey.serverID, id)] }
+                ?.takeIf { detail ->
+                    CodexSessionCachePolicy.isFresh(
+                        fetchedAtEpochSeconds = detail.fetchedAtEpochSeconds,
+                        nowEpochSeconds = Instant.now().epochSecond,
+                        ttlSeconds = CodexSessionCachePolicy.DEFAULT_THREAD_DETAIL_TTL_SECONDS,
+                    )
+                }
+            val selectedThread = detail?.thread ?: selectedID?.let { id -> cached.threads.firstOrNull { it.id == id } }
+            state.copy(
+                threads = cached.threads,
+                selectedThreadID = selectedID,
+                selectedThread = selectedThread,
+                conversationSections = selectedThread?.conversationSections().orEmpty(),
+                pendingApprovals = emptyList(),
+                diffSnapshot = GitDiffSnapshot.Empty,
+                tokenUsagePercent = null,
+            )
+        }
+        return true
+    }
+
+    private fun canUseCachedSessionState(cacheKey: ThreadScopeCacheKey): Boolean {
+        val cached = threadListCache[cacheKey] ?: return false
+        if (!isSessionCacheFresh(cacheKey)) return false
+        val selectedID = cachedSelectedThreadID(cached) ?: return true
+        return isThreadDetailCacheFresh(cacheKey.serverID, selectedID)
+    }
+
+    private fun cachedSelectedThreadID(cached: CachedThreadList): String? {
+        cached.selectedThreadID
+            ?.takeIf { id -> cached.threads.any { it.id == id } }
+            ?.let { return it }
+        return if (suppressThreadAutoSelection) null else cached.threads.firstOrNull()?.id
+    }
+
+    private fun isSessionCacheFresh(cacheKey: ThreadScopeCacheKey): Boolean =
+        CodexSessionCachePolicy.isFresh(
+            fetchedAtEpochSeconds = threadListCache[cacheKey]?.fetchedAtEpochSeconds,
+            nowEpochSeconds = Instant.now().epochSecond,
+            ttlSeconds = CodexSessionCachePolicy.DEFAULT_SESSION_LIST_TTL_SECONDS,
+        )
+
+    private fun isThreadDetailCacheFresh(serverID: String?, threadID: String): Boolean =
+        CodexSessionCachePolicy.isFresh(
+            fetchedAtEpochSeconds = threadDetailCache[ThreadDetailCacheKey(serverID, threadID)]?.fetchedAtEpochSeconds,
+            nowEpochSeconds = Instant.now().epochSecond,
+            ttlSeconds = CodexSessionCachePolicy.DEFAULT_THREAD_DETAIL_TTL_SECONDS,
+        )
+
+    private fun invalidateSessionCaches(serverID: String?) {
+        threadListCache.keys.removeAll { it.serverID == serverID }
+        threadDetailCache.keys.removeAll { it.serverID == serverID }
+    }
+
     fun openThread(thread: CodexThread) {
         viewModelScope.launch {
+            suppressThreadAutoSelection = false
             val requestState = _state.value
             val requestServerID = requestState.selectedServerID
             val requestProjectID = requestState.selectedProjectID
@@ -615,19 +796,20 @@ class AppViewModel(
         viewModelScope.launch {
             runBusy("Starting session") {
                 val state = _state.value
-            val client = appServer ?: return@runBusy
-            val requestServerID = state.selectedServerID
-            val requestProjectID = state.selectedProjectID
-            val requestThreadID = state.selectedThreadID
-            val cwd = state.selectedProject?.path ?: return@runBusy
-            val thread = client.startThread(cwd)
-            hydrateConversationIfCurrent(
-                thread,
-                requestServerID,
-                requestProjectID,
-                requestThreadID,
-                clearPerThreadState = true,
-            )
+                suppressThreadAutoSelection = false
+                val client = appServer ?: return@runBusy
+                val requestServerID = state.selectedServerID
+                val requestProjectID = state.selectedProjectID
+                val requestThreadID = state.selectedThreadID
+                val cwd = state.selectedProject?.path ?: return@runBusy
+                val thread = client.startThread(cwd)
+                hydrateConversationIfCurrent(
+                    thread,
+                    requestServerID,
+                    requestProjectID,
+                    requestThreadID,
+                    clearPerThreadState = true,
+                )
                 _state.update { current ->
                     if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                         current
@@ -635,6 +817,8 @@ class AppViewModel(
                         current.copy(threads = (listOf(thread) + current.threads).distinctBy { item -> item.id })
                     }
                 }
+                invalidateSessionCaches(requestServerID)
+                cacheThreads(currentThreadScopeCacheKey(), _state.value.threads)
                 refreshProjectsForCurrentScope(client, requestServerID)
             }
         }
@@ -834,7 +1018,7 @@ class AppViewModel(
                 it.copy(
                     servers = servers,
                     selectedServerID = servers.firstOrNull()?.id,
-                    selectedProjectID = servers.firstOrNull()?.projects?.firstAddedProjectID,
+                    selectedProjectID = servers.firstOrNull()?.projects?.firstSavedProjectID,
                     isShowingAllSessions = false,
                 )
             }
@@ -1018,7 +1202,7 @@ class AppViewModel(
                 activeChatCount = shared.activeChatCount,
                 lastDiscoveredAtEpochSeconds = shared.lastDiscoveredAtEpochSeconds,
                 lastActiveChatAtEpochSeconds = shared.lastActiveChatAtEpochSeconds,
-                isAdded = previous?.isAdded ?: shared.isAdded,
+                isAdded = previous?.let { it.isAdded || !it.discovered || shared.isAdded } ?: shared.isAdded,
             )
         }
     }
@@ -1035,8 +1219,8 @@ class AppViewModel(
         }
 
     private fun repairedSelectedProjectID(selectedProjectID: String?, projects: List<ProjectRecord>): String? = when {
-        selectedProjectID != null && projects.any { it.id == selectedProjectID && it.isAdded } -> selectedProjectID
-        else -> projects.firstAddedProjectID
+        selectedProjectID != null && projects.any { it.id == selectedProjectID } -> selectedProjectID
+        else -> projects.firstSavedProjectID
     }
 
     private fun ProjectRecord.toSharedProject(): mobidex.shared.ProjectRecord =
@@ -1105,17 +1289,7 @@ class AppViewModel(
             client.events.collect { event ->
                 when (event) {
                     is CodexAppServerEvent.Disconnected -> {
-                        disconnectInternal(updateState = false)
-                        val servers = _state.value.servers.clearingAppServerProjectState()
-                        repository.saveServers(servers)
-                        _state.update {
-                            it.copy(
-                                servers = servers,
-                                connectionState = ServerConnectionState.Disconnected,
-                                statusMessage = event.message,
-                                pendingApprovals = emptyList(),
-                            )
-                        }
+                        handleAppServerDisconnected(client, event.message)
                     }
                     is CodexAppServerEvent.ServerRequest -> {
                         if (!eventTargetsSelectedThread(event.params)) return@collect
@@ -1136,6 +1310,140 @@ class AppViewModel(
                 }
             }
         }
+    }
+
+    private suspend fun handleAppServerDisconnected(client: CodexAppServerClient, message: String) {
+        val serverID = _state.value.selectedServerID
+        eventJob = null
+        if (appServer === client) {
+            appServer = null
+        }
+        queuedTurnInputsByThreadID.clear()
+        resetSessionRefreshTracking()
+        client.close()
+        if (serverID != null && shouldReconnect(serverID)) {
+            _state.update {
+                it.copy(
+                    connectionState = ServerConnectionState.Connecting,
+                    statusMessage = "$message Reconnecting server.",
+                    pendingApprovals = emptyList(),
+                )
+            }
+            scheduleReconnect(serverID, message)
+            return
+        }
+        val servers = _state.value.servers.clearingAppServerProjectState()
+        repository.saveServers(servers)
+        _state.update {
+            it.copy(
+                servers = servers,
+                connectionState = ServerConnectionState.Disconnected,
+                statusMessage = message,
+                pendingApprovals = emptyList(),
+            )
+        }
+    }
+
+    private fun shouldReconnect(serverID: String): Boolean =
+        _state.value.selectedServerID == serverID &&
+            _state.value.selectedServer != null &&
+            (reconnectAttemptsByServerID[serverID] ?: 0) < MAX_APP_SERVER_RECONNECT_ATTEMPTS
+
+    private fun scheduleReconnect(serverID: String, disconnectMessage: String) {
+        reconnectJob?.cancel()
+        reconnectJob = viewModelScope.launch {
+            var lastFailureMessage = disconnectMessage
+            while (shouldReconnect(serverID) && appServer == null) {
+                val attempt = (reconnectAttemptsByServerID[serverID] ?: 0) + 1
+                reconnectAttemptsByServerID[serverID] = attempt
+                delay(appServerReconnectDelayMillis(attempt))
+                if (_state.value.selectedServerID != serverID || appServer != null) {
+                    reconnectJob = null
+                    return@launch
+                }
+                _state.update {
+                    it.copy(
+                        connectionState = ServerConnectionState.Connecting,
+                        statusMessage = "$disconnectMessage Reconnecting server ($attempt/$MAX_APP_SERVER_RECONNECT_ATTEMPTS).",
+                    )
+                }
+                if (reconnectSelectedServerOnce(serverID)) {
+                    reconnectJob = null
+                    return@launch
+                }
+                lastFailureMessage = _state.value.failureMessage ?: _state.value.statusMessage ?: "Reconnect failed."
+            }
+            if (_state.value.selectedServerID == serverID && appServer == null) {
+                val servers = _state.value.servers.clearingAppServerProjectState()
+                repository.saveServers(servers)
+                _state.update {
+                    it.copy(
+                        servers = servers,
+                        connectionState = ServerConnectionState.Failed,
+                        failureMessage = lastFailureMessage,
+                        statusMessage = lastFailureMessage,
+                        pendingApprovals = emptyList(),
+                    )
+                }
+            }
+            reconnectJob = null
+        }
+    }
+
+    private suspend fun reconnectSelectedServerOnce(serverID: String): Boolean {
+        val server = _state.value.servers.firstOrNull { it.id == serverID } ?: return false
+        return try {
+            val credential = credentialStore.loadCredential(server.id)
+            val client = sshService.openAppServer(server, credential)
+            if (_state.value.selectedServerID != server.id) {
+                client.close()
+                return false
+            }
+            appServer = client
+            startEventLoop(client)
+            _state.update {
+                it.copy(
+                    connectionState = ServerConnectionState.Connected,
+                    failureMessage = null,
+                    statusMessage = "Server reconnected.",
+                )
+            }
+            reconnectAttemptsByServerID.remove(server.id)
+            runCatching { refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = true) }
+                .onFailure { error -> _state.update { it.copy(statusMessage = error.message ?: "Project refresh failed after reconnect.") } }
+            val requestProjectID = _state.value.selectedProjectID
+            _state.value.selectedThreadID?.let { threadID ->
+                runCatching { client.resumeThread(threadID) }
+                    .recoverCatching { client.readThread(threadID) }
+                    .getOrNull()
+                    ?.let { hydrateConversationIfCurrent(it, serverID, requestProjectID, threadID) }
+            }
+            val refreshGeneration = beginSessionRefresh()
+            var refreshHandedOff = false
+            try {
+                refreshThreads(refreshGeneration = refreshGeneration, forceReload = true)
+                refreshHandedOff = true
+            } finally {
+                if (!refreshHandedOff) {
+                    endSessionRefresh(refreshGeneration)
+                }
+            }
+            true
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            _state.update {
+                it.copy(
+                    failureMessage = error.message ?: "Reconnect failed.",
+                    statusMessage = error.message ?: "Reconnect failed.",
+                )
+            }
+            false
+        }
+    }
+
+    private fun appServerReconnectDelayMillis(attempt: Int): Long {
+        val multiplier = 1L shl (attempt - 1).coerceIn(0, 5)
+        return minOf(8_000L, 500L * multiplier)
     }
 
     private suspend fun handleNotification(method: String, params: JsonElement?) {
@@ -1160,6 +1468,7 @@ class AppViewModel(
                         )
                         state.copy(selectedThread = next, conversationSections = next.conversationSections())
                     }
+                    cacheCurrentSelectedThreadDetail()
                 } else if (method == "turn/started") {
                     return
                 }
@@ -1194,6 +1503,7 @@ class AppViewModel(
                     val next = thread.copy(status = parseStatus(status))
                     state.copy(selectedThread = next)
                 }
+                cacheCurrentSelectedThreadDetail()
                 refreshThreads()
             }
             "thread/tokenUsage/updated" -> {
@@ -1211,6 +1521,8 @@ class AppViewModel(
     }
 
     private fun hydrateConversation(thread: CodexThread) {
+        val serverID = _state.value.selectedServerID
+        cacheThreadDetail(serverID, thread)
         _state.update {
             it.copy(
                 selectedThreadID = thread.id,
@@ -1218,6 +1530,7 @@ class AppViewModel(
                 conversationSections = thread.conversationSections(),
             )
         }
+        cacheThreads(currentThreadScopeCacheKey(), _state.value.threads)
     }
 
     private suspend fun promoteProjectToProjectList(thread: CodexThread) {
@@ -1248,10 +1561,12 @@ class AppViewModel(
         requestThreadID: String?,
         clearPerThreadState: Boolean = false,
     ) {
+        var didHydrate = false
         _state.update { state ->
             if (state.selectedServerID != requestServerID || state.selectedProjectID != requestProjectID || state.selectedThreadID != requestThreadID) {
                 state
             } else {
+                didHydrate = true
                 var next = state.copy(
                     selectedThreadID = thread.id,
                     selectedThread = thread,
@@ -1267,6 +1582,9 @@ class AppViewModel(
                 }
                 next
             }
+        }
+        if (didHydrate) {
+            cacheThreadDetail(requestServerID, thread)
         }
     }
 
@@ -1341,6 +1659,7 @@ class AppViewModel(
             val nextThread = thread.copy(turns = thread.turns.upsert(nextTurn))
             state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private fun appendTextDelta(itemID: String?, delta: String?, agent: Boolean) {
@@ -1356,6 +1675,7 @@ class AppViewModel(
             }
             state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private fun appendCommandDelta(itemID: String?, delta: String?) {
@@ -1371,6 +1691,7 @@ class AppViewModel(
             }
             state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private fun appendReasoningDelta(itemID: String?, delta: String?, index: Int?, summary: Boolean) {
@@ -1386,6 +1707,7 @@ class AppViewModel(
             }
             state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private fun ensureReasoningPart(itemID: String?, index: Int?, summary: Boolean) {
@@ -1401,6 +1723,7 @@ class AppViewModel(
             }
             state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private fun applyTurnPlanUpdate(turnID: String?, params: JsonElement?) {
@@ -1435,6 +1758,7 @@ class AppViewModel(
             }
             state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private fun appendFileChangeOutputDelta(itemID: String?, delta: String?) {
@@ -1451,6 +1775,7 @@ class AppViewModel(
             }
             state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private fun appendToolProgress(itemID: String?, message: String?) {
@@ -1466,6 +1791,7 @@ class AppViewModel(
             }
             state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private fun terminalInteractionText(stdin: String?): String? =
@@ -1586,8 +1912,8 @@ private fun List<ServerRecord>.clearingAppServerProjectState(): List<ServerRecor
 private fun List<ServerRecord>.upsert(server: ServerRecord): List<ServerRecord> =
     if (any { it.id == server.id }) map { if (it.id == server.id) server else it } else this + server
 
-private val List<ProjectRecord>.firstAddedProjectID: String?
-    get() = firstOrNull { it.isAdded }?.id
+private val List<ProjectRecord>.firstSavedProjectID: String?
+    get() = firstOrNull { it.isSavedProject }?.id ?: firstOrNull()?.id
 
 private fun List<CodexTurn>.upsert(turn: CodexTurn): List<CodexTurn> =
     if (any { it.id == turn.id }) map { if (it.id == turn.id) turn else it } else this + turn

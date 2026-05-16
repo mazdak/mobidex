@@ -28,7 +28,7 @@ data class ProjectListSections(
             val sorted = matching.sortedWith(projectListComparator)
 
             return ProjectListSections(
-                projects = sorted.filter { it.isAdded },
+                projects = sorted.filter { it.isSavedProject },
                 discovered = sorted.filter { project ->
                     val hasVisibleSessions = project.activeChatCount > 0 ||
                         project.discoveredSessionCount > 0 ||
@@ -41,7 +41,7 @@ data class ProjectListSections(
                                 project.discoveredSessionCount > 0
                             )
                     project.discovered &&
-                        !project.isAdded &&
+                        !project.isSavedProject &&
                         (
                             hasVisibleSessions ||
                                 showInactiveDiscoveredProjects ||
@@ -51,19 +51,19 @@ data class ProjectListSections(
                 added = emptyList(),
                 showInactiveDiscoveredFilter = projects.any {
                     it.discovered &&
-                        !it.isAdded &&
+                        !it.isSavedProject &&
                         it.activeChatCount == 0 &&
                         it.discoveredSessionCount == 0 &&
                         it.archivedSessionCount == 0
                 },
                 showArchivedSessionFilter = projects.any {
-                    it.discovered && !it.isAdded && it.archivedSessionCount > 0
+                    it.discovered && !it.isSavedProject && it.archivedSessionCount > 0
                 },
             )
         }
 
         private val projectListComparator = Comparator<ProjectRecord> { lhs, rhs ->
-            compareByDescending<ProjectRecord> { it.isAdded }
+            compareByDescending<ProjectRecord> { it.isSavedProject }
                 .thenByDescending { it.activeChatCount }
                 .thenByDescending { it.discoveredSessionCount }
                 .thenByDescending { it.archivedSessionCount }

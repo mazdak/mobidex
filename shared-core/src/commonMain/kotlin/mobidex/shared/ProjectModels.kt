@@ -20,6 +20,9 @@ data class ProjectRecord(
     val lastActiveChatAtEpochSeconds: Long? = null,
     val isAdded: Boolean = false,
 ) {
+    val isSavedProject: Boolean
+        get() = isAdded || !discovered
+
     fun normalized(): ProjectRecord =
         copy(sessionPaths = normalizedSessionPaths(sessionPaths, path))
 

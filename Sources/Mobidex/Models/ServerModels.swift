@@ -207,13 +207,13 @@ struct ProjectRecord: Identifiable, Codable, Equatable, Hashable {
 
 extension ProjectRecord {
     var isAddedToProjectList: Bool {
-        isAdded
+        isAdded || !discovered
     }
 }
 
 extension [ProjectRecord] {
     var firstAddedProjectID: UUID? {
-        first(where: \.isAddedToProjectList)?.id
+        first(where: \.isAddedToProjectList)?.id ?? first?.id
     }
 
     var remoteDiscoverySnapshot: [RemoteProject] {

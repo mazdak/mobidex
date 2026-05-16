@@ -2,6 +2,7 @@ package mobidex.shared
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SharedCoreParityTest {
@@ -124,6 +125,39 @@ class SharedCoreParityTest {
 
         assertEquals(1, refreshed.single().activeChatCount)
         assertEquals(42, refreshed.single().lastActiveChatAtEpochSeconds)
+    }
+
+    @Test
+    fun projectCatalogKeepsManualProjectSavedWhenDiscoveryMatchesIt() {
+        val existing = listOf(ProjectRecord(path = "/srv/app"))
+
+        val refreshed = ProjectCatalog.refreshedProjects(
+            existingProjects = existing,
+            discoveredProjects = listOf(
+                RemoteProject(
+                    path = "/srv/app",
+                    discoveredSessionCount = 37,
+                    lastDiscoveredAtEpochSeconds = 1_770_000_300,
+                )
+            ),
+            openSessions = null,
+        )
+
+        assertTrue(refreshed.single().isSavedProject)
+        assertEquals(37, refreshed.single().discoveredSessionCount)
+        assertEquals(1_770_000_300, refreshed.single().lastDiscoveredAtEpochSeconds)
+    }
+
+    @Test
+    fun projectCatalogDoesNotPromoteNewRemoteDiscoveriesToSavedProjects() {
+        val refreshed = ProjectCatalog.refreshedProjects(
+            existingProjects = emptyList(),
+            discoveredProjects = listOf(RemoteProject(path = "/srv/discovered", discoveredSessionCount = 3)),
+            openSessions = null,
+        )
+
+        assertFalse(refreshed.single().isSavedProject)
+        assertEquals(3, refreshed.single().discoveredSessionCount)
     }
 
     @Test
