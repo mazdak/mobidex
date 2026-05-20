@@ -210,6 +210,7 @@ struct ConversationView: View {
                             .id(conversationBottomID)
                     }
                     .padding()
+                    .id(model.selectedThreadID ?? "no-selected-thread")
                 }
                 .coordinateSpace(name: "timelineScroll")
                 .scrollDismissesKeyboard(.interactively)
@@ -252,16 +253,18 @@ struct ConversationView: View {
                         }
                     } label: {
                         Image(systemName: "arrow.down")
-                            .font(.callout.weight(.semibold))
+                            .font(.body.weight(.semibold))
                             .foregroundStyle(.primary)
-                            .frame(width: 36, height: 36)
+                            .frame(width: 44, height: 44)
                             .background(.regularMaterial, in: Circle())
                             .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
                     }
                     .buttonStyle(.plain)
+                    .contentShape(Rectangle())
+                    .padding(8)
                     .accessibilityLabel("Scroll to latest message")
-                    .padding(.trailing, 18)
-                    .padding(.bottom, 12)
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 4)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }

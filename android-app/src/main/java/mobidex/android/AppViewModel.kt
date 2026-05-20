@@ -246,6 +246,17 @@ class AppViewModel(
             state.copy(
                 selectedProjectID = projectID,
                 isShowingAllSessions = false,
+            )
+        }
+        val cacheKey = currentThreadScopeCacheKey()
+        if (restoreCachedSessionState(cacheKey)) {
+            if (!canUseCachedSessionState(cacheKey)) {
+                refreshThreadsIfNeeded()
+            }
+            return
+        }
+        _state.update { state ->
+            state.copy(
                 threads = emptyList(),
                 selectedThreadID = null,
                 selectedThread = null,
@@ -264,6 +275,17 @@ class AppViewModel(
             state.copy(
                 selectedProjectID = null,
                 isShowingAllSessions = true,
+            )
+        }
+        val cacheKey = currentThreadScopeCacheKey()
+        if (restoreCachedSessionState(cacheKey)) {
+            if (!canUseCachedSessionState(cacheKey)) {
+                refreshThreadsIfNeeded()
+            }
+            return
+        }
+        _state.update { state ->
+            state.copy(
                 threads = emptyList(),
                 selectedThreadID = null,
                 selectedThread = null,

@@ -10,8 +10,8 @@ class CodexSessionCachePolicyTest {
         assertTrue(
             CodexSessionCachePolicy.isFresh(
                 fetchedAtEpochSeconds = 100,
-                nowEpochSeconds = 130,
-                ttlSeconds = 45,
+                nowEpochSeconds = 100 + CodexSessionCachePolicy.DEFAULT_SESSION_LIST_TTL_SECONDS - 1,
+                ttlSeconds = CodexSessionCachePolicy.DEFAULT_SESSION_LIST_TTL_SECONDS,
             )
         )
     }
@@ -21,8 +21,8 @@ class CodexSessionCachePolicyTest {
         assertFalse(
             CodexSessionCachePolicy.isFresh(
                 fetchedAtEpochSeconds = 100,
-                nowEpochSeconds = 145,
-                ttlSeconds = 45,
+                nowEpochSeconds = 100 + CodexSessionCachePolicy.DEFAULT_SESSION_LIST_TTL_SECONDS,
+                ttlSeconds = CodexSessionCachePolicy.DEFAULT_SESSION_LIST_TTL_SECONDS,
             )
         )
     }
@@ -33,7 +33,25 @@ class CodexSessionCachePolicyTest {
             CodexSessionCachePolicy.shouldRefresh(
                 fetchedAtEpochSeconds = 200,
                 nowEpochSeconds = 100,
-                ttlSeconds = 45,
+                ttlSeconds = CodexSessionCachePolicy.DEFAULT_SESSION_LIST_TTL_SECONDS,
+            )
+        )
+    }
+
+    @Test
+    fun defaultNavigationCachesLastThirtyMinutes() {
+        assertTrue(
+            CodexSessionCachePolicy.isFresh(
+                fetchedAtEpochSeconds = 0,
+                nowEpochSeconds = 29 * 60 + 59,
+                ttlSeconds = CodexSessionCachePolicy.DEFAULT_SESSION_LIST_TTL_SECONDS,
+            )
+        )
+        assertFalse(
+            CodexSessionCachePolicy.isFresh(
+                fetchedAtEpochSeconds = 0,
+                nowEpochSeconds = 30 * 60,
+                ttlSeconds = CodexSessionCachePolicy.DEFAULT_SESSION_LIST_TTL_SECONDS,
             )
         )
     }

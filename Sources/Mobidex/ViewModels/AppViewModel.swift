@@ -139,6 +139,7 @@ private struct CachedThreadDetail {
     var sections: [ConversationSection]
     var tokenUsage: CodexTokenUsage?
     var fetchedAt: Date
+    var lastAccessedAt: Date
 }
 
 private enum AppOperation: Hashable {
@@ -200,6 +201,7 @@ final class AppViewModel: ObservableObject {
     private let maxAppServerReconnectAttempts: Int
     private let sessionListCacheTTL: TimeInterval
     private let threadDetailCacheTTL: TimeInterval
+    private let maxThreadDetailCacheEntries: Int
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
     private var appServer: CodexAppServerClient?
@@ -230,6 +232,7 @@ final class AppViewModel: ObservableObject {
         maxAppServerReconnectAttempts: Int = 3,
         sessionListCacheTTL: TimeInterval = SharedKMPBridge.defaultSessionListCacheTTL,
         threadDetailCacheTTL: TimeInterval = SharedKMPBridge.defaultThreadDetailCacheTTL,
+        maxThreadDetailCacheEntries: Int = 8,
         loadServersOnInit: Bool = true
     ) {
         self.repository = repository
@@ -240,6 +243,7 @@ final class AppViewModel: ObservableObject {
         self.maxAppServerReconnectAttempts = maxAppServerReconnectAttempts
         self.sessionListCacheTTL = sessionListCacheTTL
         self.threadDetailCacheTTL = threadDetailCacheTTL
+        self.maxThreadDetailCacheEntries = max(1, maxThreadDetailCacheEntries)
         if loadServersOnInit {
             loadServers()
         }
@@ -1380,19 +1384,19 @@ final class AppViewModel: ObservableObject {
             selectedThreadID: selectedThreadID,
             fetchedAt: .now
         )
-        for thread in threads where !thread.turns.isEmpty {
-            cacheThreadDetail(thread: thread, liveItems: thread.turns.flatMap(\.items), sections: SharedKMPBridge.conversationSections(from: thread))
-        }
     }
 
     private func cacheThreadDetail(thread: CodexThread, liveItems: [CodexThreadItem], sections: [ConversationSection]) {
+        let now = Date.now
         threadDetailCache[threadDetailCacheKey(threadID: thread.id)] = CachedThreadDetail(
             thread: thread,
             liveItems: liveItems,
             sections: sections,
             tokenUsage: selectedThreadID == thread.id ? selectedThreadTokenUsage : nil,
-            fetchedAt: .now
+            fetchedAt: now,
+            lastAccessedAt: now
         )
+        pruneThreadDetailCache(now: now)
     }
 
     private func restoreCachedSessionState(for scope: ThreadLoadScope) -> Bool {
@@ -1417,8 +1421,11 @@ final class AppViewModel: ObservableObject {
             refreshQueuedTurnInputCount()
             return true
         }
-        if let detail = threadDetailCache[threadDetailCacheKey(threadID: selectedThreadID)],
+        let selectedDetailKey = threadDetailCacheKey(threadID: selectedThreadID)
+        if var detail = threadDetailCache[selectedDetailKey],
            isCacheEntryFresh(fetchedAt: detail.fetchedAt, ttl: threadDetailCacheTTL) {
+            detail.lastAccessedAt = .now
+            threadDetailCache[selectedDetailKey] = detail
             selectedThread = detail.thread
             liveItems = detail.liveItems
             selectedThreadTokenUsage = detail.tokenUsage
@@ -1440,6 +1447,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func canUseCachedSessionState(for scope: ThreadLoadScope) -> Bool {
+        pruneThreadDetailCache(now: .now)
         guard let cachedList = threadListCache[scope],
               isSessionListCacheFresh(for: scope)
         else {
@@ -1452,6 +1460,29 @@ final class AppViewModel: ObservableObject {
             return false
         }
         return isCacheEntryFresh(fetchedAt: detail.fetchedAt, ttl: threadDetailCacheTTL)
+    }
+
+    private func pruneThreadDetailCache(now: Date) {
+        threadDetailCache = threadDetailCache.filter { _, detail in
+            isCacheEntryFresh(fetchedAt: detail.fetchedAt, ttl: threadDetailCacheTTL, now: now)
+        }
+        guard threadDetailCache.count > maxThreadDetailCacheEntries else { return }
+
+        let selectedKey = selectedThreadID.map(threadDetailCacheKey(threadID:))
+        let removableKeys = threadDetailCache
+            .filter { key, _ in selectedKey.map { key != $0 } ?? true }
+            .sorted { lhs, rhs in
+                if lhs.value.lastAccessedAt != rhs.value.lastAccessedAt {
+                    return lhs.value.lastAccessedAt < rhs.value.lastAccessedAt
+                }
+                return lhs.key.threadID < rhs.key.threadID
+            }
+            .map(\.key)
+
+        let removalCount = max(0, threadDetailCache.count - maxThreadDetailCacheEntries)
+        for key in removableKeys.prefix(removalCount) {
+            threadDetailCache.removeValue(forKey: key)
+        }
     }
 
     private func cachedSelectedThreadID(in cachedList: CachedThreadList) -> String? {
@@ -2269,17 +2300,16 @@ final class AppViewModel: ObservableObject {
     }
 
     private static func conversationRenderDigest(for sections: [ConversationSection]) -> String {
-        sections.map { section in
-            [
-                section.id,
-                "\(section.kind)",
-                section.title,
-                section.body,
-                section.detail ?? "",
-                section.status ?? ""
-            ].joined(separator: "\u{1F}")
-        }
-        .joined(separator: "\u{1E}")
+        guard let last = sections.last else { return "" }
+        return [
+            "\(sections.count)",
+            last.id,
+            "\(last.kind)",
+            "\(last.title.count)",
+            "\(last.body.count)",
+            "\(last.detail?.count ?? 0)",
+            "\(last.status?.count ?? 0)"
+        ].joined(separator: ":")
     }
 
     private func beginSelectedThreadLoad(threadID: String) {
