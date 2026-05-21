@@ -1,9 +1,9 @@
 package mobidex.shared
 
 object CodexSessionCachePolicy {
-    const val DEFAULT_SESSION_LIST_TTL_SECONDS: Long = 45
-    const val DEFAULT_THREAD_DETAIL_TTL_SECONDS: Long = 120
-    const val DEFAULT_PROJECT_LIST_TTL_SECONDS: Long = 300
+    const val DEFAULT_SESSION_LIST_TTL_SECONDS: Long = 30 * 60
+    const val DEFAULT_THREAD_DETAIL_TTL_SECONDS: Long = 30 * 60
+    const val DEFAULT_PROJECT_LIST_TTL_SECONDS: Long = 30 * 60
 
     fun isFresh(
         fetchedAtEpochSeconds: Long?,

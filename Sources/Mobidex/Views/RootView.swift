@@ -57,26 +57,6 @@ struct RootView: View {
     }
 }
 
-private struct ServerActionButtonLabel: View {
-    let title: String
-    let systemImage: String
-
-    var body: some View {
-        VStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.title3)
-                .imageScale(.medium)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(.footnote.weight(.medium))
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-        }
-        .frame(maxWidth: .infinity, minHeight: 58)
-        .accessibilityLabel(title)
-    }
-}
-
 struct ServerSidebarView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -245,8 +225,11 @@ struct ProjectSessionListView: View {
                 .toolbar {
                     SelectedServerToolbar(
                         server: server,
+                        selectedMode: selectedMode,
                         disabled: serverControlsDisabled,
                         showingProjectAdd: $showingProjectAdd,
+                        showingTerminal: $showingTerminal,
+                        showingDiagnostics: $showingDiagnostics,
                         editingServer: $editingServer,
                         serverPendingDeletion: $serverPendingDeletion,
                         isDeleteServerConfirmationPresented: $isDeleteServerConfirmationPresented
@@ -331,37 +314,6 @@ struct ProjectSessionListView: View {
                     ProgressView()
                 }
             }
-            HStack {
-                Button {
-                    Task { await model.connectSelectedServer(syncActiveChatCounts: true) }
-                } label: {
-                    ServerActionButtonLabel(
-                        title: model.isAppServerConnected ? "Reconnect" : "Connect",
-                        systemImage: "point.3.connected.trianglepath.dotted"
-                    )
-                }
-                .frame(maxWidth: .infinity)
-                .disabled(model.connectionState == .connecting)
-                .accessibilityIdentifier("connectButton")
-                Button {
-                    showingTerminal = true
-                } label: {
-                    ServerActionButtonLabel(title: "Terminal", systemImage: "terminal")
-                }
-                .frame(maxWidth: .infinity)
-                .disabled(serverControlsDisabled)
-                .accessibilityIdentifier("terminalButton")
-                Button {
-                    showingDiagnostics = true
-                } label: {
-                    ServerActionButtonLabel(title: "Doctor", systemImage: "stethoscope")
-                }
-                .frame(maxWidth: .infinity)
-                .disabled(serverControlsDisabled || model.isRunningConnectionDiagnostics)
-                .accessibilityIdentifier("connectionDiagnosticsButton")
-            }
-            .buttonStyle(.bordered)
-
             Picker("List", selection: $selectedMode) {
                 ForEach(ProjectSessionMode.allCases) { mode in
                     Text(mode.label).tag(mode)
@@ -596,12 +548,29 @@ private struct ProjectActionRow: View {
 
 private struct SelectedServerMenu: View {
     let server: ServerRecord
+    let disabled: Bool
+    @Binding var showingTerminal: Bool
+    @Binding var showingDiagnostics: Bool
     @Binding var editingServer: ServerRecord?
     @Binding var serverPendingDeletion: ServerRecord?
     @Binding var isDeleteServerConfirmationPresented: Bool
 
     var body: some View {
         Menu {
+            Button {
+                showingTerminal = true
+            } label: {
+                Label("Terminal", systemImage: "terminal")
+            }
+            .disabled(disabled)
+
+            Button {
+                showingDiagnostics = true
+            } label: {
+                Label("Doctor", systemImage: "stethoscope")
+            }
+            .disabled(disabled)
+
             Button {
                 editingServer = server
             } label: {
@@ -623,18 +592,24 @@ private struct SelectedServerMenu: View {
 
 private struct SelectedServerToolbar: ToolbarContent {
     let server: ServerRecord
+    let selectedMode: ProjectSessionMode
     let disabled: Bool
     @Binding var showingProjectAdd: Bool
+    @Binding var showingTerminal: Bool
+    @Binding var showingDiagnostics: Bool
     @Binding var editingServer: ServerRecord?
     @Binding var serverPendingDeletion: ServerRecord?
     @Binding var isDeleteServerConfirmationPresented: Bool
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
-            RefreshProjectsButton(disabled: disabled)
+            RefreshServerButton(selectedMode: selectedMode, disabled: disabled)
             AddProjectButton(showingProjectAdd: $showingProjectAdd, disabled: disabled)
             SelectedServerMenu(
                 server: server,
+                disabled: disabled,
+                showingTerminal: $showingTerminal,
+                showingDiagnostics: $showingDiagnostics,
                 editingServer: $editingServer,
                 serverPendingDeletion: $serverPendingDeletion,
                 isDeleteServerConfirmationPresented: $isDeleteServerConfirmationPresented
@@ -643,18 +618,33 @@ private struct SelectedServerToolbar: ToolbarContent {
     }
 }
 
-private struct RefreshProjectsButton: View {
+private struct RefreshServerButton: View {
     @EnvironmentObject private var model: AppViewModel
+    let selectedMode: ProjectSessionMode
     let disabled: Bool
 
     var body: some View {
         Button {
-            Task { await model.refreshProjects() }
+            Task { await refreshServer() }
         } label: {
             Image(systemName: "arrow.clockwise")
         }
         .disabled(disabled)
-        .accessibilityLabel("Refresh Projects")
+        .accessibilityLabel(model.isAppServerConnected ? "Refresh" : "Connect")
+        .accessibilityIdentifier("refreshServerButton")
+    }
+
+    private func refreshServer() async {
+        guard model.isAppServerConnected else {
+            await model.connectSelectedServer(syncActiveChatCounts: true)
+            return
+        }
+        switch selectedMode {
+        case .projects:
+            await model.refreshProjects()
+        case .sessions:
+            await model.refreshThreads()
+        }
     }
 }
 

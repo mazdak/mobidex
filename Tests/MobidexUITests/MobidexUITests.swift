@@ -12,14 +12,14 @@ final class MobidexUITests: XCTestCase {
         app.launchEnvironment = try smokeLaunchEnvironment()
         app.launch()
 
-        let connectButton = app.buttons["connectButton"]
-        if !connectButton.waitForExistence(timeout: 5) {
+        let refreshServerButton = app.buttons["refreshServerButton"]
+        if !refreshServerButton.waitForExistence(timeout: 5) {
             let serverRow = app.descendants(matching: .any)["serverRow"]
             XCTAssertTrue(serverRow.waitForExistence(timeout: timeout), "Seeded server row did not appear.")
             serverRow.tap()
         }
-        XCTAssertTrue(connectButton.waitForExistence(timeout: timeout), "Connect button did not appear.")
-        connectButton.tap()
+        XCTAssertTrue(refreshServerButton.waitForExistence(timeout: timeout), "Connect/refresh button did not appear.")
+        refreshServerButton.tap()
 
         let newSessionButton = app.buttons["projectNewSessionButton"]
         if !waitForEnabled(newSessionButton, timeout: 5) {

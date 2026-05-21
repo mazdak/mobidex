@@ -34,6 +34,8 @@ object SessionListSections {
             sessionsBySectionId.getOrPut(sectionId) { mutableListOf() }.add(session)
         }
 
+        val updatedAtBySessionId = sessions.associate { it.id to it.updatedAtEpochSeconds }
+
         return sessionsBySectionId.map { (sectionId, sectionSessions) ->
             val sortedSessions = sectionSessions.sortedWith(sessionComparator)
             SessionListSection(
@@ -44,7 +46,7 @@ object SessionListSections {
         }.sortedWith(
             compareByDescending<SessionListSection> { section ->
                 section.sessionIds
-                    .mapNotNull { id -> sessions.firstOrNull { it.id == id }?.updatedAtEpochSeconds }
+                    .mapNotNull(updatedAtBySessionId::get)
                     .maxOrNull() ?: Long.MIN_VALUE
             }.thenBy { it.title.lowercase() }
                 .thenBy { it.id }

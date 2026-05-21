@@ -1688,6 +1688,102 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testThreadDetailCachePrunesOlderSessions() async throws {
+        let projectOne = ProjectRecord(path: "/srv/one")
+        let projectTwo = ProjectRecord(path: "/srv/two")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [projectOne, projectTwo]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport)),
+            maxThreadDetailCacheEntries: 1
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let projectOneList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = projectOneList.nextCursor
+        transport.receive("""
+        {"id":\(projectOneList.id),"result":{"data":[
+          {"id":"thread-one","preview":"One","cwd":"/srv/one","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let projectOneRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = projectOneRead.nextCursor
+        transport.receive("""
+        {"id":\(projectOneRead.id),"result":{"thread":{
+          "id":"thread-one",
+          "preview":"One",
+          "cwd":"/srv/one",
+          "status":{"type":"idle"},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-one",
+            "status":"completed",
+            "items":[{"type":"agentMessage","id":"item-one","text":"One detail"}]
+          }]
+        }}}
+        """)
+        await connectTask.value
+        try await waitForConversationSection(kind: .assistant, containing: "One detail", in: viewModel)
+
+        viewModel.selectProject(projectTwo.id)
+        let projectTwoTask = Task { await viewModel.refreshThreadsIfNeeded() }
+        let projectTwoList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = projectTwoList.nextCursor
+        transport.receive("""
+        {"id":\(projectTwoList.id),"result":{"data":[
+          {"id":"thread-two","preview":"Two","cwd":"/srv/two","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        await projectTwoTask.value
+
+        let threadTwo = try XCTUnwrap(viewModel.threads.first(where: { $0.id == "thread-two" }))
+        let openThreadTwoTask = Task { await viewModel.openThread(threadTwo) }
+        let projectTwoRead = try await waitForRequest(method: "thread/resume", in: transport, after: cursor)
+        cursor = projectTwoRead.nextCursor
+        transport.receive("""
+        {"id":\(projectTwoRead.id),"result":{"thread":{
+          "id":"thread-two",
+          "preview":"Two",
+          "cwd":"/srv/two",
+          "status":{"type":"idle"},
+          "updatedAt":1770000400,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-two",
+            "status":"completed",
+            "items":[{"type":"agentMessage","id":"item-two","text":"Two detail"}]
+          }]
+        }}}
+        """)
+        await openThreadTwoTask.value
+        try await waitForConversationSection(kind: .assistant, containing: "Two detail", in: viewModel)
+
+        viewModel.selectProject(projectOne.id)
+
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-one")
+        XCTAssertFalse(viewModel.conversationSections.contains { $0.body.contains("One detail") })
+        XCTAssertEqual(viewModel.selectedThread?.turns.first?.items.count ?? 0, 0)
+
+        await viewModel.disconnect()
+    }
+
+    @MainActor
     func testOpenThreadFallsBackToReadWhenResumeFails() async throws {
         let project = ProjectRecord(path: "/srv/app")
         let server = ServerRecord(
@@ -3472,7 +3568,8 @@ final class AppViewModelTests: XCTestCase {
         try await waitForConversationSection(kind: .assistant, containing: "Streaming", in: viewModel)
         XCTAssertGreaterThan(viewModel.conversationRenderToken, renderTokenBeforeDelta)
         XCTAssertGreaterThan(viewModel.conversationFollowToken, followTokenBeforeDelta)
-        XCTAssertTrue(viewModel.conversationRenderDigest.contains("Streaming"))
+        XCTAssertFalse(viewModel.conversationRenderDigest.contains("Streaming"))
+        XCTAssertTrue(viewModel.conversationRenderDigest.contains("item-agent"))
 
         transport.receive("""
         {"id":\(pollRead.id),"result":{"thread":{
