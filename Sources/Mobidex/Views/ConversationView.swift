@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 struct ConversationView: View {
     @EnvironmentObject private var model: AppViewModel
     @State private var composerText = ""
+    @State private var composerEditGeneration = 0
+    @State private var photoAttachmentGeneration = 0
     @State private var selectedDetail: SessionDetailMode = .chat
     @State private var attachmentPaths: [String] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
@@ -63,12 +65,39 @@ struct ConversationView: View {
         .navigationBarTitleDisplayMode(.inline)
             .onChange(of: model.selectedThreadID) { _, _ in
                 selectedDetail = .chat
+                composerText = ""
                 attachmentPaths = []
+                selectedPhotoItems = []
+                photoAttachmentGeneration &+= 1
+                composerEditGeneration &+= 1
+            }
+            .onChange(of: model.selectedServerID) { _, _ in
+                composerText = ""
+                attachmentPaths = []
+                selectedPhotoItems = []
+                photoAttachmentGeneration &+= 1
+                composerEditGeneration &+= 1
+            }
+            .onChange(of: model.selectedProjectID) { _, _ in
+                composerText = ""
+                attachmentPaths = []
+                selectedPhotoItems = []
+                photoAttachmentGeneration &+= 1
+                composerEditGeneration &+= 1
             }
             .onChange(of: selectedPhotoItems) { _, items in
                 guard !items.isEmpty else { return }
+                composerEditGeneration &+= 1
+                photoAttachmentGeneration &+= 1
                 let threadID = model.selectedThreadID
-                Task { await persistPhotoItems(items, selectedThreadID: threadID) }
+                let attachmentGeneration = photoAttachmentGeneration
+                Task {
+                    await persistPhotoItems(
+                        items,
+                        selectedThreadID: threadID,
+                        attachmentGeneration: attachmentGeneration
+                    )
+                }
             }
             .alert(item: $attachmentAlert) { alert in
                 Alert(
@@ -381,7 +410,7 @@ struct ConversationView: View {
     private var composer: some View {
         VStack(spacing: 0) {
             VStack(spacing: 12) {
-                TextField("Ask for follow-up changes", text: $composerText, axis: .vertical)
+                TextField("Ask for follow-up changes", text: composerTextBinding, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(2...6)
                     .font(.body)
@@ -418,6 +447,15 @@ struct ConversationView: View {
 
     private var hasComposerInput: Bool {
         !composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachmentPaths.isEmpty
+    }
+
+    private var composerTextBinding: Binding<String> {
+        Binding {
+            composerText
+        } set: { newValue in
+            composerText = newValue
+            composerEditGeneration &+= 1
+        }
     }
 
     private var sendVisuallyUnavailable: Bool {
@@ -561,7 +599,15 @@ struct ConversationView: View {
     private func submitComposerInput(queueWhenActive: Bool) {
         let text = composerText
         let attachments = attachmentPaths
+        let submittedServerID = model.selectedServerID
+        let submittedThreadID = model.selectedThreadID
+        let submittedProjectID = model.selectedProjectID
+        let submittedEditGeneration = composerEditGeneration
         isComposerFocused = false
+        composerText = ""
+        attachmentPaths = []
+        photoAttachmentGeneration &+= 1
+        selectedPhotoItems = []
         model.requestConversationSendScroll()
         Task {
             let sent = await model.sendComposerInput(
@@ -574,12 +620,15 @@ struct ConversationView: View {
                     title: "Message Not Sent",
                     message: model.statusMessage ?? "Mobidex could not send this message."
                 )
+                guard model.selectedServerID == submittedServerID,
+                      model.selectedThreadID == submittedThreadID,
+                      model.selectedProjectID == submittedProjectID,
+                      composerEditGeneration == submittedEditGeneration else {
+                    return
+                }
+                composerText = text
+                attachmentPaths = attachments
                 return
-            }
-            if composerText == text, attachmentPaths == attachments {
-                composerText = ""
-                attachmentPaths = []
-                selectedPhotoItems = []
             }
         }
     }
@@ -627,6 +676,7 @@ struct ConversationView: View {
                             .lineLimit(1)
                         Button {
                             attachmentPaths.removeAll { $0 == path }
+                            composerEditGeneration &+= 1
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                         }
@@ -643,7 +693,11 @@ struct ConversationView: View {
     }
 
     @MainActor
-    private func persistPhotoItems(_ items: [PhotosPickerItem], selectedThreadID: String?) async {
+    private func persistPhotoItems(
+        _ items: [PhotosPickerItem],
+        selectedThreadID: String?,
+        attachmentGeneration: Int
+    ) async {
         var savedPaths: [String] = []
         for item in items {
             guard let data = try? await item.loadTransferable(type: Data.self) else {
@@ -660,7 +714,8 @@ struct ConversationView: View {
                 continue
             }
         }
-        guard model.selectedThreadID == selectedThreadID else {
+        guard model.selectedThreadID == selectedThreadID,
+              photoAttachmentGeneration == attachmentGeneration else {
             selectedPhotoItems = []
             return
         }
@@ -702,6 +757,9 @@ struct ConversationView: View {
             } catch {
                 continue
             }
+        }
+        if didAttachFile {
+            composerEditGeneration &+= 1
         }
         if !didAttachFile {
             attachmentAlert = AttachmentAlert(

@@ -101,6 +101,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
@@ -1040,8 +1041,11 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
 
 @Composable
 private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: Modifier = Modifier) {
-    var composer by remember { mutableStateOf("") }
-    var attachmentUris by remember(state.selectedThreadID) { mutableStateOf<List<Uri>>(emptyList()) }
+    val composerScope = listOf(state.selectedServerID, state.selectedProjectID, state.selectedThreadID)
+    var composer by remember(composerScope) { mutableStateOf("") }
+    var attachmentUris by remember(composerScope) { mutableStateOf<List<Uri>>(emptyList()) }
+    var composerEditGeneration by remember(composerScope) { mutableStateOf(0) }
+    val currentComposerScope by rememberUpdatedState(composerScope)
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var shouldFollowTail by remember(state.selectedThreadID) { mutableStateOf(true) }
@@ -1050,6 +1054,19 @@ private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: M
     val timelineItemCount = state.pendingApprovals.size + state.conversationSections.size
     val tailSignature = state.conversationSections.lastOrNull()?.let { "${it.id}:${it.body.length}:${it.status}" }
         ?: state.pendingApprovals.lastOrNull()?.id
+    fun submitComposerInput(queueWhenActive: Boolean) {
+        val sentText = composer
+        val sentAttachments = attachmentUris
+        val submittedScope = composerScope
+        val submittedEditGeneration = composerEditGeneration
+        composer = ""
+        attachmentUris = emptyList()
+        model.sendComposerInput(sentText, sentAttachments, queueWhenActive = queueWhenActive) { sent ->
+            if (sent || composerEditGeneration != submittedEditGeneration || submittedScope != currentComposerScope) return@sendComposerInput
+            composer = sentText
+            attachmentUris = sentAttachments
+        }
+    }
 
     LaunchedEffect(listState, state.selectedThreadID, timelineItemCount) {
         snapshotFlow {
@@ -1117,28 +1134,22 @@ private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: M
         }
         Composer(
             value = composer,
-            onValueChange = { composer = it },
+            onValueChange = {
+                composer = it
+                composerEditGeneration += 1
+            },
             attachmentUris = attachmentUris,
-            onAttachmentUrisChange = { attachmentUris = it },
+            onAttachmentUrisChange = {
+                attachmentUris = it
+                composerEditGeneration += 1
+            },
             state = state,
             model = model,
             onSend = {
-                val sentText = composer
-                val sentAttachments = attachmentUris
-                model.sendComposerInput(sentText, sentAttachments, queueWhenActive = false) { sent ->
-                    if (!sent || composer != sentText || attachmentUris != sentAttachments) return@sendComposerInput
-                    composer = ""
-                    attachmentUris = emptyList()
-                }
+                submitComposerInput(queueWhenActive = false)
             },
             onSendFollowUp = {
-                val sentText = composer
-                val sentAttachments = attachmentUris
-                model.sendComposerInput(sentText, sentAttachments, queueWhenActive = true) { sent ->
-                    if (!sent || composer != sentText || attachmentUris != sentAttachments) return@sendComposerInput
-                    composer = ""
-                    attachmentUris = emptyList()
-                }
+                submitComposerInput(queueWhenActive = true)
             },
         )
     }
