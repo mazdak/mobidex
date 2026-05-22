@@ -382,6 +382,30 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testThreadListCanStopAfterInitialPage() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.listThreads(limit: 1, pageLimit: 1) }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+        XCTAssertNil(params["cursor"])
+
+        transport.receive("""
+        {"id":\(id),"result":{"data":[
+          {"id":"thread-1","preview":"First","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":"cursor-2"}}
+        """)
+
+        let threads = try await task.value
+        XCTAssertEqual(threads.map(\.id), ["thread-1"])
+        try await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertEqual(transport.sentLinesSnapshot.count, 1)
+        await client.close()
+    }
+
     func testThreadListIncludeArchivedMergesActiveAndArchivedRequests() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport)

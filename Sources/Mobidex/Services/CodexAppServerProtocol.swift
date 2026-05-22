@@ -99,18 +99,24 @@ actor CodexAppServerClient {
         try await sendNotification(method: "initialized", params: nil)
     }
 
-    func listThreads(cwd: String? = nil, limit: Int = 80, includeArchived: Bool = false) async throws -> [CodexThread] {
-        let activeThreads = try await listThreads(cwd: cwd, limit: limit, archived: false)
+    func listThreads(
+        cwd: String? = nil,
+        limit: Int = 80,
+        includeArchived: Bool = false,
+        pageLimit: Int? = nil
+    ) async throws -> [CodexThread] {
+        let activeThreads = try await listThreads(cwd: cwd, limit: limit, archived: false, pageLimit: pageLimit)
         guard includeArchived else {
             return activeThreads
         }
-        let archivedThreads = try await listThreads(cwd: cwd, limit: limit, archived: true)
+        let archivedThreads = try await listThreads(cwd: cwd, limit: limit, archived: true, pageLimit: pageLimit)
         return Self.mergedThreadList(activeThreads + archivedThreads)
     }
 
-    private func listThreads(cwd: String?, limit: Int, archived: Bool) async throws -> [CodexThread] {
+    private func listThreads(cwd: String?, limit: Int, archived: Bool, pageLimit: Int?) async throws -> [CodexThread] {
         var cursor: String?
         var threads: [CodexThread] = []
+        var pageCount = 0
         repeat {
             let response = try await requestDecoded(
                 ThreadListResponse.self,
@@ -119,7 +125,8 @@ actor CodexAppServerClient {
             )
             threads.append(contentsOf: response.data.filter(\.isUserFacingSession))
             cursor = response.nextCursor
-        } while cursor != nil
+            pageCount += 1
+        } while cursor != nil && pageCount < (pageLimit ?? Int.max)
 
         guard let cwd, !cwd.isEmpty else {
             return threads

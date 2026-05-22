@@ -276,6 +276,7 @@ final class AppViewModel: ObservableObject {
     private let sessionListCacheTTL: TimeInterval
     private let threadDetailCacheTTL: TimeInterval
     private let maxThreadDetailCacheEntries: Int
+    private let sessionListInitialPageLimit = 1
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
     private var appServer: CodexAppServerClient?
@@ -287,6 +288,7 @@ final class AppViewModel: ObservableObject {
     private var sidebarSwitchGeneration = 0
     private var liveItems: [CodexThreadItem] = []
     private var selectedThreadLoadingCounts: [String: Int] = [:]
+    private var sessionRefreshListLoadGeneration = 0
     private var sessionRefreshDetailLoadGeneration = 0
     private var queuedTurnInputsByThreadID: [String: [[CodexInputItem]]] = [:]
     private var isConnectingAppServer = false
@@ -1570,6 +1572,13 @@ final class AppViewModel: ObservableObject {
         return isCacheEntryFresh(fetchedAt: detail.fetchedAt, ttl: threadDetailCacheTTL)
     }
 
+    private func isThreadDetailCacheFresh(threadID: String) -> Bool {
+        guard let detail = threadDetailCache[threadDetailCacheKey(threadID: threadID)] else {
+            return false
+        }
+        return isCacheEntryFresh(fetchedAt: detail.fetchedAt, ttl: threadDetailCacheTTL)
+    }
+
     private func pruneThreadDetailCache(now: Date) {
         threadDetailCache = threadDetailCache.filter { _, detail in
             isCacheEntryFresh(fetchedAt: detail.fetchedAt, ttl: threadDetailCacheTTL, now: now)
@@ -1774,16 +1783,27 @@ final class AppViewModel: ObservableObject {
         if !forceReload, restoreCachedSessionState(for: scope), canUseCachedSessionState(for: scope) {
             return
         }
-        let loadedThreads = try await listThreads(matching: scope)
-        guard currentThreadLoadScope == scope else {
+        sessionRefreshListLoadGeneration &+= 1
+        let listLoadGeneration = sessionRefreshListLoadGeneration
+        let loadedThreads = try await listThreads(matching: scope, appServer: appServer, pageLimit: sessionListInitialPageLimit)
+        guard self.appServer === appServer,
+              sessionRefreshListLoadGeneration == listLoadGeneration,
+              currentThreadLoadScope == scope else {
             return
         }
         let prioritizedThreads = sortedThreads(loadedThreads)
         threads = prioritizedThreads
-        cacheThreadList(prioritizedThreads, scope: scope)
+        loadCompleteThreadListAfterInitialSessionRefresh(
+            scope: scope,
+            appServer: appServer,
+            listLoadGeneration: listLoadGeneration
+        )
 
         let currentSelection = selectedThreadID.flatMap { id in
             prioritizedThreads.first { $0.id == id }
+        }
+        if currentSelection == nil, selectedThreadID != nil {
+            return
         }
         if currentSelection == nil, suppressThreadAutoSelection {
             selectedThreadID = nil
@@ -1813,6 +1833,97 @@ final class AppViewModel: ObservableObject {
             hydrateConversation(from: threadToShow, cacheDetail: false)
         }
 
+        loadSelectedThreadDetailAfterSessionRefresh(
+            threadID: threadToShow.id,
+            scope: scope,
+            appServer: appServer,
+            expectedSelectedThread: selectedThread
+        )
+    }
+
+    private func loadCompleteThreadListAfterInitialSessionRefresh(
+        scope: ThreadLoadScope,
+        appServer: CodexAppServerClient,
+        listLoadGeneration: Int
+    ) {
+        Task {
+            do {
+                let loadedThreads = try await listThreads(matching: scope, appServer: appServer)
+                guard self.appServer === appServer,
+                      sessionRefreshListLoadGeneration == listLoadGeneration,
+                      currentThreadLoadScope == scope else {
+                    return
+                }
+                let sorted = sortedThreads(loadedThreads)
+                threads = sorted
+                cacheThreadList(sorted, scope: scope)
+                selectThreadAfterCompleteListLoad(
+                    sorted,
+                    scope: scope,
+                    appServer: appServer
+                )
+            } catch {
+                guard self.appServer === appServer,
+                      sessionRefreshListLoadGeneration == listLoadGeneration,
+                      currentThreadLoadScope == scope else {
+                    return
+                }
+                statusMessage = "Session list failed to finish loading: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func selectThreadAfterCompleteListLoad(
+        _ sortedThreads: [CodexThread],
+        scope: ThreadLoadScope,
+        appServer: CodexAppServerClient
+    ) {
+        if let selectedThreadID {
+            guard let selectedSummary = sortedThreads.first(where: { $0.id == selectedThreadID }) else {
+                guard !suppressThreadAutoSelection,
+                      let fallbackThread = sortedThreads.first else {
+                    self.selectedThreadID = nil
+                    selectedThread = nil
+                    liveItems = []
+                    selectedThreadTokenUsage = nil
+                    publishConversationSections([])
+                    changedFiles = []
+                    diffSnapshot = .empty
+                    clearSelectedThreadLoads()
+                    refreshQueuedTurnInputCount()
+                    return
+                }
+                self.selectedThreadID = fallbackThread.id
+                hydrateConversation(from: fallbackThread, cacheDetail: false)
+                loadSelectedThreadDetailAfterSessionRefresh(
+                    threadID: fallbackThread.id,
+                    scope: scope,
+                    appServer: appServer,
+                    expectedSelectedThread: selectedThread
+                )
+                return
+            }
+            let needsSummaryHydration = selectedThread?.id != selectedSummary.id
+            if needsSummaryHydration {
+                hydrateConversation(from: selectedSummary, cacheDetail: false)
+            }
+            if needsSummaryHydration || !isThreadDetailCacheFresh(threadID: selectedSummary.id) {
+                loadSelectedThreadDetailAfterSessionRefresh(
+                    threadID: selectedSummary.id,
+                    scope: scope,
+                    appServer: appServer,
+                    expectedSelectedThread: selectedThread
+                )
+            }
+            return
+        }
+
+        guard !suppressThreadAutoSelection,
+              let threadToShow = sortedThreads.first else {
+            return
+        }
+        selectedThreadID = threadToShow.id
+        hydrateConversation(from: threadToShow, cacheDetail: false)
         loadSelectedThreadDetailAfterSessionRefresh(
             threadID: threadToShow.id,
             scope: scope,
@@ -2061,7 +2172,7 @@ final class AppViewModel: ObservableObject {
                 return
             }
             hydrateConversation(from: thread)
-            let loadedThreads = try await listThreads(matching: scope)
+            let loadedThreads = try await listThreads(matching: scope, appServer: appServer)
             guard currentThreadLoadScope == scope else {
                 return
             }
@@ -2078,10 +2189,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refreshThreadListAfterEvent() async {
-        guard appServer != nil else { return }
+        guard let appServer else { return }
         let scope = currentThreadLoadScope
         do {
-            let loadedThreads = try await listThreads(matching: scope)
+            let loadedThreads = try await listThreads(matching: scope, appServer: appServer)
             guard currentThreadLoadScope == scope else {
                 return
             }
@@ -2247,17 +2358,26 @@ final class AppViewModel: ObservableObject {
         ).contains(thread.id)
     }
 
-    private func listThreads(matching scope: ThreadLoadScope) async throws -> [CodexThread] {
-        guard let appServer else {
-            return []
-        }
+    private func listThreads(
+        matching scope: ThreadLoadScope,
+        appServer: CodexAppServerClient,
+        pageLimit: Int? = nil
+    ) async throws -> [CodexThread] {
         guard !scope.sessionPaths.isEmpty else {
-            return try await appServer.listThreads(cwd: nil, includeArchived: scope.includeArchivedSessions)
+            return try await appServer.listThreads(
+                cwd: nil,
+                includeArchived: scope.includeArchivedSessions,
+                pageLimit: pageLimit
+            )
         }
         var merged: [CodexThread] = []
         var seen = Set<String>()
         for cwd in scope.sessionPaths.sorted() {
-            let loaded = try await appServer.listThreads(cwd: cwd, includeArchived: scope.includeArchivedSessions)
+            let loaded = try await appServer.listThreads(
+                cwd: cwd,
+                includeArchived: scope.includeArchivedSessions,
+                pageLimit: pageLimit
+            )
             for thread in loaded where seen.insert(thread.id).inserted {
                 merged.append(thread)
             }
@@ -2265,7 +2385,11 @@ final class AppViewModel: ObservableObject {
         if let projectPath = scope.cwd,
            let selectedServer,
            merged.isEmpty || (selectedServer.projects.first(where: { $0.path == projectPath })?.activeChatCount ?? 0) > 0 {
-            let unscopedThreads = try await appServer.listThreads(cwd: nil, includeArchived: scope.includeArchivedSessions)
+            let unscopedThreads = try await appServer.listThreads(
+                cwd: nil,
+                includeArchived: scope.includeArchivedSessions,
+                pageLimit: pageLimit
+            )
             let groupedSessionIDs = SharedKMPBridge.sessionIDsForProject(
                 threads: unscopedThreads,
                 projects: selectedServer.projects,

@@ -878,7 +878,7 @@ private fun ThreadList(
     disabled: Boolean = false,
     onOpenDetail: () -> Unit,
 ) {
-    val contentDisabled = state.isRefreshingSessions || disabled
+    val contentDisabled = disabled
     val contentAlpha = if (contentDisabled) 0.42f else 1f
     val sections = model.sessionSections(search)
     Column(Modifier.fillMaxSize()) {

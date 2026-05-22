@@ -177,7 +177,9 @@ class AppViewModel(
     private var diffSnapshotRequestID = 0L
     private var activeSessionRefreshes = 0
     private var sessionRefreshGeneration = 0L
+    private var sessionRefreshListLoadGeneration = 0L
     private var sessionRefreshDetailLoadGeneration = 0L
+    private val sessionListInitialPageLimit = 1
     private var isSendingInput = false
     private val queuedTurnInputsByThreadID = mutableMapOf<String, MutableList<List<CodexInputItem>>>()
     private val threadListCache = mutableMapOf<ThreadScopeCacheKey, CachedThreadList>()
@@ -651,35 +653,14 @@ class AppViewModel(
                     val requestServerID = state.selectedServerID
                     val requestProjectID = state.selectedProjectID
                     val requestAllSessions = state.isShowingAllSessions
-                    val project = state.selectedProject
-                    val cwd = if (state.isShowingAllSessions) null else project?.path
-                    val sessionPaths = if (state.isShowingAllSessions) emptyList() else project?.sessionPaths ?: emptyList()
                     val includeArchived = state.showsArchivedSessions
+                    sessionRefreshListLoadGeneration += 1
+                    val listLoadGeneration = sessionRefreshListLoadGeneration
                     var selectedThreadIDToHydrate: String? = null
-                    val loaded = if (sessionPaths.isEmpty()) {
-                        client.listThreads(cwd, includeArchived = includeArchived)
-                    } else {
-                        val exactMatches = sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived) }
-                        if (exactMatches.isEmpty() || (project?.activeChatCount ?: 0) > 0) {
-                            val unscoped = client.listThreads(null, includeArchived = includeArchived)
-                            val groupedSessionIDs = SessionListSections.sessionIdsForProject(
-                                sessions = unscoped.map { thread ->
-                                    CodexThreadSummary(
-                                        id = thread.id,
-                                        cwd = thread.cwd,
-                                        updatedAtEpochSeconds = thread.updatedAtEpochSeconds,
-                                    )
-                                },
-                                projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
-                                projectPath = cwd.orEmpty(),
-                            )
-                            (exactMatches + unscoped.filter { it.id in groupedSessionIDs }).distinctBy { it.id }
-                        } else {
-                            exactMatches.distinctBy { it.id }
-                        }
-                    }
+                    val loaded = loadThreadsForScope(client, state, pageLimit = sessionListInitialPageLimit)
                     _state.update { current ->
                         if (appServer !== client ||
+                            sessionRefreshListLoadGeneration != listLoadGeneration ||
                             current.selectedServerID != requestServerID ||
                             current.selectedProjectID != requestProjectID ||
                             current.isShowingAllSessions != requestAllSessions ||
@@ -688,7 +669,6 @@ class AppViewModel(
                             current
                         } else {
                             val sorted = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds }
-                            cacheThreads(cacheKey, sorted)
                             val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
                                 selectedThreadIDToHydrate = selectedID
@@ -705,10 +685,101 @@ class AppViewModel(
                             expectedSelectedThread = _state.value.selectedThread,
                         )
                     }
+                    loadCompleteThreadListAfterInitialSessionRefresh(client, state, cacheKey, listLoadGeneration)
                 }
             } finally {
                 endSessionRefresh(refreshGeneration)
             }
+        }
+    }
+
+    private suspend fun loadThreadsForScope(
+        client: CodexAppServerClient,
+        state: MobidexUiState,
+        pageLimit: Int?,
+    ): List<CodexThread> {
+        val project = state.selectedProject
+        val cwd = if (state.isShowingAllSessions) null else project?.path
+        val sessionPaths = if (state.isShowingAllSessions) emptyList() else project?.sessionPaths ?: emptyList()
+        val includeArchived = state.showsArchivedSessions
+        return if (sessionPaths.isEmpty()) {
+            client.listThreads(cwd, includeArchived = includeArchived, pageLimit = pageLimit)
+        } else {
+            val exactMatches = sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived, pageLimit = pageLimit) }
+            if (exactMatches.isEmpty() || (project?.activeChatCount ?: 0) > 0) {
+                val unscoped = client.listThreads(null, includeArchived = includeArchived, pageLimit = pageLimit)
+                val groupedSessionIDs = SessionListSections.sessionIdsForProject(
+                    sessions = unscoped.map { thread ->
+                        CodexThreadSummary(
+                            id = thread.id,
+                            cwd = thread.cwd,
+                            updatedAtEpochSeconds = thread.updatedAtEpochSeconds,
+                        )
+                    },
+                    projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+                    projectPath = cwd.orEmpty(),
+                )
+                (exactMatches + unscoped.filter { it.id in groupedSessionIDs }).distinctBy { it.id }
+            } else {
+                exactMatches.distinctBy { it.id }
+            }
+        }
+    }
+
+    private fun loadCompleteThreadListAfterInitialSessionRefresh(
+        client: CodexAppServerClient,
+        requestState: MobidexUiState,
+        cacheKey: ThreadScopeCacheKey,
+        listLoadGeneration: Long,
+    ) {
+        viewModelScope.launch {
+            var selectedThreadIDToHydrate: String? = null
+            runCatching { loadThreadsForScope(client, requestState, pageLimit = null) }
+                .onSuccess { loaded ->
+                    _state.update { current ->
+                        if (appServer !== client ||
+                            sessionRefreshListLoadGeneration != listLoadGeneration ||
+                            current.selectedServerID != requestState.selectedServerID ||
+                            current.selectedProjectID != requestState.selectedProjectID ||
+                            current.isShowingAllSessions != requestState.isShowingAllSessions ||
+                            current.showsArchivedSessions != requestState.showsArchivedSessions
+                        ) {
+                            current
+                        } else {
+                            val sorted = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds }
+                            cacheThreads(cacheKey, sorted)
+                            val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
+                            if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
+                                selectedThreadIDToHydrate = selectedID
+                            }
+                            current.copy(threads = sorted)
+                        }
+                    }
+                    selectedThreadIDToHydrate?.let { threadID ->
+                        hydrateSelectedThreadDetailAfterSessionRefresh(
+                            client = client,
+                            requestServerID = requestState.selectedServerID,
+                            requestProjectID = requestState.selectedProjectID,
+                            requestThreadID = threadID,
+                            expectedSelectedThread = _state.value.selectedThread,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { current ->
+                        if (appServer === client &&
+                            sessionRefreshListLoadGeneration == listLoadGeneration &&
+                            current.selectedServerID == requestState.selectedServerID &&
+                            current.selectedProjectID == requestState.selectedProjectID &&
+                            current.isShowingAllSessions == requestState.isShowingAllSessions &&
+                            current.showsArchivedSessions == requestState.showsArchivedSessions
+                        ) {
+                            current.copy(statusMessage = error.message ?: "Session list failed to finish loading.")
+                        } else {
+                            current
+                        }
+                    }
+                }
         }
     }
 
@@ -730,6 +801,7 @@ class AppViewModel(
 
     private fun resetSessionRefreshTracking() {
         sessionRefreshGeneration += 1
+        sessionRefreshListLoadGeneration += 1
         sessionRefreshDetailLoadGeneration += 1
         activeSessionRefreshes = 0
         _state.update { it.copy(isRefreshingSessions = false) }

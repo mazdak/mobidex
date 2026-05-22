@@ -396,7 +396,7 @@ struct ProjectSessionListView: View {
         case .projects:
             model.isDiscoveringProjects
         case .sessions:
-            isSessionRefreshRequested || model.isRefreshingSessions
+            false
         }
     }
 
