@@ -2,7 +2,6 @@ package mobidex.android.ui
 
 import android.Manifest
 import android.animation.ValueAnimator
-import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.net.Uri
 import android.util.Base64
@@ -74,6 +73,7 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -130,7 +130,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.core.content.ContextCompat
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -1367,6 +1366,34 @@ private fun Composer(
     var isTranscribingAudio by remember { mutableStateOf(false) }
     var audioError by remember { mutableStateOf<String?>(null) }
     val sendEnabled = (value.trim().isNotEmpty() || attachmentUris.isNotEmpty()) && state.canSendMessage
+    fun stopAndTranscribeAudio() {
+        val file = audioFile
+        val recorder = audioRecorder
+        audioRecorder = null
+        audioFile = null
+        isRecordingAudio = false
+        audioError = null
+        val stopped = runCatching { recorder?.stop() }
+        runCatching { recorder?.release() }
+        if (stopped.isFailure) {
+            runCatching { file?.delete() }
+            audioError = stopped.exceptionOrNull()?.message ?: "Could not finish audio recording."
+        } else if (file != null) {
+            isTranscribingAudio = true
+            coroutineScope.launch {
+                try {
+                    runCatching { model.transcribeAudio(file) }
+                        .onSuccess(onTranscript)
+                        .onFailure { error -> audioError = error.message ?: "Could not transcribe audio." }
+                } finally {
+                    withContext(NonCancellable) {
+                        runCatching { file.delete() }
+                    }
+                    isTranscribingAudio = false
+                }
+            }
+        }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) {
             audioError = "Allow microphone access in Settings to record audio."
@@ -1397,6 +1424,13 @@ private fun Composer(
             runCatching { startedFile?.delete() }
             audioError = error.message ?: "Could not start audio recording."
         }
+    }
+    fun requestAudioRecording() {
+        if (!state.hasOpenAIAPIKey) {
+            audioError = "Add an OpenAI API key in Settings before recording audio."
+            return
+        }
+        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) onAttachmentUrisChange(attachmentUris + uris)
@@ -1430,6 +1464,9 @@ private fun Composer(
                 }
             }
         }
+        if (isRecordingAudio) {
+            RecordingIndicator(onStop = { stopAndTranscribeAudio() })
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box {
                 IconButton(onClick = { showAttachOptions = true }) {
@@ -1441,36 +1478,9 @@ private fun Composer(
                         onClick = {
                             showAttachOptions = false
                             if (isRecordingAudio) {
-                                val file = audioFile
-                                val recorder = audioRecorder
-                                audioRecorder = null
-                                audioFile = null
-                                isRecordingAudio = false
-                                audioError = null
-                                val stopped = runCatching { recorder?.stop() }
-                                runCatching { recorder?.release() }
-                                if (stopped.isFailure) {
-                                    runCatching { file?.delete() }
-                                    audioError = stopped.exceptionOrNull()?.message ?: "Could not finish audio recording."
-                                } else if (file != null) {
-                                    isTranscribingAudio = true
-                                    coroutineScope.launch {
-                                        try {
-                                            runCatching { model.transcribeAudio(file) }
-                                                .onSuccess(onTranscript)
-                                                .onFailure { error -> audioError = error.message ?: "Could not transcribe audio." }
-                                        } finally {
-                                            withContext(NonCancellable) {
-                                                runCatching { file.delete() }
-                                            }
-                                            isTranscribingAudio = false
-                                        }
-                                    }
-                                }
-                            } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                stopAndTranscribeAudio()
                             } else {
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                requestAudioRecording()
                             }
                         },
                         leadingIcon = { Icon(if (isRecordingAudio) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null) },
@@ -1561,6 +1571,42 @@ private fun Composer(
         }
         audioError?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@Composable
+private fun RecordingIndicator(onStop: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.error),
+            )
+            Text("Recording", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            Button(
+                onClick = onStop,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error,
+                    contentColor = MaterialTheme.colorScheme.onError,
+                ),
+            ) {
+                Icon(Icons.Default.Stop, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Stop")
+            }
         }
     }
 }

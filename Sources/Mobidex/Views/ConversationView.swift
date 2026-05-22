@@ -66,6 +66,11 @@ struct ConversationView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if selectedDetail != .chat, isRecordingAudio, model.selectedThread != nil {
+                audioRecordingDock
+            }
+        }
         .navigationTitle(model.selectedThread?.title ?? model.selectedProject?.displayName ?? "Conversation")
         .navigationBarTitleDisplayMode(.inline)
             .onAppear {
@@ -418,6 +423,10 @@ struct ConversationView: View {
                     attachmentStrip
                 }
 
+                if isRecordingAudio {
+                    audioRecordingIndicator
+                }
+
                 composerControlRow
             }
             .padding(.horizontal, 18)
@@ -487,6 +496,48 @@ struct ConversationView: View {
             }
             sendButton
         }
+    }
+
+    private var audioRecordingIndicator: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Color.red)
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+
+            Text("Recording")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 8)
+
+            Button {
+                stopAndTranscribeAudio()
+            } label: {
+                Image(systemName: "stop.fill")
+                    .font(.caption.weight(.bold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .accessibilityLabel("Stop Recording")
+            .accessibilityIdentifier("stopRecordingButton")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.red.opacity(0.3), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var audioRecordingDock: some View {
+        audioRecordingIndicator
+            .padding(.horizontal)
+            .padding(.vertical, 10)
+            .background(.bar)
     }
 
     private var attachmentIcon: some View {
@@ -817,6 +868,13 @@ struct ConversationView: View {
     }
 
     private func startAudioRecording() {
+        guard model.hasOpenAIAPIKey else {
+            attachmentAlert = AttachmentAlert(
+                title: "OpenAI API Key Required",
+                message: "Add an OpenAI API key in Settings before recording audio."
+            )
+            return
+        }
         Task { @MainActor in
             let granted = await AVAudioApplication.requestRecordPermission()
             guard granted else {
