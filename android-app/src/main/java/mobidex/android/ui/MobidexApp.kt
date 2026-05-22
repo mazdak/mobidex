@@ -363,23 +363,44 @@ private fun ProjectSessionPane(
     modifier: Modifier = Modifier,
     onOpenDetail: () -> Unit = {},
 ) {
-    var mode by remember { mutableStateOf(ProjectSessionMode.Projects) }
+    var sessionsProjectID by remember(state.selectedServerID) { mutableStateOf<String?>(null) }
     var projectSearch by remember { mutableStateOf("") }
     var sessionSearch by remember { mutableStateOf("") }
-    var showingAllSessions by remember { mutableStateOf(true) }
     var showInactive by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     var serverPendingDeletion by remember { mutableStateOf<ServerRecord?>(null) }
     val server = state.selectedServer
+    val sessionsProject = server?.projects?.firstOrNull { it.id == sessionsProjectID }
     val connectionMode = state.connectionState == ServerConnectionState.Connecting
 
     Column(modifier) {
-        PaneHeader(server?.displayName ?: "Mobidex", Icons.Default.FolderOpen) {
-            IconButton(onClick = { model.refreshProjects() }, enabled = server != null && state.connectionState == ServerConnectionState.Connected) {
+        PaneHeader(sessionsProject?.displayName ?: server?.displayName ?: "Mobidex", Icons.Default.FolderOpen) {
+            if (sessionsProject != null) {
+                TextButton(
+                    onClick = {
+                        sessionsProjectID = null
+                        sessionSearch = ""
+                    },
+                ) {
+                    Text("Projects")
+                }
+            }
+            IconButton(
+                onClick = {
+                    if (sessionsProject != null) {
+                        model.refreshThreads()
+                    } else {
+                        model.refreshProjects()
+                    }
+                },
+                enabled = server != null && state.connectionState == ServerConnectionState.Connected,
+            ) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh Projects")
             }
-            IconButton(onClick = onAddProject, enabled = server != null) {
-                Icon(Icons.Default.Add, contentDescription = "Add Project")
+            if (sessionsProject == null) {
+                IconButton(onClick = onAddProject, enabled = server != null) {
+                    Icon(Icons.Default.Add, contentDescription = "Add Project")
+                }
             }
             if (server != null) {
                 SelectedServerActionsMenu(
@@ -412,26 +433,6 @@ private fun ProjectSessionPane(
                     Text("Terminal")
                 }
             }
-            SecondaryTabRow(selectedTabIndex = mode.ordinal) {
-                ProjectSessionMode.entries.forEach { item ->
-                    Tab(
-                        selected = mode == item,
-                        onClick = {
-                            mode = item
-                            if (item == ProjectSessionMode.Sessions) {
-                                showingAllSessions = true
-                            }
-                        },
-                        text = { Text(item.label) },
-                    )
-                }
-            }
-        }
-
-        LaunchedEffect(mode, showingAllSessions, state.selectedServerID) {
-            if (mode == ProjectSessionMode.Sessions && showingAllSessions && !state.isShowingAllSessions) {
-                model.selectAllSessionsAndRefresh()
-            }
         }
 
         if (showTerminal) {
@@ -441,23 +442,22 @@ private fun ProjectSessionPane(
                 onClose = { showTerminal = false },
                 modifier = Modifier.weight(1f),
             )
+        } else if (sessionsProject != null) {
+            ThreadList(state, model, sessionSearch, { sessionSearch = it }, disabled = connectionMode, onOpenDetail = onOpenDetail)
         } else {
-            when (mode) {
-                ProjectSessionMode.Projects -> ProjectList(
-                    state,
-                    model,
-                    projectSearch,
-                    showInactive,
-                    { projectSearch = it },
-                    { showInactive = it },
-                    disabled = connectionMode,
-                    onOpenSessions = {
-                        showingAllSessions = false
-                        mode = ProjectSessionMode.Sessions
-                    },
-                )
-                ProjectSessionMode.Sessions -> ThreadList(state, model, sessionSearch, { sessionSearch = it }, disabled = connectionMode, onOpenDetail = onOpenDetail)
-            }
+            ProjectList(
+                state,
+                model,
+                projectSearch,
+                showInactive,
+                { projectSearch = it },
+                { showInactive = it },
+                disabled = connectionMode,
+                onOpenSessions = { project ->
+                    sessionsProjectID = project.id
+                    model.selectProject(project.id)
+                },
+            )
         }
     }
 
@@ -779,7 +779,7 @@ private fun ProjectList(
     onSearchChange: (String) -> Unit,
     onShowInactiveChange: (Boolean) -> Unit,
     disabled: Boolean = false,
-    onOpenSessions: () -> Unit,
+    onOpenSessions: (ProjectRecord) -> Unit,
 ) {
     val sections = model.projectSections(search, showInactive, state.showsArchivedSessions)
     val contentIsLoading = state.isDiscoveringProjects || disabled
@@ -840,7 +840,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.section(
 }
 
 @Composable
-private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: AppViewModel, onOpenDetail: () -> Unit, enabled: Boolean = true) {
+private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: AppViewModel, onOpenDetail: (ProjectRecord) -> Unit, enabled: Boolean = true) {
     ListItem(
         headlineContent = { Text(project.displayName, fontWeight = FontWeight.SemiBold) },
         supportingContent = {
@@ -859,8 +859,7 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
     )
     TextButton(
         onClick = {
-            model.selectProject(project.id)
-            onOpenDetail()
+            onOpenDetail(project)
         },
         enabled = enabled,
         modifier = Modifier.fillMaxWidth(),
@@ -1426,11 +1425,13 @@ private fun Composer(
         }
     }
     fun requestAudioRecording() {
-        if (!state.hasOpenAIAPIKey) {
-            audioError = "Add an OpenAI API key in Settings before recording audio."
-            return
+        coroutineScope.launch {
+            if (!model.refreshOpenAIAPIKeyState()) {
+                audioError = "Add an OpenAI API key in Settings before recording audio."
+                return@launch
+            }
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
-        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
     }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) onAttachmentUrisChange(attachmentUris + uris)
@@ -2056,11 +2057,6 @@ private fun EmptyState(title: String, detail: String, icon: ImageVector, modifie
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         if (detail.isNotBlank()) Text(detail, style = MaterialTheme.typography.bodySmall)
     }
-}
-
-private enum class ProjectSessionMode(val label: String) {
-    Projects("Projects"),
-    Sessions("Sessions"),
 }
 
 private enum class SessionDetailMode(val label: String) {

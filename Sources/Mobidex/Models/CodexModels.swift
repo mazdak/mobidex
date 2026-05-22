@@ -101,6 +101,24 @@ private extension JSONValue {
             return nil
         }
     }
+
+    var codexErrorInfoDisplayName: String? {
+        switch self {
+        case .string(let value):
+            return value.nonEmpty
+        case .object(let object):
+            guard let key = object.keys.sorted().first else {
+                return nil
+            }
+            if case .object(let details) = object[key],
+               let status = details["httpStatusCode"]?.intValue {
+                return "\(key) (HTTP \(status))"
+            }
+            return key
+        default:
+            return nil
+        }
+    }
 }
 
 enum CodexThreadStatusIndicator: Equatable, Sendable {
@@ -205,11 +223,27 @@ struct CodexTurn: Identifiable, Decodable, Equatable, Sendable {
     var id: String
     var items: [CodexThreadItem]
     var status: String
+    var error: CodexTurnError?
 
     enum CodingKeys: String, CodingKey {
         case id
         case items
         case status
+        case error
+    }
+}
+
+struct CodexTurnError: Decodable, Equatable, Sendable {
+    var message: String
+    var codexErrorInfo: JSONValue?
+    var additionalDetails: String?
+
+    var displayDetail: String? {
+        let parts = [
+            codexErrorInfo?.codexErrorInfoDisplayName.map { "Code: \($0)" },
+            additionalDetails?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty
+        ].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 }
 

@@ -528,7 +528,23 @@ enum SharedKMPBridge {
     }
 
     private static func toSharedSessionTurn(_ turn: CodexTurn) -> SharedCodexSessionTurn {
-        SharedCodexSessionTurn(id: turn.id, items: turn.items.map(toSharedSessionItem), status: turn.status)
+        var items = turn.items.map(toSharedSessionItem)
+        if let errorItem = failedTurnErrorItem(turn) {
+            items.append(toSharedSessionItem(errorItem))
+        }
+        return SharedCodexSessionTurn(id: turn.id, items: items, status: turn.status)
+    }
+
+    private static func failedTurnErrorItem(_ turn: CodexTurn) -> CodexThreadItem? {
+        guard turn.status == "failed", let error = turn.error else {
+            return nil
+        }
+        return .agentEvent(
+            id: "turn-error-\(turn.id)",
+            label: "Turn Failed",
+            status: "failed",
+            detail: [error.message.nilIfEmpty, error.displayDetail].compactMap { $0 }.joined(separator: "\n")
+        )
     }
 
     private static func toSharedSessionItem(_ item: CodexThreadItem) -> SharedCodexSessionItem {
@@ -736,5 +752,11 @@ private extension JSONValue {
             return value
         }
         return nil
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

@@ -13,6 +13,7 @@ struct ConversationView: View {
     @State private var selectedDetail: SessionDetailMode = .chat
     @State private var attachmentPaths: [String] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
+    @State private var isPhotoPickerPresented = false
     @State private var isFileImporterPresented = false
     @State private var audioRecorder: AudioComposerRecorder?
     @State private var isRecordingAudio = false
@@ -105,6 +106,11 @@ struct ConversationView: View {
                     dismissButton: .default(Text("OK"))
                 )
             }
+            .photosPicker(
+                isPresented: $isPhotoPickerPresented,
+                selection: $selectedPhotoItems,
+                matching: .images
+            )
             .fileImporter(
                 isPresented: $isFileImporterPresented,
                 allowedContentTypes: [.item],
@@ -550,7 +556,9 @@ struct ConversationView: View {
             }
             .disabled(isTranscribingAudio)
 
-            PhotosPicker(selection: $selectedPhotoItems, matching: .images) {
+            Button {
+                isPhotoPickerPresented = true
+            } label: {
                 Label("Photo", systemImage: "photo")
             }
             .accessibilityLabel("Attach Photo")
@@ -869,7 +877,7 @@ struct ConversationView: View {
     }
 
     private func startAudioRecording() {
-        guard model.hasOpenAIAPIKey else {
+        guard model.refreshOpenAIAPIKeyState() else {
             attachmentAlert = AttachmentAlert(
                 title: "OpenAI API Key Required",
                 message: "Add an OpenAI API key in Settings before recording audio."

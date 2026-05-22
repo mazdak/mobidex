@@ -7,6 +7,10 @@ import mobidex.shared.CodexSessionProjection
 import mobidex.shared.CodexSessionThread
 import mobidex.shared.CodexSessionTurn
 import mobidex.shared.ConversationSection
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
 
 data class CodexThread(
     val id: String,
@@ -57,7 +61,20 @@ data class CodexTurn(
     val id: String,
     val items: List<CodexThreadItem>,
     val status: String,
+    val error: CodexTurnError? = null,
 )
+
+data class CodexTurnError(
+    val message: String,
+    val codexErrorInfo: JsonElement? = null,
+    val additionalDetails: String? = null,
+) {
+    val displayDetail: String?
+        get() = listOfNotNull(
+            codexErrorInfo?.displayName()?.let { "Code: $it" },
+            additionalDetails?.trim()?.ifEmpty { null },
+        ).joinToString("\n").ifEmpty { null }
+}
 
 data class CodexFileChange(
     val path: String,
@@ -89,10 +106,25 @@ fun CodexThread.conversationSections(): List<ConversationSection> =
                 CodexSessionTurn(
                     id = turn.id,
                     status = turn.status,
-                    items = turn.items.map { it.toSharedItem() },
+                    items = turn.visibleItems().map { it.toSharedItem() },
                 )
             }
         )
+    )
+
+fun CodexTurn.visibleItems(): List<CodexThreadItem> =
+    if (status == "failed" && error != null) {
+        items + error.toThreadItem(id = "turn-error-$id", willRetry = false)
+    } else {
+        items
+    }
+
+fun CodexTurnError.toThreadItem(id: String, willRetry: Boolean): CodexThreadItem.AgentEvent =
+    CodexThreadItem.AgentEvent(
+        id = id,
+        label = if (willRetry) "Turn Error" else "Turn Failed",
+        status = if (willRetry) "retrying" else "failed",
+        detail = listOfNotNull(message.ifEmpty { null }, displayDetail).joinToString("\n"),
     )
 
 fun List<CodexThreadItem>.conversationSectionsFromItems(): List<ConversationSection> =
@@ -123,3 +155,17 @@ data class PendingApproval(
     val title: String,
     val detail: String,
 )
+
+private fun JsonElement.displayName(): String? =
+    when (this) {
+        is JsonPrimitive -> content.ifEmpty { null }
+        is JsonObject -> {
+            val key = keys.sorted().firstOrNull() ?: return null
+            val status = (this[key] as? JsonObject)
+                ?.get("httpStatusCode")
+                ?.let { it as? JsonPrimitive }
+                ?.intOrNull
+            if (status == null) key else "$key (HTTP $status)"
+        }
+        else -> null
+    }

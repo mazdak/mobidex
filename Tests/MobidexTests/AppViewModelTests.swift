@@ -4455,6 +4455,167 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testLiveErrorNotificationSurfacesInSelectedConversation() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = list.nextCursor
+        transport.receive("""
+        {"id":\(list.id),"result":{"data":[
+          {"id":"thread-active","preview":"Existing work","cwd":"/srv/app","status":{"type":"active","activeFlags":[]},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-active",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"active","activeFlags":[]},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-active",
+            "status":"inProgress",
+            "items":[
+              {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]}
+            ]
+          }]
+        }}}
+        """)
+        await connectTask.value
+
+        transport.receive("""
+        {"method":"error","params":{"threadId":"thread-active","turnId":"turn-active","willRetry":false,"error":{
+          "message":"usage limit reached",
+          "codexErrorInfo":"usageLimitExceeded",
+          "additionalDetails":null
+        }}}
+        """)
+
+        try await waitForConversationSection(kind: .agent, containing: "usage limit reached", in: viewModel)
+        XCTAssertEqual(viewModel.statusMessage, "Codex turn failed: usage limit reached")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testFailedCompletedTurnSurfacesTurnError() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = list.nextCursor
+        transport.receive("""
+        {"id":\(list.id),"result":{"data":[
+          {"id":"thread-active","preview":"Existing work","cwd":"/srv/app","status":{"type":"active","activeFlags":[]},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = read.nextCursor
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-active",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"active","activeFlags":[]},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-active",
+            "status":"inProgress",
+            "items":[
+              {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]}
+            ]
+          }]
+        }}}
+        """)
+        await connectTask.value
+
+        transport.receive("""
+        {"method":"turn/completed","params":{"threadId":"thread-active","turn":{
+          "id":"turn-active",
+          "status":"failed",
+          "error":{"message":"context window exceeded","codexErrorInfo":"contextWindowExceeded","additionalDetails":null},
+          "items":[
+            {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]}
+          ]
+        }}}
+        """)
+
+        let completionRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = completionRead.nextCursor
+        transport.receive("""
+        {"id":\(completionRead.id),"result":{"thread":{
+          "id":"thread-active",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000301,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-active",
+            "status":"failed",
+            "error":{"message":"context window exceeded","codexErrorInfo":"contextWindowExceeded","additionalDetails":null},
+            "items":[
+              {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]}
+            ]
+          }]
+        }}}
+        """)
+        let completionList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(completionList.id),"result":{"data":[
+          {"id":"thread-active","preview":"Existing work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000301,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        try await waitForConversationSection(kind: .agent, containing: "context window exceeded", in: viewModel)
+        XCTAssertEqual(viewModel.statusMessage, "Codex turn failed: context window exceeded")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
     func testLoadThreadsSortsSessionsByUpdatedTime() async throws {
         let project = ProjectRecord(path: "/srv/app")
         let server = ServerRecord(
@@ -4524,6 +4685,86 @@ final class AppViewModelTests: XCTestCase {
 
         await viewModel.disconnect()
 	    }
+
+    @MainActor
+    func testBackgroundCompleteSessionListPreservesCurrentSelectionWhenMissingFromLoadedList() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = initialList.nextCursor
+        let initialCompleteSearchCursor = cursor
+        transport.receive("""
+        {"id":\(initialList.id),"result":{"data":[
+          {"id":"thread-current","preview":"Current draft target","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = read.nextCursor
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-current",
+          "preview":"Current draft target",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+        await connectTask.value
+
+        let initialCompleteList = try await waitForRequest(method: "thread/list", in: transport, after: initialCompleteSearchCursor)
+        cursor = initialCompleteList.nextCursor
+        transport.receive("""
+        {"id":\(initialCompleteList.id),"result":{"data":[
+          {"id":"thread-current","preview":"Current draft target","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        try await waitForThreadIDs(["thread-current"], in: viewModel)
+
+        let refreshTask = Task { await viewModel.refreshThreads() }
+        let refreshFirstPage = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = refreshFirstPage.nextCursor
+        transport.receive("""
+        {"id":\(refreshFirstPage.id),"result":{"data":[
+          {"id":"thread-newer","preview":"Newer session","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000001,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        await refreshTask.value
+
+        let refreshCompleteList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(refreshCompleteList.id),"result":{"data":[
+          {"id":"thread-newer","preview":"Newer session","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000001,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        try await waitForThreadIDs(["thread-newer", "thread-current"], in: viewModel)
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-current")
+        XCTAssertEqual(viewModel.selectedThread?.id, "thread-current")
+        await viewModel.disconnect()
+    }
 
     @MainActor
     func testPlanAndFileChangeEventsUpdateLiveConversation() async throws {

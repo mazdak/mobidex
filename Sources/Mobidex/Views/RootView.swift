@@ -200,11 +200,10 @@ struct ProjectSessionListView: View {
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var preferredCompactColumn: NavigationSplitViewColumn
     @State private var showingProjectAdd = false
-    @State private var selectedMode: ProjectSessionMode = .projects
+    @State private var sessionsProjectID: UUID?
     @State private var projectSearchText = ""
     @State private var sessionSearchText = ""
     @State private var isSessionRefreshRequested = false
-    @State private var skipNextAllSessionsRefresh = false
     @State private var showingTerminal = false
     @State private var showingDiagnostics = false
     @State private var editingServer: ServerRecord?
@@ -217,24 +216,10 @@ struct ProjectSessionListView: View {
                 List {
                     serverControlsSection(server)
 
-                    LoadingSection(isLoading: selectedMode == .projects && contentIsLoading, title: "Loading projects...")
-
-                    switch selectedMode {
-                    case .projects:
-                        let sections = projectSections(from: server.projects)
-                        ProjectSectionsContent(
-                            sections: sections,
-                            unavailableTitle: projectsUnavailableTitle(server: server, sections: sections),
-                            serverContentDisabled: serverContentDisabled,
-                            contentOpacity: contentOpacity,
-                            selectedMode: $selectedMode,
-                            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh
-                        ) {}
-                    case .sessions:
+                    if let sessionsProjectID, let project = server.projects.first(where: { $0.id == sessionsProjectID }) {
                         let sessionSections = filteredSessionSections(model.sessionSections)
                         SessionsContent(
-                            selectedProject: model.selectedProject,
-                            isShowingAllSessions: model.isShowingAllSessions,
+                            selectedProject: project,
                             canCreateSession: model.canCreateSession,
                             showsArchivedSessions: $model.showsArchivedSessions,
                             sections: sessionSections,
@@ -262,6 +247,24 @@ struct ProjectSessionListView: View {
                                     .listRowSeparator(.hidden)
                             }
                         }
+                    } else {
+                        LoadingSection(isLoading: contentIsLoading, title: "Loading projects...")
+                        let sections = projectSections(from: server.projects)
+                        ProjectSectionsContent(
+                            sections: sections,
+                            unavailableTitle: projectsUnavailableTitle(server: server, sections: sections),
+                            serverContentDisabled: serverContentDisabled,
+                            contentOpacity: contentOpacity,
+                            onOpenProject: { project in
+                                sessionsProjectID = project.id
+                                model.selectProject(project.id)
+                                isSessionRefreshRequested = true
+                                Task {
+                                    await model.refreshThreadsIfNeeded()
+                                    isSessionRefreshRequested = false
+                                }
+                            }
+                        )
                     }
                 }
                 .sheet(isPresented: $showingTerminal) {
@@ -276,17 +279,21 @@ struct ProjectSessionListView: View {
                     await model.ensureSelectedServerConnected()
                 }
                 .searchable(text: searchTextBinding, placement: .navigationBarDrawer(displayMode: .automatic), prompt: searchPrompt)
-                .onChange(of: selectedMode) { _, newValue in
-                    handleSelectedModeChange(newValue)
-                }
                 .onChange(of: model.showsArchivedSessions) { _, _ in
                     handleArchivedSessionsChange()
+                }
+                .onChange(of: server.id) { _, _ in
+                    sessionsProjectID = nil
                 }
                 .toolbar {
                     SelectedServerToolbar(
                         server: server,
-                        selectedMode: selectedMode,
+                        showingProjectSessions: sessionsProjectID != nil,
                         disabled: serverControlsDisabled,
+                        onBackToProjects: {
+                            sessionsProjectID = nil
+                            sessionSearchText = ""
+                        },
                         showingProjectAdd: $showingProjectAdd,
                         showingTerminal: $showingTerminal,
                         showingDiagnostics: $showingDiagnostics,
@@ -319,21 +326,8 @@ struct ProjectSessionListView: View {
         }
     }
 
-    private func handleSelectedModeChange(_ newValue: ProjectSessionMode) {
-        guard newValue == .sessions else { return }
-        if skipNextAllSessionsRefresh {
-            skipNextAllSessionsRefresh = false
-            return
-        }
-        isSessionRefreshRequested = true
-        Task {
-            await model.selectAllSessionsAndRefreshIfNeeded()
-            isSessionRefreshRequested = false
-        }
-    }
-
     private func handleArchivedSessionsChange() {
-        guard model.isAppServerConnected else { return }
+        guard model.isAppServerConnected, sessionsProjectID != nil else { return }
         isSessionRefreshRequested = true
         Task {
             await model.refreshThreads()
@@ -374,12 +368,6 @@ struct ProjectSessionListView: View {
                     ProgressView()
                 }
             }
-            Picker("List", selection: $selectedMode) {
-                ForEach(ProjectSessionMode.allCases) { mode in
-                    Text(mode.label).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
         }
     }
 
@@ -392,12 +380,7 @@ struct ProjectSessionListView: View {
     }
 
     private var contentIsLoading: Bool {
-        switch selectedMode {
-        case .projects:
-            model.isDiscoveringProjects
-        case .sessions:
-            false
-        }
+        model.isDiscoveringProjects
     }
 
     private var contentOpacity: Double {
@@ -421,7 +404,7 @@ struct ProjectSessionListView: View {
     }
 
     private var sessionsUnavailableDescription: String {
-        if !model.isShowingAllSessions, model.selectedProject != nil, model.connectionState == .connected {
+        if model.selectedProject != nil, model.connectionState == .connected {
             return "Start a new session for this project."
         }
         return "Sessions you open will show up here."
@@ -443,17 +426,17 @@ struct ProjectSessionListView: View {
     }
 
     private var searchPrompt: String {
-        selectedMode == .sessions ? "Search Sessions" : "Search Projects"
+        sessionsProjectID == nil ? "Search Projects" : "Search Sessions"
     }
 
     private var searchTextBinding: Binding<String> {
         Binding(
-            get: { selectedMode == .sessions ? sessionSearchText : projectSearchText },
+            get: { sessionsProjectID == nil ? projectSearchText : sessionSearchText },
             set: { value in
-                if selectedMode == .sessions {
-                    sessionSearchText = value
-                } else {
+                if sessionsProjectID == nil {
                     projectSearchText = value
+                } else {
+                    sessionSearchText = value
                 }
             }
         )
@@ -513,9 +496,7 @@ private struct ProjectSectionsContent: View {
     let unavailableTitle: String
     let serverContentDisabled: Bool
     let contentOpacity: Double
-    @Binding var selectedMode: ProjectSessionMode
-    @Binding var skipNextAllSessionsRefresh: Bool
-    let onOpenProject: () -> Void
+    let onOpenProject: (ProjectRecord) -> Void
 
     @ViewBuilder
     var body: some View {
@@ -524,8 +505,6 @@ private struct ProjectSectionsContent: View {
             projects: sections.projects,
             serverContentDisabled: serverContentDisabled,
             contentOpacity: contentOpacity,
-            selectedMode: $selectedMode,
-            skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh,
             onOpenProject: onOpenProject
         )
 
@@ -548,9 +527,7 @@ private struct ProjectListSection: View {
     let projects: [ProjectRecord]
     let serverContentDisabled: Bool
     let contentOpacity: Double
-    @Binding var selectedMode: ProjectSessionMode
-    @Binding var skipNextAllSessionsRefresh: Bool
-    let onOpenProject: () -> Void
+    let onOpenProject: (ProjectRecord) -> Void
 
     @ViewBuilder
     var body: some View {
@@ -559,8 +536,6 @@ private struct ProjectListSection: View {
                 ForEach(projects) { project in
                     ProjectActionRow(
                         project: project,
-                        selectedMode: $selectedMode,
-                        skipNextAllSessionsRefresh: $skipNextAllSessionsRefresh,
                         onOpenProject: onOpenProject
                     )
                 }
@@ -574,9 +549,7 @@ private struct ProjectListSection: View {
 private struct ProjectActionRow: View {
     @EnvironmentObject private var model: AppViewModel
     let project: ProjectRecord
-    @Binding var selectedMode: ProjectSessionMode
-    @Binding var skipNextAllSessionsRefresh: Bool
-    let onOpenProject: () -> Void
+    let onOpenProject: (ProjectRecord) -> Void
 
     var body: some View {
         Button(action: openProject) {
@@ -594,15 +567,7 @@ private struct ProjectActionRow: View {
     }
 
     private func openProject() {
-        model.selectProject(project.id)
-        if selectedMode == .sessions {
-            skipNextAllSessionsRefresh = false
-        } else {
-            skipNextAllSessionsRefresh = true
-            selectedMode = .sessions
-        }
-        onOpenProject()
-        Task { await model.refreshThreadsIfNeeded() }
+        onOpenProject(project)
     }
 }
 
@@ -652,8 +617,9 @@ private struct SelectedServerMenu: View {
 
 private struct SelectedServerToolbar: ToolbarContent {
     let server: ServerRecord
-    let selectedMode: ProjectSessionMode
+    let showingProjectSessions: Bool
     let disabled: Bool
+    let onBackToProjects: () -> Void
     @Binding var showingProjectAdd: Bool
     @Binding var showingTerminal: Bool
     @Binding var showingDiagnostics: Bool
@@ -662,9 +628,18 @@ private struct SelectedServerToolbar: ToolbarContent {
     @Binding var isDeleteServerConfirmationPresented: Bool
 
     var body: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            if showingProjectSessions {
+                Button(action: onBackToProjects) {
+                    Label("Projects", systemImage: "chevron.left")
+                }
+            }
+        }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            RefreshServerButton(selectedMode: selectedMode, disabled: disabled)
-            AddProjectButton(showingProjectAdd: $showingProjectAdd, disabled: disabled)
+            RefreshServerButton(showingProjectSessions: showingProjectSessions, disabled: disabled)
+            if !showingProjectSessions {
+                AddProjectButton(showingProjectAdd: $showingProjectAdd, disabled: disabled)
+            }
             SelectedServerMenu(
                 server: server,
                 disabled: disabled,
@@ -680,7 +655,7 @@ private struct SelectedServerToolbar: ToolbarContent {
 
 private struct RefreshServerButton: View {
     @EnvironmentObject private var model: AppViewModel
-    let selectedMode: ProjectSessionMode
+    let showingProjectSessions: Bool
     let disabled: Bool
 
     var body: some View {
@@ -699,11 +674,10 @@ private struct RefreshServerButton: View {
             await model.connectSelectedServer(syncActiveChatCounts: true)
             return
         }
-        switch selectedMode {
-        case .projects:
-            await model.refreshProjects()
-        case .sessions:
+        if showingProjectSessions {
             await model.refreshThreads()
+        } else {
+            await model.refreshProjects()
         }
     }
 }
@@ -758,8 +732,7 @@ private struct ProjectSessionScopeRow: View {
 }
 
 private struct SessionsContent: View {
-    let selectedProject: ProjectRecord?
-    let isShowingAllSessions: Bool
+    let selectedProject: ProjectRecord
     let canCreateSession: Bool
     @Binding var showsArchivedSessions: Bool
     let sections: [SessionListSection]
@@ -772,13 +745,11 @@ private struct SessionsContent: View {
     @ViewBuilder
     var body: some View {
         Section {
-            if let project = selectedProject, !isShowingAllSessions {
-                ProjectSessionScopeRow(
-                    project: project,
-                    canCreateSession: canCreateSession && !serverContentDisabled,
-                    onStartNewSession: onStartNewSession
-                )
-            }
+            ProjectSessionScopeRow(
+                project: selectedProject,
+                canCreateSession: canCreateSession && !serverContentDisabled,
+                onStartNewSession: onStartNewSession
+            )
             Toggle("Show archived sessions", isOn: $showsArchivedSessions)
                 .font(.subheadline)
         }
@@ -830,20 +801,6 @@ private struct LoadingListStatusRow: View {
         }
         .padding(.vertical, 6)
         .accessibilityIdentifier("listLoadingStatus")
-    }
-}
-
-private enum ProjectSessionMode: String, CaseIterable, Identifiable {
-    case projects
-    case sessions
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .projects: "Projects"
-        case .sessions: "Sessions"
-        }
     }
 }
 

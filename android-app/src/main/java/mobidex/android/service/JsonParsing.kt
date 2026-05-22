@@ -21,6 +21,7 @@ import mobidex.android.model.CodexThreadItem
 import mobidex.android.model.CodexThreadStatus
 import mobidex.android.model.CodexTokenUsage
 import mobidex.android.model.CodexTurn
+import mobidex.android.model.CodexTurnError
 import mobidex.shared.JsonValue
 import mobidex.shared.jsonArray
 import mobidex.shared.jsonBool
@@ -72,6 +73,9 @@ internal fun JsonElement?.obj(key: String): JsonObject? =
 internal fun JsonElement?.array(key: String): JsonArray? =
     (this as? JsonObject)?.get(key) as? JsonArray
 
+internal fun JsonElement?.bool(key: String): Boolean? =
+    (this as? JsonObject)?.get(key)?.jsonPrimitive?.booleanOrNull
+
 internal fun parseThread(element: JsonElement): CodexThread {
     val source = element.obj("source")
     val sourceKind = element.string("sourceKind")
@@ -101,7 +105,17 @@ internal fun parseTurn(element: JsonElement): CodexTurn =
         id = element.string("id") ?: UUID.randomUUID().toString(),
         items = element.array("items")?.map(::parseItem) ?: emptyList(),
         status = element.string("status") ?: "",
+        error = parseTurnError(element.obj("error")),
     )
+
+internal fun parseTurnError(element: JsonObject?): CodexTurnError? {
+    element ?: return null
+    return CodexTurnError(
+        message = element.string("message") ?: "The Codex turn failed.",
+        codexErrorInfo = element["codexErrorInfo"],
+        additionalDetails = element.string("additionalDetails"),
+    )
+}
 
 internal fun parseItem(element: JsonElement): CodexThreadItem {
     val type = element.string("type") ?: "unknown"

@@ -351,8 +351,10 @@ final class AppViewModel: ObservableObject {
         return try await openAITranscriptionService.transcribe(audioURL: url, apiKey: apiKey)
     }
 
-    private func refreshOpenAIAPIKeyState() {
+    @discardableResult
+    func refreshOpenAIAPIKeyState() -> Bool {
         hasOpenAIAPIKey = ((try? credentialStore.loadOpenAIAPIKey()) ?? nil)?.nonEmpty != nil
+        return hasOpenAIAPIKey
     }
 
     static func appServerReconnectDelayNanoseconds(baseDelayNanoseconds: UInt64, attempt: Int) -> UInt64 {
@@ -1336,7 +1338,7 @@ final class AppViewModel: ObservableObject {
                 thread.status = turn.status == "inProgress" ? .active(flags: []) : .idle
                 upsert(turn: turn, in: &thread)
                 selectedThread = thread
-                liveItems = thread.turns.flatMap(\.items)
+                liveItems = Self.visibleLiveItems(from: thread)
                 rebuildConversationFromLiveItems()
                 refreshQueuedTurnInputCount()
                 if turn.status == "inProgress" {
@@ -1791,7 +1793,7 @@ final class AppViewModel: ObservableObject {
               currentThreadLoadScope == scope else {
             return
         }
-        let prioritizedThreads = sortedThreads(loadedThreads)
+        let prioritizedThreads = sortedThreadsPreservingSelectedThread(loadedThreads, scope: scope)
         threads = prioritizedThreads
         loadCompleteThreadListAfterInitialSessionRefresh(
             scope: scope,
@@ -1854,7 +1856,7 @@ final class AppViewModel: ObservableObject {
                       currentThreadLoadScope == scope else {
                     return
                 }
-                let sorted = sortedThreads(loadedThreads)
+                let sorted = sortedThreadsPreservingSelectedThread(loadedThreads, scope: scope)
                 threads = sorted
                 cacheThreadList(sorted, scope: scope)
                 selectThreadAfterCompleteListLoad(
@@ -2013,6 +2015,18 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func sortedThreadsPreservingSelectedThread(_ loadedThreads: [CodexThread], scope: ThreadLoadScope) -> [CodexThread] {
+        guard let selectedThreadID,
+              !loadedThreads.contains(where: { $0.id == selectedThreadID }),
+              let selectedThread,
+              selectedThread.id == selectedThreadID,
+              threadMatchesScope(selectedThread, scope: scope)
+        else {
+            return sortedThreads(loadedThreads)
+        }
+        return sortedThreads(loadedThreads + [selectedThread])
+    }
+
     private func startEventLoop() {
         guard let events = appServer?.events else { return }
         eventTask?.cancel()
@@ -2031,7 +2045,9 @@ final class AppViewModel: ObservableObject {
         }
         switch event {
         case .notification(let method, let params):
-            statusMessage = method
+            if method != "error" {
+                statusMessage = method
+            }
             await handleNotification(method: method, params: params)
         case .serverRequest(let id, let method, let params):
             guard eventTargetsSelectedThread(params) else {
@@ -2052,6 +2068,14 @@ final class AppViewModel: ObservableObject {
 
     private func handleNotification(method: String, params: JSONValue?) async {
         switch method {
+        case "error":
+            guard eventTargetsSelectedThread(params),
+                  let error = try? decode(CodexTurnError.self, from: params?["error"])
+            else {
+                return
+            }
+            let willRetry = params?["willRetry"]?.boolValue ?? false
+            showTurnError(error, turnID: params?["turnId"]?.stringValue, willRetry: willRetry)
         case "item/started", "item/completed":
             if eventTargetsSelectedThread(params), let item = try? decode(CodexThreadItem.self, from: params?["item"]) {
                 upsertLiveItem(item)
@@ -2123,6 +2147,9 @@ final class AppViewModel: ObservableObject {
             let completedThreadID = params?["threadId"]?.stringValue
             if let turn = try? decode(CodexTurn.self, from: params?["turn"]) {
                 applyTurnCompleted(turn)
+                if turn.status == "failed", let error = turn.error {
+                    statusMessage = turnErrorStatusMessage(error)
+                }
             }
             await refreshSelectedThreadAfterEvent()
             if let completedThreadID {
@@ -2410,7 +2437,7 @@ final class AppViewModel: ObservableObject {
     private func hydrateConversation(from thread: CodexThread, cacheDetail: Bool = true) {
         sessionRefreshDetailLoadGeneration &+= 1
         selectedThread = thread
-        liveItems = thread.turns.flatMap(\.items)
+        liveItems = Self.visibleLiveItems(from: thread)
         if !cacheDetail {
             suppressNextConversationDetailCache = true
         }
@@ -2547,6 +2574,47 @@ final class AppViewModel: ObservableObject {
         publishConversationSections(nextSections)
     }
 
+    private static func visibleLiveItems(from thread: CodexThread) -> [CodexThreadItem] {
+        thread.turns.flatMap { turn in
+            var items = turn.items
+            if let errorItem = failedTurnErrorItem(turn) {
+                items.append(errorItem)
+            }
+            return items
+        }
+    }
+
+    private static func failedTurnErrorItem(_ turn: CodexTurn) -> CodexThreadItem? {
+        guard turn.status == "failed", let error = turn.error else {
+            return nil
+        }
+        return turnErrorItem(error, turnID: turn.id, willRetry: false)
+    }
+
+    private static func turnErrorItem(_ error: CodexTurnError, turnID: String, willRetry: Bool) -> CodexThreadItem {
+        .agentEvent(
+            id: "turn-error-\(turnID)",
+            label: willRetry ? "Turn Error" : "Turn Failed",
+            status: willRetry ? "retrying" : "failed",
+            detail: [error.message.nonEmpty, error.displayDetail].compactMap { $0 }.joined(separator: "\n")
+        )
+    }
+
+    private func showTurnError(_ error: CodexTurnError, turnID: String?, willRetry: Bool) {
+        statusMessage = turnErrorStatusMessage(error, willRetry: willRetry)
+        let item = Self.turnErrorItem(
+            error,
+            turnID: turnID?.nonEmpty ?? "live-\(abs(error.message.hashValue))",
+            willRetry: willRetry
+        )
+        upsertLiveItem(item)
+    }
+
+    private func turnErrorStatusMessage(_ error: CodexTurnError, willRetry: Bool = false) -> String {
+        let prefix = willRetry ? "Temporary Codex error" : "Codex turn failed"
+        return "\(prefix): \(error.message)"
+    }
+
     private func publishConversationSections(_ nextSections: [ConversationSection]) {
         let didChange = conversationSections != nextSections
         conversationSections = nextSections
@@ -2629,7 +2697,7 @@ final class AppViewModel: ObservableObject {
         thread.status = .active(flags: [])
         upsert(turn: turn, in: &thread)
         selectedThread = thread
-        liveItems = thread.turns.flatMap(\.items)
+        liveItems = Self.visibleLiveItems(from: thread)
         rebuildConversationFromLiveItems()
         scheduleActiveTurnRefresh(threadID: thread.id, scope: currentThreadLoadScope)
     }
@@ -2644,7 +2712,7 @@ final class AppViewModel: ObservableObject {
         thread.status = .idle
         upsert(turn: turn, in: &thread)
         selectedThread = thread
-        liveItems = thread.turns.flatMap(\.items)
+        liveItems = Self.visibleLiveItems(from: thread)
         rebuildConversationFromLiveItems()
         cancelActiveTurnRefresh()
     }
@@ -2752,7 +2820,7 @@ final class AppViewModel: ObservableObject {
             thread.status = turn.status == "inProgress" ? .active(flags: []) : .idle
             upsert(turn: turn, in: &thread)
             selectedThread = thread
-            liveItems = thread.turns.flatMap(\.items)
+            liveItems = Self.visibleLiveItems(from: thread)
             rebuildConversationFromLiveItems()
 
             if turn.status == "inProgress" {

@@ -42,6 +42,7 @@ import mobidex.android.model.SSHCredential
 import mobidex.android.model.ServerConnectionState
 import mobidex.android.model.ServerRecord
 import mobidex.android.model.conversationSections
+import mobidex.android.model.toThreadItem
 import mobidex.android.service.CodexAppServerClient
 import mobidex.android.service.CodexAppServerEvent
 import mobidex.android.service.MobidexSshService
@@ -49,6 +50,7 @@ import mobidex.android.service.OpenAITranscriptionService
 import mobidex.android.service.RemoteTerminalSession
 import mobidex.android.service.SshjMobidexSshService
 import mobidex.android.service.array
+import mobidex.android.service.bool
 import mobidex.android.service.long
 import mobidex.android.service.obj
 import mobidex.android.service.parseItem
@@ -56,6 +58,7 @@ import mobidex.android.service.parseStatus
 import mobidex.android.service.parseThread
 import mobidex.android.service.parseTokenUsage
 import mobidex.android.service.parseTurn
+import mobidex.android.service.parseTurnError
 import mobidex.android.service.string
 import mobidex.android.service.toSharedJsonValue
 import mobidex.android.service.turnOptions
@@ -221,9 +224,10 @@ class AppViewModel(
         return OpenAITranscriptionService().transcribe(file, key)
     }
 
-    private suspend fun refreshOpenAIAPIKeyState() {
+    suspend fun refreshOpenAIAPIKeyState(): Boolean {
         val hasKey = !credentialStore.loadOpenAIAPIKey().isNullOrBlank()
         _state.update { it.copy(hasOpenAIAPIKey = hasKey) }
+        return hasKey
     }
 
     fun selectServer(serverID: String?) {
@@ -668,7 +672,7 @@ class AppViewModel(
                         ) {
                             current
                         } else {
-                            val sorted = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds }
+                            val sorted = sortedThreadsPreservingSelectedThread(loaded, current)
                             val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
                                 selectedThreadIDToHydrate = selectedID
@@ -746,7 +750,7 @@ class AppViewModel(
                         ) {
                             current
                         } else {
-                            val sorted = loaded.sortedByDescending { thread -> thread.updatedAtEpochSeconds }
+                            val sorted = sortedThreadsPreservingSelectedThread(loaded, current)
                             cacheThreads(cacheKey, sorted)
                             val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
@@ -862,6 +866,37 @@ class AppViewModel(
             threads = threads,
             selectedThreadID = _state.value.selectedThreadID,
             fetchedAtEpochSeconds = Instant.now().epochSecond,
+        )
+    }
+
+    private fun sortedThreadsPreservingSelectedThread(loadedThreads: List<CodexThread>, state: MobidexUiState): List<CodexThread> {
+        val selectedID = state.selectedThreadID
+        val selectedThread = state.selectedThread
+        val threads = if (
+            selectedID != null &&
+            selectedThread?.id == selectedID &&
+            loadedThreads.none { it.id == selectedID } &&
+            threadMatchesScope(selectedThread, state)
+        ) {
+            loadedThreads + selectedThread
+        } else {
+            loadedThreads
+        }
+        return threads.sortedWith(
+            compareByDescending<CodexThread> { it.updatedAtEpochSeconds }
+                .thenBy { it.id },
+        )
+    }
+
+    private fun threadMatchesScope(thread: CodexThread, state: MobidexUiState): Boolean {
+        if (state.isShowingAllSessions) return true
+        val project = state.selectedProject ?: return false
+        val paths = project.sessionPaths.ifEmpty { listOf(project.path) }
+        if (thread.cwd in paths) return true
+        return thread.id in SessionListSections.sessionIdsForProject(
+            sessions = listOf(CodexThreadSummary(thread.id, thread.cwd, thread.updatedAtEpochSeconds)),
+            projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+            projectPath = project.path,
         )
     }
 
@@ -1623,6 +1658,12 @@ class AppViewModel(
 
     private suspend fun handleNotification(method: String, params: JsonElement?) {
         when (method) {
+            "error" -> {
+                if (!eventTargetsSelectedThread(params)) return
+                val error = parseTurnError(params.obj("error")) ?: return
+                val willRetry = params.bool("willRetry") == true
+                showTurnError(error.toThreadItem("turn-error-${params.string("turnId") ?: "live-${error.message.hashCode()}"}", willRetry), error.message, willRetry)
+            }
             "thread/started" -> params.obj("thread")?.let {
                 val thread = parseThread(it)
                 if (threadMatchesCurrentScope(thread)) {
@@ -1641,7 +1682,15 @@ class AppViewModel(
                             status = if (method == "turn/started") thread.status.copy(type = "active") else thread.status.copy(type = "idle"),
                             turns = thread.turns.upsert(turn),
                         )
-                        state.copy(selectedThread = next, conversationSections = next.conversationSections())
+                        state.copy(
+                            selectedThread = next,
+                            conversationSections = next.conversationSections(),
+                            statusMessage = if (method == "turn/completed" && turn.status == "failed" && turn.error != null) {
+                                turnErrorStatusMessage(turn.error.message)
+                            } else {
+                                state.statusMessage
+                            },
+                        )
                     }
                     cacheCurrentSelectedThreadDetail()
                 } else if (method == "turn/started") {
@@ -1838,6 +1887,28 @@ class AppViewModel(
         }
         cacheCurrentSelectedThreadDetail()
     }
+
+    private fun showTurnError(item: CodexThreadItem.AgentEvent, message: String, willRetry: Boolean) {
+        _state.update { state ->
+            val thread = state.selectedThread
+            val nextStatus = turnErrorStatusMessage(message, willRetry)
+            if (thread == null || thread.turns.isEmpty()) {
+                return@update state.copy(statusMessage = nextStatus)
+            }
+            val turn = thread.turns.last()
+            val nextTurn = turn.copy(items = turn.items.upsert(item))
+            val nextThread = thread.copy(turns = thread.turns.upsert(nextTurn))
+            state.copy(
+                selectedThread = nextThread,
+                conversationSections = nextThread.conversationSections(),
+                statusMessage = nextStatus,
+            )
+        }
+        cacheCurrentSelectedThreadDetail()
+    }
+
+    private fun turnErrorStatusMessage(message: String, willRetry: Boolean = false): String =
+        "${if (willRetry) "Temporary Codex error" else "Codex turn failed"}: $message"
 
     private fun appendTextDelta(itemID: String?, delta: String?, agent: Boolean) {
         if (itemID == null || delta == null) return
