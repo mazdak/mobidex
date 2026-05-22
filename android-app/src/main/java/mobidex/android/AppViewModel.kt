@@ -177,6 +177,7 @@ class AppViewModel(
     private var diffSnapshotRequestID = 0L
     private var activeSessionRefreshes = 0
     private var sessionRefreshGeneration = 0L
+    private var sessionRefreshDetailLoadGeneration = 0L
     private var isSendingInput = false
     private val queuedTurnInputsByThreadID = mutableMapOf<String, MutableList<List<CodexInputItem>>>()
     private val threadListCache = mutableMapOf<ThreadScopeCacheKey, CachedThreadList>()
@@ -696,10 +697,13 @@ class AppViewModel(
                         }
                     }
                     selectedThreadIDToHydrate?.let { threadID ->
-                        runCatching { client.resumeThread(threadID) }
-                            .recoverCatching { client.readThread(threadID) }
-                            .getOrNull()
-                            ?.let { hydrated -> hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, threadID) }
+                        hydrateSelectedThreadDetailAfterSessionRefresh(
+                            client = client,
+                            requestServerID = requestServerID,
+                            requestProjectID = requestProjectID,
+                            requestThreadID = threadID,
+                            expectedSelectedThread = _state.value.selectedThread,
+                        )
                     }
                 }
             } finally {
@@ -726,8 +730,47 @@ class AppViewModel(
 
     private fun resetSessionRefreshTracking() {
         sessionRefreshGeneration += 1
+        sessionRefreshDetailLoadGeneration += 1
         activeSessionRefreshes = 0
         _state.update { it.copy(isRefreshingSessions = false) }
+    }
+
+    private fun hydrateSelectedThreadDetailAfterSessionRefresh(
+        client: CodexAppServerClient,
+        requestServerID: String?,
+        requestProjectID: String?,
+        requestThreadID: String,
+        expectedSelectedThread: CodexThread?,
+    ) {
+        sessionRefreshDetailLoadGeneration += 1
+        val detailLoadGeneration = sessionRefreshDetailLoadGeneration
+        viewModelScope.launch {
+            runCatching { client.resumeThread(requestThreadID) }
+                .recoverCatching { client.readThread(requestThreadID) }
+                .onSuccess { hydrated ->
+                    if (appServer === client &&
+                        sessionRefreshDetailLoadGeneration == detailLoadGeneration &&
+                        _state.value.selectedThread == expectedSelectedThread
+                    ) {
+                        hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, requestThreadID)
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { state ->
+                        if (appServer === client &&
+                            sessionRefreshDetailLoadGeneration == detailLoadGeneration &&
+                            state.selectedServerID == requestServerID &&
+                            state.selectedProjectID == requestProjectID &&
+                            state.selectedThreadID == requestThreadID &&
+                            state.selectedThread == expectedSelectedThread
+                        ) {
+                            state.copy(statusMessage = error.message ?: "Session details failed to load.")
+                        } else {
+                            state
+                        }
+                    }
+                }
+        }
     }
 
     private fun currentThreadScopeCacheKey(state: MobidexUiState = _state.value): ThreadScopeCacheKey {
@@ -826,6 +869,7 @@ class AppViewModel(
     fun openThread(thread: CodexThread) {
         viewModelScope.launch {
             suppressThreadAutoSelection = false
+            sessionRefreshDetailLoadGeneration += 1
             val requestState = _state.value
             val requestServerID = requestState.selectedServerID
             val requestProjectID = requestState.selectedProjectID
@@ -1580,6 +1624,7 @@ class AppViewModel(
     }
 
     private fun hydrateConversation(thread: CodexThread) {
+        sessionRefreshDetailLoadGeneration += 1
         val serverID = _state.value.selectedServerID
         cacheThreadDetail(serverID, thread)
         _state.update {
@@ -1626,6 +1671,7 @@ class AppViewModel(
                 state
             } else {
                 didHydrate = true
+                sessionRefreshDetailLoadGeneration += 1
                 var next = state.copy(
                     selectedThreadID = thread.id,
                     selectedThread = thread,

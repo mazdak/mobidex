@@ -1365,7 +1365,7 @@ private fun Composer(
     var isRecordingAudio by remember { mutableStateOf(false) }
     var isTranscribingAudio by remember { mutableStateOf(false) }
     var audioError by remember { mutableStateOf<String?>(null) }
-    val sendEnabled = (value.trim().isNotEmpty() || attachmentUris.isNotEmpty()) && state.canSendMessage
+    val sendEnabled = !isTranscribingAudio && (value.trim().isNotEmpty() || attachmentUris.isNotEmpty()) && state.canSendMessage
     fun stopAndTranscribeAudio() {
         val file = audioFile
         val recorder = audioRecorder
@@ -1451,6 +1451,7 @@ private fun Composer(
             placeholder = { Text("Ask for follow-up changes") },
             minLines = 1,
             maxLines = 5,
+            enabled = !isTranscribingAudio,
             modifier = Modifier.fillMaxWidth(),
         )
         if (attachmentUris.isNotEmpty()) {

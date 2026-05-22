@@ -1712,6 +1712,10 @@ final class AppViewModelTests: XCTestCase {
           {"id":"thread-1","preview":"Existing work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}
         """)
+        await connectTask.value
+        XCTAssertFalse(viewModel.isRefreshingSessions)
+        XCTAssertTrue(viewModel.isSelectedThreadLoading)
+
         let initialRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
         cursor = initialRead.nextCursor
         transport.receive("""
@@ -1725,7 +1729,7 @@ final class AppViewModelTests: XCTestCase {
           "turns":[]
         }}}
         """)
-        await connectTask.value
+        try await waitUntil { !viewModel.isSelectedThreadLoading }
         XCTAssertFalse(viewModel.isSelectedThreadLoading)
 
         let thread = try XCTUnwrap(viewModel.threads.first)
@@ -5517,6 +5521,20 @@ private func waitForSelectedThreadStatus(_ expected: String, in viewModel: AppVi
         try await Task.sleep(nanoseconds: 10_000_000)
     }
     XCTFail("Timed out waiting for selected thread status \(expected).")
+}
+
+@MainActor
+private func waitUntil(
+    _ predicate: @MainActor () -> Bool,
+    failureMessage: String = "Timed out waiting for condition."
+) async throws {
+    for _ in 0..<200 {
+        if predicate() {
+            return
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTFail(failureMessage)
 }
 
 @MainActor

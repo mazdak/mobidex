@@ -287,6 +287,7 @@ final class AppViewModel: ObservableObject {
     private var sidebarSwitchGeneration = 0
     private var liveItems: [CodexThreadItem] = []
     private var selectedThreadLoadingCounts: [String: Int] = [:]
+    private var sessionRefreshDetailLoadGeneration = 0
     private var queuedTurnInputsByThreadID: [String: [[CodexInputItem]]] = [:]
     private var isConnectingAppServer = false
     private var didLoadServers = false
@@ -1812,15 +1813,48 @@ final class AppViewModel: ObservableObject {
             hydrateConversation(from: threadToShow, cacheDetail: false)
         }
 
-        beginSelectedThreadLoad(threadID: threadToShow.id)
-        defer {
-            endSelectedThreadLoad(threadID: threadToShow.id, scope: scope)
+        loadSelectedThreadDetailAfterSessionRefresh(
+            threadID: threadToShow.id,
+            scope: scope,
+            appServer: appServer,
+            expectedSelectedThread: selectedThread
+        )
+    }
+
+    private func loadSelectedThreadDetailAfterSessionRefresh(
+        threadID: String,
+        scope: ThreadLoadScope,
+        appServer: CodexAppServerClient,
+        expectedSelectedThread: CodexThread?
+    ) {
+        sessionRefreshDetailLoadGeneration &+= 1
+        let detailLoadGeneration = sessionRefreshDetailLoadGeneration
+        beginSelectedThreadLoad(threadID: threadID)
+        Task {
+            defer {
+                endSelectedThreadLoad(threadID: threadID, scope: scope)
+            }
+            do {
+                let hydrated = try await appServer.readThread(threadID: threadID)
+                guard self.appServer === appServer,
+                      sessionRefreshDetailLoadGeneration == detailLoadGeneration,
+                      currentThreadLoadScope == scope,
+                      selectedThreadID == threadID,
+                      selectedThread == expectedSelectedThread else {
+                    return
+                }
+                hydrateConversation(from: hydrated)
+            } catch {
+                guard self.appServer === appServer,
+                      sessionRefreshDetailLoadGeneration == detailLoadGeneration,
+                      currentThreadLoadScope == scope,
+                      selectedThreadID == threadID,
+                      selectedThread == expectedSelectedThread else {
+                    return
+                }
+                statusMessage = "Session details failed to load: \(error.localizedDescription)"
+            }
         }
-        let hydrated = try await appServer.readThread(threadID: threadToShow.id)
-        guard currentThreadLoadScope == scope, selectedThreadID == threadToShow.id else {
-            return
-        }
-        hydrateConversation(from: hydrated)
     }
 
     private func resumeThreadForAttachment(_ threadID: String, appServer: CodexAppServerClient) async throws -> CodexThread {
@@ -2250,6 +2284,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private func hydrateConversation(from thread: CodexThread, cacheDetail: Bool = true) {
+        sessionRefreshDetailLoadGeneration &+= 1
         selectedThread = thread
         liveItems = thread.turns.flatMap(\.items)
         if !cacheDetail {

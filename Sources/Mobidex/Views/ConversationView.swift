@@ -417,6 +417,7 @@ struct ConversationView: View {
                     .lineLimit(2...6)
                     .font(.body)
                     .focused($isComposerFocused)
+                    .disabled(isTranscribingAudio)
                     .accessibilityIdentifier("messageComposer")
 
                 if !attachmentPaths.isEmpty {
@@ -444,7 +445,7 @@ struct ConversationView: View {
     }
 
     private var sendDisabled: Bool {
-        !hasComposerInput || !model.canSendMessage
+        isTranscribingAudio || !hasComposerInput || !model.canSendMessage
     }
 
     private var sendButtonBackground: Color {
