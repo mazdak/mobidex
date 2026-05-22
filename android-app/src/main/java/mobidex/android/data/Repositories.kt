@@ -45,6 +45,8 @@ interface CredentialStore {
     suspend fun loadCredential(serverID: String): SSHCredential
     suspend fun saveCredential(credential: SSHCredential, serverID: String)
     suspend fun deleteCredential(serverID: String)
+    suspend fun loadOpenAIAPIKey(): String?
+    suspend fun saveOpenAIAPIKey(key: String?)
 }
 
 interface HostKeyStore {
@@ -112,6 +114,16 @@ class AndroidCredentialStore(context: Context) : CredentialStore {
         }
     }
 
+    override suspend fun loadOpenAIAPIKey(): String? = withContext(Dispatchers.IO) {
+        readSecret(APP_OPENAI_API_KEY)
+    }
+
+    override suspend fun saveOpenAIAPIKey(key: String?) = withContext(Dispatchers.IO) {
+        prefs.edit {
+            writeSecret(APP_OPENAI_API_KEY, key?.trim())
+        }
+    }
+
     private fun android.content.SharedPreferences.Editor.writeSecret(key: String, value: String?) {
         if (value.isNullOrEmpty()) remove(key) else putString(key, valueCrypto.encrypt(value))
     }
@@ -126,6 +138,10 @@ class AndroidCredentialStore(context: Context) : CredentialStore {
     private fun account(serverID: String, kind: String): String {
         UUID.fromString(serverID)
         return "$serverID.$kind"
+    }
+
+    private companion object {
+        const val APP_OPENAI_API_KEY = "app.openai-api-key"
     }
 }
 

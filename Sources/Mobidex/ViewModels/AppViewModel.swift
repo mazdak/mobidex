@@ -50,6 +50,10 @@ private extension CodexThreadItem {
 }
 
 private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+
     var mergeStatusRank: Int {
         switch lowercased() {
         case "completed", "failed", "cancelled", "canceled":
@@ -66,6 +70,74 @@ struct StatusAlert: Identifiable, Equatable {
     var id = UUID()
     var title: String
     var message: String
+}
+
+private enum OpenAITranscriptionError: LocalizedError {
+    case missingAPIKey
+    case invalidResponse
+    case requestFailed(Int, String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingAPIKey:
+            "Add an OpenAI API key in Settings before recording audio."
+        case .invalidResponse:
+            "OpenAI returned an invalid transcription response."
+        case .requestFailed(let status, let message):
+            "OpenAI transcription failed (\(status)): \(message)"
+        }
+    }
+}
+
+protocol OpenAITranscribing: Sendable {
+    func transcribe(audioURL: URL, apiKey: String) async throws -> String
+}
+
+private struct OpenAITranscriptionService: OpenAITranscribing {
+    func transcribe(audioURL: URL, apiKey: String) async throws -> String {
+        let boundary = "mobidex-\(UUID().uuidString)"
+        var request = URLRequest(url: URL(string: "https://api.openai.com/v1/audio/transcriptions")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try multipartBody(audioURL: audioURL, boundary: boundary)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw OpenAITranscriptionError.invalidResponse
+        }
+        guard 200..<300 ~= http.statusCode else {
+            let message = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw OpenAITranscriptionError.requestFailed(http.statusCode, message)
+        }
+        guard let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty else {
+            throw OpenAITranscriptionError.invalidResponse
+        }
+        return text
+    }
+
+    private func multipartBody(audioURL: URL, boundary: String) throws -> Data {
+        var body = Data()
+        body.appendPart("--\(boundary)\r\n")
+        body.appendPart("Content-Disposition: form-data; name=\"model\"\r\n\r\n")
+        body.appendPart("gpt-4o-transcribe\r\n")
+        body.appendPart("--\(boundary)\r\n")
+        body.appendPart("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n")
+        body.appendPart("text\r\n")
+        body.appendPart("--\(boundary)\r\n")
+        body.appendPart("Content-Disposition: form-data; name=\"file\"; filename=\"recording.m4a\"\r\n")
+        body.appendPart("Content-Type: audio/mp4\r\n\r\n")
+        body.append(try Data(contentsOf: audioURL))
+        body.appendPart("\r\n--\(boundary)--\r\n")
+        return body
+    }
+}
+
+private extension Data {
+    mutating func appendPart(_ value: String) {
+        append(Data(value.utf8))
+    }
 }
 
 struct AppServerReconnectStatus: Equatable {
@@ -190,12 +262,14 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var switchingServerID: UUID?
     @Published var selectedReasoningEffort: CodexReasoningEffortOption = .medium
     @Published var selectedAccessMode: CodexAccessMode = .fullAccess
+    @Published private(set) var hasOpenAIAPIKey = false
     @Published var showsArchivedSessions = false
     @Published private var activeOperationCounts: [AppOperation: Int] = [:]
 
     private let repository: ServerRepository
     private let credentialStore: CredentialStore
     private let sshService: SSHService
+    private let openAITranscriptionService: any OpenAITranscribing
     private let activeTurnRefreshIntervalNanoseconds: UInt64
     private let appServerReconnectDelayNanoseconds: UInt64
     private let maxAppServerReconnectAttempts: Int
@@ -227,6 +301,7 @@ final class AppViewModel: ObservableObject {
         repository: ServerRepository,
         credentialStore: CredentialStore,
         sshService: SSHService,
+        openAITranscriptionService: any OpenAITranscribing = OpenAITranscriptionService(),
         activeTurnRefreshIntervalNanoseconds: UInt64 = 1_000_000_000,
         appServerReconnectDelayNanoseconds: UInt64 = 500_000_000,
         maxAppServerReconnectAttempts: Int = 3,
@@ -238,6 +313,7 @@ final class AppViewModel: ObservableObject {
         self.repository = repository
         self.credentialStore = credentialStore
         self.sshService = sshService
+        self.openAITranscriptionService = openAITranscriptionService
         self.activeTurnRefreshIntervalNanoseconds = activeTurnRefreshIntervalNanoseconds
         self.appServerReconnectDelayNanoseconds = appServerReconnectDelayNanoseconds
         self.maxAppServerReconnectAttempts = maxAppServerReconnectAttempts
@@ -246,7 +322,34 @@ final class AppViewModel: ObservableObject {
         self.maxThreadDetailCacheEntries = max(1, maxThreadDetailCacheEntries)
         if loadServersOnInit {
             loadServers()
+            refreshOpenAIAPIKeyState()
         }
+    }
+
+    func loadOpenAIAPIKeyForEditing() -> String {
+        (try? credentialStore.loadOpenAIAPIKey()) ?? ""
+    }
+
+    func saveOpenAIAPIKey(_ key: String) {
+        do {
+            try credentialStore.saveOpenAIAPIKey(key.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty)
+            refreshOpenAIAPIKeyState()
+            statusMessage = hasOpenAIAPIKey ? "OpenAI API key saved." : "OpenAI API key removed."
+        } catch {
+            statusMessage = error.localizedDescription
+            statusAlert = StatusAlert(title: "Settings Not Saved", message: error.localizedDescription)
+        }
+    }
+
+    func transcribeAudio(at url: URL) async throws -> String {
+        guard let apiKey = try credentialStore.loadOpenAIAPIKey()?.nonEmpty else {
+            throw OpenAITranscriptionError.missingAPIKey
+        }
+        return try await openAITranscriptionService.transcribe(audioURL: url, apiKey: apiKey)
+    }
+
+    private func refreshOpenAIAPIKeyState() {
+        hasOpenAIAPIKey = ((try? credentialStore.loadOpenAIAPIKey()) ?? nil)?.nonEmpty != nil
     }
 
     static func appServerReconnectDelayNanoseconds(baseDelayNanoseconds: UInt64, attempt: Int) -> UInt64 {
@@ -644,7 +747,9 @@ final class AppViewModel: ObservableObject {
             throw SSHServiceError.remoteDirectoryBrowseFailed("Select a server before browsing folders.")
         }
         let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
-        return try await sshService.listDirectories(path: path, server: selectedServer, credential: credential)
+        return try await withTimeout(seconds: 20) {
+            try await self.sshService.listDirectories(path: path, server: selectedServer, credential: credential)
+        }
     }
 
     func createRemoteDirectory(parentPath: String, folderName: String) async throws -> RemoteDirectoryListing {
@@ -652,12 +757,14 @@ final class AppViewModel: ObservableObject {
             throw SSHServiceError.remoteDirectoryBrowseFailed("Select a server before creating folders.")
         }
         let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
-        return try await sshService.createDirectory(
-            parentPath: parentPath,
-            folderName: folderName,
-            server: selectedServer,
-            credential: credential
-        )
+        return try await withTimeout(seconds: 20) {
+            try await self.sshService.createDirectory(
+                parentPath: parentPath,
+                folderName: folderName,
+                server: selectedServer,
+                credential: credential
+            )
+        }
     }
 
     @discardableResult
@@ -2921,5 +3028,25 @@ final class AppViewModel: ObservableObject {
         } else {
             activeOperationCounts[operation] = nextCount
         }
+    }
+}
+
+private func withTimeout<T: Sendable>(
+    seconds: Double,
+    operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw SSHServiceError.remoteDirectoryBrowseFailed("Remote folder browsing timed out after \(Int(seconds)) seconds.")
+        }
+        guard let result = try await group.next() else {
+            throw SSHServiceError.remoteDirectoryBrowseFailed("Remote folder browsing did not return a result.")
+        }
+        group.cancelAll()
+        return result
     }
 }

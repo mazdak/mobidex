@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -8,10 +9,14 @@ struct ConversationView: View {
     @State private var composerText = ""
     @State private var composerEditGeneration = 0
     @State private var photoAttachmentGeneration = 0
+    @State private var composerDrafts: [String: ComposerDraft] = [:]
     @State private var selectedDetail: SessionDetailMode = .chat
     @State private var attachmentPaths: [String] = []
     @State private var selectedPhotoItems: [PhotosPickerItem] = []
     @State private var isFileImporterPresented = false
+    @State private var audioRecorder: AudioComposerRecorder?
+    @State private var isRecordingAudio = false
+    @State private var isTranscribingAudio = false
     @State private var attachmentAlert: AttachmentAlert?
     @State private var showsContextPopover = false
     @State private var isTimelineNearBottom = true
@@ -63,24 +68,13 @@ struct ConversationView: View {
         }
         .navigationTitle(model.selectedThread?.title ?? model.selectedProject?.displayName ?? "Conversation")
         .navigationBarTitleDisplayMode(.inline)
-            .onChange(of: model.selectedThreadID) { _, _ in
+            .onAppear {
+                loadComposerDraft(for: composerDraftKey)
+            }
+            .onChange(of: composerDraftKey) { oldKey, newKey in
                 selectedDetail = .chat
-                composerText = ""
-                attachmentPaths = []
-                selectedPhotoItems = []
-                photoAttachmentGeneration &+= 1
-                composerEditGeneration &+= 1
-            }
-            .onChange(of: model.selectedServerID) { _, _ in
-                composerText = ""
-                attachmentPaths = []
-                selectedPhotoItems = []
-                photoAttachmentGeneration &+= 1
-                composerEditGeneration &+= 1
-            }
-            .onChange(of: model.selectedProjectID) { _, _ in
-                composerText = ""
-                attachmentPaths = []
+                saveComposerDraft(for: oldKey)
+                loadComposerDraft(for: newKey)
                 selectedPhotoItems = []
                 photoAttachmentGeneration &+= 1
                 composerEditGeneration &+= 1
@@ -89,12 +83,12 @@ struct ConversationView: View {
                 guard !items.isEmpty else { return }
                 composerEditGeneration &+= 1
                 photoAttachmentGeneration &+= 1
-                let threadID = model.selectedThreadID
+                let draftKey = composerDraftKey
                 let attachmentGeneration = photoAttachmentGeneration
                 Task {
                     await persistPhotoItems(
                         items,
-                        selectedThreadID: threadID,
+                        composerDraftKey: draftKey,
                         attachmentGeneration: attachmentGeneration
                     )
                 }
@@ -458,6 +452,7 @@ struct ConversationView: View {
         } set: { newValue in
             composerText = newValue
             composerEditGeneration &+= 1
+            saveComposerDraft(for: composerDraftKey)
         }
     }
 
@@ -495,12 +490,16 @@ struct ConversationView: View {
     }
 
     private var attachmentIcon: some View {
-        HStack(spacing: 8) {
+        Menu {
+            Button {
+                toggleAudioRecording()
+            } label: {
+                Label(isRecordingAudio ? "Stop Recording" : "Record Audio", systemImage: isRecordingAudio ? "stop.circle" : "mic")
+            }
+            .disabled(isTranscribingAudio)
+
             PhotosPicker(selection: $selectedPhotoItems, matching: .images) {
-                Image(systemName: "photo")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
+                Label("Photo", systemImage: "photo")
             }
             .accessibilityLabel("Attach Photo")
             .accessibilityIdentifier("photoAttachmentButton")
@@ -508,14 +507,15 @@ struct ConversationView: View {
             Button {
                 isFileImporterPresented = true
             } label: {
-                Image(systemName: "doc")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 32, height: 32)
+                Label("File", systemImage: "doc")
             }
-            .buttonStyle(.plain)
             .accessibilityLabel("Attach File")
             .accessibilityIdentifier("fileAttachmentButton")
+        } label: {
+            Image(systemName: isTranscribingAudio ? "waveform" : "plus")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
         }
         .accessibilityLabel("Attach")
     }
@@ -602,13 +602,12 @@ struct ConversationView: View {
     private func submitComposerInput(queueWhenActive: Bool) {
         let text = composerText
         let attachments = attachmentPaths
-        let submittedServerID = model.selectedServerID
-        let submittedThreadID = model.selectedThreadID
-        let submittedProjectID = model.selectedProjectID
+        let submittedDraftKey = composerDraftKey
         let submittedEditGeneration = composerEditGeneration
         isComposerFocused = false
         composerText = ""
         attachmentPaths = []
+        clearComposerDraft(for: submittedDraftKey)
         photoAttachmentGeneration &+= 1
         selectedPhotoItems = []
         model.requestConversationSendScroll()
@@ -623,17 +622,51 @@ struct ConversationView: View {
                     title: "Message Not Sent",
                     message: model.statusMessage ?? "Mobidex could not send this message."
                 )
-                guard model.selectedServerID == submittedServerID,
-                      model.selectedThreadID == submittedThreadID,
-                      model.selectedProjectID == submittedProjectID,
+                guard composerDraftKey == submittedDraftKey,
                       composerEditGeneration == submittedEditGeneration else {
                     return
                 }
                 composerText = text
                 attachmentPaths = attachments
+                saveComposerDraft(for: submittedDraftKey)
                 return
             }
         }
+    }
+
+    private var composerDraftKey: String? {
+        guard let serverID = model.selectedServerID else { return nil }
+        if let threadID = model.selectedThreadID {
+            return "server:\(serverID.uuidString)|thread:\(threadID)"
+        }
+        if let projectID = model.selectedProjectID {
+            return "server:\(serverID.uuidString)|project:\(projectID.uuidString)"
+        }
+        return "server:\(serverID.uuidString)|new"
+    }
+
+    private func saveComposerDraft(for key: String?) {
+        guard let key else { return }
+        if composerText.isEmpty && attachmentPaths.isEmpty {
+            composerDrafts.removeValue(forKey: key)
+        } else {
+            composerDrafts[key] = ComposerDraft(text: composerText, attachmentPaths: attachmentPaths)
+        }
+    }
+
+    private func loadComposerDraft(for key: String?) {
+        guard let key, let draft = composerDrafts[key] else {
+            composerText = ""
+            attachmentPaths = []
+            return
+        }
+        composerText = draft.text
+        attachmentPaths = draft.attachmentPaths
+    }
+
+    private func clearComposerDraft(for key: String?) {
+        guard let key else { return }
+        composerDrafts.removeValue(forKey: key)
     }
 
     private var contextIndicator: some View {
@@ -680,6 +713,7 @@ struct ConversationView: View {
                         Button {
                             attachmentPaths.removeAll { $0 == path }
                             composerEditGeneration &+= 1
+                            saveComposerDraft(for: composerDraftKey)
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                         }
@@ -698,7 +732,7 @@ struct ConversationView: View {
     @MainActor
     private func persistPhotoItems(
         _ items: [PhotosPickerItem],
-        selectedThreadID: String?,
+        composerDraftKey: String?,
         attachmentGeneration: Int
     ) async {
         var savedPaths: [String] = []
@@ -717,13 +751,14 @@ struct ConversationView: View {
                 continue
             }
         }
-        guard model.selectedThreadID == selectedThreadID,
+        guard self.composerDraftKey == composerDraftKey,
               photoAttachmentGeneration == attachmentGeneration else {
             selectedPhotoItems = []
             return
         }
         if !savedPaths.isEmpty {
             attachmentPaths.append(contentsOf: savedPaths)
+            saveComposerDraft(for: composerDraftKey)
         } else {
             attachmentAlert = AttachmentAlert(
                 title: "Photo Not Attached",
@@ -763,6 +798,7 @@ struct ConversationView: View {
         }
         if didAttachFile {
             composerEditGeneration &+= 1
+            saveComposerDraft(for: composerDraftKey)
         }
         if !didAttachFile {
             attachmentAlert = AttachmentAlert(
@@ -771,6 +807,115 @@ struct ConversationView: View {
             )
         }
     }
+
+    private func toggleAudioRecording() {
+        if isRecordingAudio {
+            stopAndTranscribeAudio()
+        } else {
+            startAudioRecording()
+        }
+    }
+
+    private func startAudioRecording() {
+        Task { @MainActor in
+            let granted = await AVAudioApplication.requestRecordPermission()
+            guard granted else {
+                attachmentAlert = AttachmentAlert(title: "Microphone Disabled", message: "Allow microphone access in Settings to record audio.")
+                return
+            }
+            do {
+                let recorder = try AudioComposerRecorder()
+                try recorder.start()
+                audioRecorder = recorder
+                isRecordingAudio = true
+            } catch {
+                attachmentAlert = AttachmentAlert(title: "Recording Failed", message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func stopAndTranscribeAudio() {
+        guard let recorder = audioRecorder else { return }
+        audioRecorder = nil
+        isRecordingAudio = false
+        let url = recorder.stop()
+        let draftKey = composerDraftKey
+        isTranscribingAudio = true
+        Task {
+            defer {
+                try? FileManager.default.removeItem(at: url)
+                isTranscribingAudio = false
+            }
+            do {
+                let transcript = try await model.transcribeAudio(at: url)
+                if composerDraftKey == draftKey {
+                    let separator = composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n"
+                    composerText += "\(separator)\(transcript)"
+                    composerEditGeneration &+= 1
+                    saveComposerDraft(for: draftKey)
+                } else if let draftKey {
+                    let existingDraft = composerDrafts[draftKey]
+                    let existingText = existingDraft?.text ?? ""
+                    let separator = existingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\n"
+                    composerDrafts[draftKey] = ComposerDraft(
+                        text: "\(existingText)\(separator)\(transcript)",
+                        attachmentPaths: existingDraft?.attachmentPaths ?? []
+                    )
+                }
+            } catch {
+                attachmentAlert = AttachmentAlert(title: "Transcription Failed", message: error.localizedDescription)
+            }
+        }
+    }
+}
+
+private final class AudioComposerRecorder {
+    private let recorder: AVAudioRecorder
+    private let audioSession = AVAudioSession.sharedInstance()
+    let url: URL
+
+    init() throws {
+        url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mobidex-audio-\(UUID().uuidString)")
+            .appendingPathExtension("m4a")
+        recorder = try AVAudioRecorder(
+            url: url,
+            settings: [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            ]
+        )
+    }
+
+    func start() throws {
+        try audioSession.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetooth])
+        try audioSession.setActive(true)
+        guard recorder.record() else {
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+            throw AudioComposerRecorderError.recordingDidNotStart
+        }
+    }
+
+    func stop() -> URL {
+        recorder.stop()
+        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+        return url
+    }
+}
+
+private enum AudioComposerRecorderError: LocalizedError {
+    case recordingDidNotStart
+
+    var errorDescription: String? {
+        "Could not start audio recording."
+    }
+}
+
+private struct ComposerDraft {
+    var text: String
+    var attachmentPaths: [String]
 }
 
 private struct AttachmentAlert: Identifiable {

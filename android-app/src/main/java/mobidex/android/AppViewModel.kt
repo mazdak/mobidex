@@ -12,6 +12,7 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -43,6 +45,7 @@ import mobidex.android.model.conversationSections
 import mobidex.android.service.CodexAppServerClient
 import mobidex.android.service.CodexAppServerEvent
 import mobidex.android.service.MobidexSshService
+import mobidex.android.service.OpenAITranscriptionService
 import mobidex.android.service.RemoteTerminalSession
 import mobidex.android.service.SshjMobidexSshService
 import mobidex.android.service.array
@@ -90,6 +93,7 @@ data class MobidexUiState(
     val isRefreshingSessions: Boolean = false,
     val selectedReasoningEffort: CodexReasoningEffortOption = CodexReasoningEffortOption.Medium,
     val selectedAccessMode: CodexAccessMode = CodexAccessMode.FullAccess,
+    val hasOpenAIAPIKey: Boolean = false,
     val showsArchivedSessions: Boolean = false,
     val isDiscoveringProjects: Boolean = false,
     val diffSnapshot: GitDiffSnapshot = GitDiffSnapshot.Empty,
@@ -187,7 +191,36 @@ class AppViewModel(
         _state.update {
             it.copy(dismissedMacOSPrivacyWarning = preferences.getBoolean(MACOS_PRIVACY_WARNING_DISMISSED_KEY, false))
         }
+        viewModelScope.launch { refreshOpenAIAPIKeyState() }
         viewModelScope.launch { loadServers() }
+    }
+
+    suspend fun loadOpenAIAPIKeyForEditing(): String = credentialStore.loadOpenAIAPIKey().orEmpty()
+
+    fun saveOpenAIAPIKey(key: String) {
+        viewModelScope.launch {
+            runCatching {
+                credentialStore.saveOpenAIAPIKey(key.trim().ifEmpty { null })
+                refreshOpenAIAPIKeyState()
+            }.onSuccess {
+                _state.update { state ->
+                    state.copy(statusMessage = if (state.hasOpenAIAPIKey) "OpenAI API key saved." else "OpenAI API key removed.")
+                }
+            }.onFailure { error ->
+                _state.update { it.copy(statusMessage = error.message ?: "Could not save OpenAI API key.") }
+            }
+        }
+    }
+
+    suspend fun transcribeAudio(file: File): String {
+        val key = credentialStore.loadOpenAIAPIKey()?.takeIf { it.isNotBlank() }
+            ?: error("Add an OpenAI API key in Settings before recording audio.")
+        return OpenAITranscriptionService().transcribe(file, key)
+    }
+
+    private suspend fun refreshOpenAIAPIKeyState() {
+        val hasKey = !credentialStore.loadOpenAIAPIKey().isNullOrBlank()
+        _state.update { it.copy(hasOpenAIAPIKey = hasKey) }
     }
 
     fun selectServer(serverID: String?) {
@@ -349,13 +382,17 @@ class AppViewModel(
     suspend fun listRemoteDirectories(path: String): RemoteDirectoryListing {
         val state = _state.value
         val server = state.selectedServer ?: error("Select a server before browsing folders.")
-        return sshService.listDirectories(path, server, credentialStore.loadCredential(server.id))
+        return withRemoteDirectoryBrowseTimeout {
+            sshService.listDirectories(path, server, credentialStore.loadCredential(server.id))
+        }
     }
 
     suspend fun createRemoteDirectory(parentPath: String, folderName: String): RemoteDirectoryListing {
         val state = _state.value
         val server = state.selectedServer ?: error("Select a server before creating folders.")
-        return sshService.createDirectory(parentPath, folderName, server, credentialStore.loadCredential(server.id))
+        return withRemoteDirectoryBrowseTimeout {
+            sshService.createDirectory(parentPath, folderName, server, credentialStore.loadCredential(server.id))
+        }
     }
 
     fun loadCredential(serverID: String, onLoaded: (SSHCredential) -> Unit) {
@@ -1955,6 +1992,14 @@ private fun String.isImageAttachmentPath(): Boolean =
     substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp")
 
 private const val MACOS_PRIVACY_WARNING_DISMISSED_KEY = "dismissedMacOSPrivacyWarning"
+private const val REMOTE_DIRECTORY_BROWSE_TIMEOUT_MILLIS = 20_000L
+
+private suspend fun <T> withRemoteDirectoryBrowseTimeout(block: suspend () -> T): T =
+    try {
+        withTimeout(REMOTE_DIRECTORY_BROWSE_TIMEOUT_MILLIS) { block() }
+    } catch (error: TimeoutCancellationException) {
+        throw IllegalStateException("Remote folder browsing timed out after 20 seconds.", error)
+    }
 
 private fun String.sanitizedAttachmentName(): String {
     val sanitized = replace(Regex("""[^A-Za-z0-9._-]"""), "_").trim('_')

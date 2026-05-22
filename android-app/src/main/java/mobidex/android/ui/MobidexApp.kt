@@ -1,6 +1,9 @@
 package mobidex.android.ui
 
+import android.Manifest
 import android.animation.ValueAnimator
+import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.net.Uri
 import android.util.Base64
 import android.view.ViewGroup
@@ -56,10 +59,12 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Stop
@@ -98,6 +103,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -111,6 +117,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -123,6 +130,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.core.content.ContextCompat
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.collect
@@ -154,6 +163,8 @@ fun MobidexApp(model: AppViewModel) {
     var showServerEditor by remember { mutableStateOf<ServerRecord?>(null) }
     var showNewServer by remember { mutableStateOf(false) }
     var showProjectAdd by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    val composerDrafts = remember { mutableStateMapOf<String, AndroidComposerDraft>() }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         BoxWithConstraints {
@@ -161,17 +172,21 @@ fun MobidexApp(model: AppViewModel) {
                 WideMobidexApp(
                     state = state,
                     model = model,
+                    composerDrafts = composerDrafts,
                     onAddServer = { showNewServer = true },
                     onEditServer = { showServerEditor = it },
                     onAddProject = { showProjectAdd = true },
+                    onSettings = { showSettings = true },
                 )
             } else {
                 CompactMobidexApp(
                     state = state,
                     model = model,
+                    composerDrafts = composerDrafts,
                     onAddServer = { showNewServer = true },
                     onEditServer = { showServerEditor = it },
                     onAddProject = { showProjectAdd = true },
+                    onSettings = { showSettings = true },
                 )
             }
         }
@@ -198,22 +213,27 @@ fun MobidexApp(model: AppViewModel) {
             },
         )
     }
+    if (showSettings) {
+        SettingsDialog(model = model, onDismiss = { showSettings = false })
+    }
 }
 
 @Composable
 private fun WideMobidexApp(
     state: MobidexUiState,
     model: AppViewModel,
+    composerDrafts: MutableMap<String, AndroidComposerDraft>,
     onAddServer: () -> Unit,
     onEditServer: (ServerRecord) -> Unit,
     onAddProject: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     Row(Modifier.fillMaxSize()) {
-        ServerPane(state, model, onAddServer, onEditServer, Modifier.width(300.dp).fillMaxHeight())
+        ServerPane(state, model, onAddServer, onEditServer, onSettings, Modifier.width(300.dp).fillMaxHeight())
         VerticalDivider(Modifier.fillMaxHeight())
         ProjectSessionPane(state, model, onAddProject, onEditServer, Modifier.width(380.dp).fillMaxHeight())
         VerticalDivider(Modifier.fillMaxHeight())
-        ConversationPane(state, model, Modifier.weight(1f).fillMaxHeight())
+        ConversationPane(state, model, composerDrafts, Modifier.weight(1f).fillMaxHeight())
     }
 }
 
@@ -222,9 +242,11 @@ private fun WideMobidexApp(
 private fun CompactMobidexApp(
     state: MobidexUiState,
     model: AppViewModel,
+    composerDrafts: MutableMap<String, AndroidComposerDraft>,
     onAddServer: () -> Unit,
     onEditServer: (ServerRecord) -> Unit,
     onAddProject: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     var tab by remember { mutableStateOf(0) }
     Scaffold(
@@ -249,9 +271,9 @@ private fun CompactMobidexApp(
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (tab) {
-                0 -> ServerPane(state, model, onAddServer, onEditServer, Modifier.fillMaxSize(), onOpenProjects = { tab = 1 })
+                0 -> ServerPane(state, model, onAddServer, onEditServer, onSettings, Modifier.fillMaxSize(), onOpenProjects = { tab = 1 })
                 1 -> ProjectSessionPane(state, model, onAddProject, onEditServer, Modifier.fillMaxSize(), onOpenDetail = { tab = 2 })
-                else -> ConversationPane(state, model, Modifier.fillMaxSize())
+                else -> ConversationPane(state, model, composerDrafts, Modifier.fillMaxSize())
             }
         }
     }
@@ -270,12 +292,16 @@ private fun ServerPane(
     model: AppViewModel,
     onAddServer: () -> Unit,
     onEditServer: (ServerRecord) -> Unit,
+    onSettings: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenProjects: () -> Unit = {},
 ) {
     var serverPendingDeletion by remember { mutableStateOf<ServerRecord?>(null) }
     Column(modifier) {
         PaneHeader("Servers", Icons.Default.Storage) {
+            IconButton(onClick = onSettings) {
+                Icon(Icons.Default.Settings, contentDescription = "Settings")
+            }
             IconButton(onClick = onAddServer) {
                 Icon(Icons.Default.Add, contentDescription = "Add Server")
             }
@@ -367,6 +393,11 @@ private fun ProjectSessionPane(
         if (server == null) {
             EmptyState("Select a Server", "Choose a saved SSH server.", Icons.Default.Storage)
             return@Column
+        }
+        LaunchedEffect(server.id) {
+            if (state.connectionState == ServerConnectionState.Disconnected) {
+                model.connectSelectedServer()
+            }
         }
 
         Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -463,6 +494,43 @@ private fun DeleteServerConfirmationDialog(
                 Text("Cancel")
             }
         },
+    )
+}
+
+@Composable
+private fun SettingsDialog(model: AppViewModel, onDismiss: () -> Unit) {
+    var openAIKey by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        openAIKey = model.loadOpenAIAPIKeyForEditing()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Settings") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = openAIKey,
+                    onValueChange = { openAIKey = it },
+                    label = { Text("OpenAI API key") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Text(
+                    "Used for audio transcription. The key is stored on this device and sent only to OpenAI when transcribing audio.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                model.saveOpenAIAPIKey(openAIKey)
+                onDismiss()
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
@@ -902,7 +970,12 @@ private fun ThreadList(
 }
 
 @Composable
-private fun ConversationPane(state: MobidexUiState, model: AppViewModel, modifier: Modifier = Modifier) {
+private fun ConversationPane(
+    state: MobidexUiState,
+    model: AppViewModel,
+    composerDrafts: MutableMap<String, AndroidComposerDraft>,
+    modifier: Modifier = Modifier,
+) {
     var detail by remember { mutableStateOf(SessionDetailMode.Chat) }
     val thread = state.selectedThread
     val project = state.selectedProject
@@ -916,7 +989,7 @@ private fun ConversationPane(state: MobidexUiState, model: AppViewModel, modifie
                 }
             }
             when (detail) {
-                SessionDetailMode.Chat -> ChatTimeline(state, model, Modifier.weight(1f))
+                SessionDetailMode.Chat -> ChatTimeline(state, model, composerDrafts, Modifier.weight(1f))
                 SessionDetailMode.Changes -> ChangesView(state, model, Modifier.weight(1f))
             }
         } else if (project != null) {
@@ -1040,12 +1113,17 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
 }
 
 @Composable
-private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: Modifier = Modifier) {
-    val composerScope = listOf(state.selectedServerID, state.selectedProjectID, state.selectedThreadID)
-    var composer by remember(composerScope) { mutableStateOf("") }
-    var attachmentUris by remember(composerScope) { mutableStateOf<List<Uri>>(emptyList()) }
-    var composerEditGeneration by remember(composerScope) { mutableStateOf(0) }
-    val currentComposerScope by rememberUpdatedState(composerScope)
+private fun ChatTimeline(
+    state: MobidexUiState,
+    model: AppViewModel,
+    composerDrafts: MutableMap<String, AndroidComposerDraft>,
+    modifier: Modifier = Modifier,
+) {
+    val composerKey = state.composerDraftKey()
+    var composer by remember(composerKey) { mutableStateOf(composerKey?.let { composerDrafts[it]?.text }.orEmpty()) }
+    var attachmentUris by remember(composerKey) { mutableStateOf(composerKey?.let { composerDrafts[it]?.attachmentUris }.orEmpty()) }
+    var composerEditGeneration by remember(composerKey) { mutableStateOf(0) }
+    val currentComposerKey by rememberUpdatedState(composerKey)
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     var shouldFollowTail by remember(state.selectedThreadID) { mutableStateOf(true) }
@@ -1057,14 +1135,18 @@ private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: M
     fun submitComposerInput(queueWhenActive: Boolean) {
         val sentText = composer
         val sentAttachments = attachmentUris
-        val submittedScope = composerScope
+        val submittedComposerKey = composerKey
         val submittedEditGeneration = composerEditGeneration
         composer = ""
         attachmentUris = emptyList()
+        submittedComposerKey?.let { composerDrafts.remove(it) }
         model.sendComposerInput(sentText, sentAttachments, queueWhenActive = queueWhenActive) { sent ->
-            if (sent || composerEditGeneration != submittedEditGeneration || submittedScope != currentComposerScope) return@sendComposerInput
+            if (sent || composerEditGeneration != submittedEditGeneration || submittedComposerKey != currentComposerKey) return@sendComposerInput
             composer = sentText
             attachmentUris = sentAttachments
+            submittedComposerKey?.let {
+                composerDrafts[it] = AndroidComposerDraft(sentText, sentAttachments)
+            }
         }
     }
 
@@ -1137,11 +1219,17 @@ private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: M
             onValueChange = {
                 composer = it
                 composerEditGeneration += 1
+                composerKey?.let { key ->
+                    composerDrafts.updateComposerDraft(key, composer, attachmentUris)
+                }
             },
             attachmentUris = attachmentUris,
             onAttachmentUrisChange = {
                 attachmentUris = it
                 composerEditGeneration += 1
+                composerKey?.let { key ->
+                    composerDrafts.updateComposerDraft(key, composer, attachmentUris)
+                }
             },
             state = state,
             model = model,
@@ -1151,7 +1239,39 @@ private fun ChatTimeline(state: MobidexUiState, model: AppViewModel, modifier: M
             onSendFollowUp = {
                 submitComposerInput(queueWhenActive = true)
             },
+            onTranscript = { transcript ->
+                val separator = if (composer.trim().isEmpty()) "" else "\n"
+                composer += "$separator$transcript"
+                composerEditGeneration += 1
+                composerKey?.let { key ->
+                    composerDrafts.updateComposerDraft(key, composer, attachmentUris)
+                }
+            },
         )
+    }
+}
+
+private data class AndroidComposerDraft(
+    val text: String,
+    val attachmentUris: List<Uri>,
+)
+
+private fun MobidexUiState.composerDraftKey(): String? {
+    val serverID = selectedServerID ?: return null
+    selectedThreadID?.let { return "server:$serverID|thread:$it" }
+    selectedProjectID?.let { return "server:$serverID|project:$it" }
+    return "server:$serverID|new"
+}
+
+private fun MutableMap<String, AndroidComposerDraft>.updateComposerDraft(
+    key: String,
+    text: String,
+    attachmentUris: List<Uri>,
+) {
+    if (text.isEmpty() && attachmentUris.isEmpty()) {
+        remove(key)
+    } else {
+        this[key] = AndroidComposerDraft(text, attachmentUris)
     }
 }
 
@@ -1233,11 +1353,51 @@ private fun Composer(
     model: AppViewModel,
     onSend: () -> Unit,
     onSendFollowUp: () -> Unit,
+    onTranscript: (String) -> Unit,
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var showAttachOptions by remember { mutableStateOf(false) }
     var showEffort by remember { mutableStateOf(false) }
     var showAccess by remember { mutableStateOf(false) }
     var showSendOptions by remember { mutableStateOf(false) }
+    var audioRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var audioFile by remember { mutableStateOf<File?>(null) }
+    var isRecordingAudio by remember { mutableStateOf(false) }
+    var isTranscribingAudio by remember { mutableStateOf(false) }
+    var audioError by remember { mutableStateOf<String?>(null) }
     val sendEnabled = (value.trim().isNotEmpty() || attachmentUris.isNotEmpty()) && state.canSendMessage
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) {
+            audioError = "Allow microphone access in Settings to record audio."
+            return@rememberLauncherForActivityResult
+        }
+        audioError = null
+        var startedFile: File? = null
+        var startedRecorder: MediaRecorder? = null
+        runCatching {
+            val file = File(context.cacheDir, "mobidex-audio-${System.currentTimeMillis()}.m4a")
+            val recorder = MediaRecorder(context).apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioSamplingRate(44_100)
+                setAudioChannels(1)
+                setOutputFile(file.absolutePath)
+                prepare()
+                start()
+            }
+            startedFile = file
+            startedRecorder = recorder
+            audioFile = file
+            audioRecorder = recorder
+            isRecordingAudio = true
+        }.onFailure { error ->
+            runCatching { startedRecorder?.release() }
+            runCatching { startedFile?.delete() }
+            audioError = error.message ?: "Could not start audio recording."
+        }
+    }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
         if (uris.isNotEmpty()) onAttachmentUrisChange(attachmentUris + uris)
     }
@@ -1271,11 +1431,68 @@ private fun Composer(
             }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            IconButton(onClick = { photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                Icon(Icons.Default.Photo, contentDescription = "Attach Photo")
-            }
-            IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
-                Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = "Attach File")
+            Box {
+                IconButton(onClick = { showAttachOptions = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "Attach")
+                }
+                DropdownMenu(expanded = showAttachOptions, onDismissRequest = { showAttachOptions = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (isRecordingAudio) "Stop Recording" else "Record Audio") },
+                        onClick = {
+                            showAttachOptions = false
+                            if (isRecordingAudio) {
+                                val file = audioFile
+                                val recorder = audioRecorder
+                                audioRecorder = null
+                                audioFile = null
+                                isRecordingAudio = false
+                                audioError = null
+                                val stopped = runCatching { recorder?.stop() }
+                                runCatching { recorder?.release() }
+                                if (stopped.isFailure) {
+                                    runCatching { file?.delete() }
+                                    audioError = stopped.exceptionOrNull()?.message ?: "Could not finish audio recording."
+                                } else if (file != null) {
+                                    isTranscribingAudio = true
+                                    coroutineScope.launch {
+                                        try {
+                                            runCatching { model.transcribeAudio(file) }
+                                                .onSuccess(onTranscript)
+                                                .onFailure { error -> audioError = error.message ?: "Could not transcribe audio." }
+                                        } finally {
+                                            withContext(NonCancellable) {
+                                                runCatching { file.delete() }
+                                            }
+                                            isTranscribingAudio = false
+                                        }
+                                    }
+                                }
+                            } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            } else {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        leadingIcon = { Icon(if (isRecordingAudio) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null) },
+                        enabled = !isTranscribingAudio,
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Photo") },
+                        onClick = {
+                            showAttachOptions = false
+                            photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        },
+                        leadingIcon = { Icon(Icons.Default.Photo, contentDescription = null) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("File") },
+                        onClick = {
+                            showAttachOptions = false
+                            filePicker.launch(arrayOf("*/*"))
+                        },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null) },
+                    )
+                }
             }
             Box {
                 IconButton(onClick = { showAccess = true }) {
@@ -1341,6 +1558,9 @@ private fun Composer(
                     )
                 }
             }
+        }
+        audioError?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
@@ -1582,7 +1802,7 @@ private fun ProjectAddDialog(model: AppViewModel, onDismiss: () -> Unit, onAdd: 
                         value = path,
                         onValueChange = { path = it },
                         label = { Text("Remote Path") },
-                        placeholder = { Text("/home/user/project") },
+                        placeholder = { Text("~/project") },
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(onClick = { showingBrowser = true }) {
@@ -1633,7 +1853,7 @@ private fun ProjectAddDialog(model: AppViewModel, onDismiss: () -> Unit, onAdd: 
     if (showingBrowser) {
         RemoteDirectoryBrowserDialog(
             model = model,
-            initialPath = path.trim().ifEmpty { "/" },
+            initialPath = path.trim().ifEmpty { "~" },
             onDismiss = { showingBrowser = false },
             onChoose = { selectedPath ->
                 path = selectedPath

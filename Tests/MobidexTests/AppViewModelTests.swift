@@ -3,6 +3,71 @@ import NIOCore
 @testable import Mobidex
 
 final class AppViewModelTests: XCTestCase {
+    @MainActor
+    func testOpenAIAPIKeySettingsPersistAndUpdateState() {
+        let credentials = InMemoryCredentialStore()
+        let viewModel = AppViewModel(
+            repository: InMemoryServerRepository(),
+            credentialStore: credentials,
+            sshService: StubSSHService(),
+            loadServersOnInit: false
+        )
+
+        XCTAssertFalse(viewModel.hasOpenAIAPIKey)
+        XCTAssertEqual(viewModel.loadOpenAIAPIKeyForEditing(), "")
+
+        viewModel.saveOpenAIAPIKey("  sk-test-key  ")
+
+        XCTAssertTrue(viewModel.hasOpenAIAPIKey)
+        XCTAssertEqual(viewModel.loadOpenAIAPIKeyForEditing(), "sk-test-key")
+        XCTAssertEqual(viewModel.statusMessage, "OpenAI API key saved.")
+
+        viewModel.saveOpenAIAPIKey("")
+
+        XCTAssertFalse(viewModel.hasOpenAIAPIKey)
+        XCTAssertEqual(viewModel.loadOpenAIAPIKeyForEditing(), "")
+        XCTAssertEqual(viewModel.statusMessage, "OpenAI API key removed.")
+    }
+
+    @MainActor
+    func testTranscribeAudioRequiresSavedOpenAIAPIKey() async throws {
+        let viewModel = AppViewModel(
+            repository: InMemoryServerRepository(),
+            credentialStore: InMemoryCredentialStore(),
+            sshService: StubSSHService(),
+            openAITranscriptionService: SpyOpenAITranscriptionService(),
+            loadServersOnInit: false
+        )
+        let audioURL = try temporaryAudioFile()
+
+        do {
+            _ = try await viewModel.transcribeAudio(at: audioURL)
+            XCTFail("Expected missing OpenAI API key to fail.")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "Add an OpenAI API key in Settings before recording audio.")
+        }
+    }
+
+    @MainActor
+    func testTranscribeAudioUsesSavedOpenAIAPIKeyAndReturnsTranscript() async throws {
+        let transcription = SpyOpenAITranscriptionService(transcript: "ship it")
+        let viewModel = AppViewModel(
+            repository: InMemoryServerRepository(),
+            credentialStore: InMemoryCredentialStore(),
+            sshService: StubSSHService(),
+            openAITranscriptionService: transcription,
+            loadServersOnInit: false
+        )
+        viewModel.saveOpenAIAPIKey("sk-test")
+        let audioURL = try temporaryAudioFile()
+
+        let transcript = try await viewModel.transcribeAudio(at: audioURL)
+
+        XCTAssertEqual(transcript, "ship it")
+        XCTAssertEqual(transcription.lastAPIKey, "sk-test")
+        XCTAssertEqual(transcription.lastAudioURL, audioURL)
+    }
+
     func testTailscaleTCPTimeoutDiagnosticExplainsDeviceReachability() {
         let report = SSHDiagnosticReport(
             host: "them4maxmacbookpro.tail866988.ts.net:22",
@@ -4782,6 +4847,10 @@ private final class SpyCredentialStore: CredentialStore, @unchecked Sendable {
             _ = values.removeValue(forKey: serverID)
         }
     }
+
+    func loadOpenAIAPIKey() throws -> String? { nil }
+
+    func saveOpenAIAPIKey(_ key: String?) throws {}
 }
 
 private final class ThreadCheckingCredentialStore: CredentialStore, @unchecked Sendable {
@@ -4807,6 +4876,10 @@ private final class ThreadCheckingCredentialStore: CredentialStore, @unchecked S
     func saveCredential(_ credential: SSHCredential, serverID: UUID) throws {}
 
     func deleteCredential(serverID: UUID) throws {}
+
+    func loadOpenAIAPIKey() throws -> String? { nil }
+
+    func saveOpenAIAPIKey(_ key: String?) throws {}
 }
 
 private final class FailingFirstSaveCredentialStore: CredentialStore, @unchecked Sendable {
@@ -4837,6 +4910,10 @@ private final class FailingFirstSaveCredentialStore: CredentialStore, @unchecked
             credential = SSHCredential()
         }
     }
+
+    func loadOpenAIAPIKey() throws -> String? { nil }
+
+    func saveOpenAIAPIKey(_ key: String?) throws {}
 }
 
 private final class BlockingSaveCredentialStore: CredentialStore, @unchecked Sendable {
@@ -4873,6 +4950,37 @@ private final class BlockingSaveCredentialStore: CredentialStore, @unchecked Sen
         lock.withLock {
             credential = SSHCredential()
         }
+    }
+
+    func loadOpenAIAPIKey() throws -> String? { nil }
+
+    func saveOpenAIAPIKey(_ key: String?) throws {}
+}
+
+private final class SpyOpenAITranscriptionService: OpenAITranscribing, @unchecked Sendable {
+    private let transcript: String
+    private let lock = NSLock()
+    private var apiKey: String?
+    private var audioURL: URL?
+
+    init(transcript: String = "transcript") {
+        self.transcript = transcript
+    }
+
+    var lastAPIKey: String? {
+        lock.withLock { apiKey }
+    }
+
+    var lastAudioURL: URL? {
+        lock.withLock { audioURL }
+    }
+
+    func transcribe(audioURL: URL, apiKey: String) async throws -> String {
+        lock.withLock {
+            self.apiKey = apiKey
+            self.audioURL = audioURL
+        }
+        return transcript
     }
 }
 
@@ -5470,6 +5578,14 @@ private func waitForConversationSection(
         try await Task.sleep(nanoseconds: 10_000_000)
     }
     XCTFail("Timed out waiting for \(kind) conversation section containing \(text).")
+}
+
+private func temporaryAudioFile() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mobidex-test-audio-\(UUID().uuidString)")
+        .appendingPathExtension("m4a")
+    try Data("audio".utf8).write(to: url)
+    return url
 }
 
 private extension Array {

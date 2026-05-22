@@ -4,6 +4,7 @@ struct RootView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject private var model: AppViewModel
     @State private var showingAddServer = false
+    @State private var showingSettings = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
     @State private var preferredCompactColumn: NavigationSplitViewColumn = .sidebar
 
@@ -11,6 +12,7 @@ struct RootView: View {
         NavigationSplitView(columnVisibility: $columnVisibility, preferredCompactColumn: $preferredCompactColumn) {
             ServerSidebarView(
                 showingAddServer: $showingAddServer,
+                showingSettings: $showingSettings,
                 columnVisibility: $columnVisibility,
                 preferredCompactColumn: $preferredCompactColumn
             )
@@ -26,6 +28,10 @@ struct RootView: View {
         }
         .sheet(isPresented: $showingAddServer) {
             ServerEditorView(server: nil)
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView()
+                .environmentObject(model)
         }
         .alert(item: $model.statusAlert) { alert in
             Alert(
@@ -61,6 +67,7 @@ struct ServerSidebarView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Binding var showingAddServer: Bool
+    @Binding var showingSettings: Bool
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var preferredCompactColumn: NavigationSplitViewColumn
     @State private var editingServer: ServerRecord?
@@ -115,6 +122,14 @@ struct ServerSidebarView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    showingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("Settings")
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showingAddServer = true
@@ -133,6 +148,48 @@ struct ServerSidebarView: View {
         if horizontalSizeClass == .compact {
             preferredCompactColumn = .content
             columnVisibility = .doubleColumn
+        }
+    }
+}
+
+private struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var model: AppViewModel
+    @State private var openAIAPIKey = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("OpenAI API key", text: $openAIAPIKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if model.hasOpenAIAPIKey {
+                        Text("An OpenAI key is stored in Keychain.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("OpenAI")
+                } footer: {
+                    Text("Used for audio transcription. The key is stored on this device and sent only to OpenAI when transcribing audio.")
+                }
+            }
+            .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        model.saveOpenAIAPIKey(openAIAPIKey)
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                openAIAPIKey = model.loadOpenAIAPIKeyForEditing()
+            }
         }
     }
 }
@@ -214,6 +271,9 @@ struct ProjectSessionListView: View {
                 .sheet(isPresented: $showingDiagnostics) {
                     ConnectionDiagnosticsView()
                         .environmentObject(model)
+                }
+                .task(id: server.id) {
+                    await model.ensureSelectedServerConnected()
                 }
                 .searchable(text: searchTextBinding, placement: .navigationBarDrawer(displayMode: .automatic), prompt: searchPrompt)
                 .onChange(of: selectedMode) { _, newValue in

@@ -22,10 +22,13 @@ protocol CredentialStore: Sendable {
     func loadCredential(serverID: UUID) throws -> SSHCredential
     func saveCredential(_ credential: SSHCredential, serverID: UUID) throws
     func deleteCredential(serverID: UUID) throws
+    func loadOpenAIAPIKey() throws -> String?
+    func saveOpenAIAPIKey(_ key: String?) throws
 }
 
 final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
     private let service = "com.getresq.mobidex.ssh"
+    private let appAccountID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
 
     func loadCredential(serverID: UUID) throws -> SSHCredential {
         SSHCredential(
@@ -47,6 +50,14 @@ final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
         try delete(kind: "private-key", serverID: serverID)
         try delete(kind: "private-key-passphrase", serverID: serverID)
         try delete(kind: "app-server-auth-token", serverID: serverID)
+    }
+
+    func loadOpenAIAPIKey() throws -> String? {
+        try read(kind: "openai-api-key", serverID: appAccountID)
+    }
+
+    func saveOpenAIAPIKey(_ key: String?) throws {
+        try write(key, kind: "openai-api-key", serverID: appAccountID)
     }
 
     private func account(kind: String, serverID: UUID) -> String {
@@ -122,6 +133,7 @@ final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
 
 final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {
     private var values: [UUID: SSHCredential] = [:]
+    private var openAIAPIKey: String?
     private let lock = NSLock()
 
     func loadCredential(serverID: UUID) throws -> SSHCredential {
@@ -137,6 +149,16 @@ final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {
     func deleteCredential(serverID: UUID) throws {
         lock.withLock {
             _ = values.removeValue(forKey: serverID)
+        }
+    }
+
+    func loadOpenAIAPIKey() throws -> String? {
+        lock.withLock { openAIAPIKey }
+    }
+
+    func saveOpenAIAPIKey(_ key: String?) throws {
+        lock.withLock {
+            openAIAPIKey = key?.isEmpty == false ? key : nil
         }
     }
 }

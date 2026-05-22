@@ -13,7 +13,7 @@ struct ProjectAddView: View {
             Form {
                 Section("Remote Path") {
                     HStack(spacing: 8) {
-                        TextField("/home/user/project", text: $path)
+                        TextField("~/project", text: $path)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .onSubmit(add)
@@ -91,7 +91,7 @@ struct ProjectAddView: View {
             }
             .sheet(isPresented: $showingBrowser) {
                 RemoteDirectoryBrowserView(
-                    initialPath: path.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "/"
+                    initialPath: path.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "~"
                 ) { selectedPath in
                     path = selectedPath
                     showingBrowser = false
