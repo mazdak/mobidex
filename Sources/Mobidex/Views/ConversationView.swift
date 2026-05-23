@@ -1072,6 +1072,14 @@ private struct QueuedMessagesSheet: View {
                             Label("Delete", systemImage: "trash")
                         }
                     }
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button {
+                            Task { await model.steerQueuedTurnInputNow(item.id) }
+                        } label: {
+                            Label("Steer Now", systemImage: "arrow.triangle.turn.up.right.circle")
+                        }
+                        .tint(.blue)
+                    }
                     .contextMenu {
                         Button {
                             Task { await model.steerQueuedTurnInputNow(item.id) }

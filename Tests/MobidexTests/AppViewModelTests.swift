@@ -4064,6 +4064,30 @@ final class AppViewModelTests: XCTestCase {
         ],"nextCursor":null}}
         """)
         await steerTask.value
+
+        await viewModel.queueComposerText("Queued steer")
+        XCTAssertEqual(viewModel.queuedTurnInputCount, 1)
+        let queuedInput = try XCTUnwrap(viewModel.queuedTurnInputs.first)
+        let queuedSteerTask = Task { await viewModel.steerQueuedTurnInputNow(queuedInput.id) }
+        let queuedSteer = try await waitForRequest(method: "turn/steer", in: transport, after: cursor)
+        params = try requestParams(for: queuedSteer, in: transport)
+        XCTAssertEqual(params["threadId"] as? String, "thread-new")
+        XCTAssertEqual(params["expectedTurnId"] as? String, "turn-1")
+        let queuedSteerInput = try XCTUnwrap(params["input"] as? [[String: Any]])
+        XCTAssertEqual(queuedSteerInput.first?["text"] as? String, "Queued steer")
+        cursor = queuedSteer.nextCursor
+        transport.receive(#"{"id":\#(queuedSteer.id),"result":{}}"#)
+
+        let postQueuedSteerList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = postQueuedSteerList.nextCursor
+        transport.receive("""
+        {"id":\(postQueuedSteerList.id),"result":{"data":[
+          {"id":"thread-new","preview":"Start work","cwd":"/srv/app","status":{"type":"active","activeFlags":[]},"updatedAt":1770000303,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        await queuedSteerTask.value
+        XCTAssertEqual(viewModel.queuedTurnInputCount, 0)
+
         transport.receive("""
         {"method":"item/agentMessage/delta","params":{
           "threadId":"thread-new",
