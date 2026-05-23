@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import PhotosUI
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct ConversationView: View {
@@ -17,6 +18,8 @@ struct ConversationView: View {
     @State private var isFileImporterPresented = false
     @State private var audioRecorder: AudioComposerRecorder?
     @State private var isRecordingAudio = false
+    @State private var didDisableIdleTimerForRecording = false
+    @State private var idleTimerWasDisabledBeforeRecording = false
     @State private var isTranscribingAudio = false
     @State private var attachmentAlert: AttachmentAlert?
     @State private var showsContextPopover = false
@@ -117,6 +120,12 @@ struct ConversationView: View {
                 allowsMultipleSelection: true
             ) { result in
                 handleImportedFiles(result)
+            }
+            .onChange(of: isRecordingAudio) { _, isRecording in
+                updateRecordingIdleTimer(isRecording: isRecording)
+            }
+            .onDisappear {
+                updateRecordingIdleTimer(isRecording: false)
             }
     }
 
@@ -764,26 +773,16 @@ struct ConversationView: View {
 
     private var attachmentStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 ForEach(attachmentPaths, id: \.self) { path in
-                    HStack(spacing: 5) {
-                        Image(systemName: "paperclip")
-                        Text(URL(fileURLWithPath: path).lastPathComponent)
-                            .lineLimit(1)
-                        Button {
+                    ComposerAttachmentTile(
+                        path: path,
+                        onRemove: {
                             attachmentPaths.removeAll { $0 == path }
                             composerEditGeneration &+= 1
                             saveComposerDraft(for: composerDraftKey)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
                         }
-                        .buttonStyle(.plain)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.secondary.opacity(0.10), in: Capsule())
+                    )
                 }
             }
         }
@@ -934,6 +933,19 @@ struct ConversationView: View {
             }
         }
     }
+
+    private func updateRecordingIdleTimer(isRecording: Bool) {
+        if isRecording {
+            guard !didDisableIdleTimerForRecording else { return }
+            idleTimerWasDisabledBeforeRecording = UIApplication.shared.isIdleTimerDisabled
+            UIApplication.shared.isIdleTimerDisabled = true
+            didDisableIdleTimerForRecording = true
+            return
+        }
+        guard didDisableIdleTimerForRecording else { return }
+        UIApplication.shared.isIdleTimerDisabled = idleTimerWasDisabledBeforeRecording
+        didDisableIdleTimerForRecording = false
+    }
 }
 
 private final class AudioComposerRecorder {
@@ -983,6 +995,201 @@ private enum AudioComposerRecorderError: LocalizedError {
 private struct ComposerDraft {
     var text: String
     var attachmentPaths: [String]
+}
+
+private struct ComposerAttachmentTile: View {
+    let path: String
+    let onRemove: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            AttachmentThumbnail(path: path, size: CGSize(width: 72, height: 72))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(alignment: .bottomLeading) {
+                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.black.opacity(0.45))
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+                }
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.body)
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color.secondary)
+                    .background(Circle().fill(.black.opacity(0.22)))
+            }
+            .buttonStyle(.plain)
+            .padding(4)
+            .accessibilityLabel("Remove attachment")
+        }
+        .frame(width: 72, height: 72)
+    }
+}
+
+private struct AttachmentThumbnail: View {
+    let path: String
+    let size: CGSize
+
+    var body: some View {
+        Group {
+            if AttachmentDisplay.isImagePath(path),
+               FileManager.default.fileExists(atPath: path),
+               let image = UIImage(contentsOfFile: path) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.12))
+                    Image(systemName: AttachmentDisplay.isImagePath(path) ? "photo" : "doc")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .clipped()
+    }
+}
+
+private struct UserMessageBodyView: View {
+    let messageBody: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(UserMessageBodyPart.parts(from: messageBody)) { part in
+                switch part.content {
+                case .text(let text):
+                    Text(text)
+                case .attachment(let attachment):
+                    MessageAttachmentTile(attachment: attachment)
+                }
+            }
+        }
+    }
+}
+
+private struct MessageAttachmentTile: View {
+    let attachment: MessageAttachment
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AttachmentThumbnail(path: attachment.path, size: CGSize(width: 54, height: 54))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(attachment.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(attachment.subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct MessageAttachment: Equatable {
+    var kind: String
+    var path: String
+
+    var title: String {
+        AttachmentDisplay.isImageKind(kind) || AttachmentDisplay.isImagePath(path) ? "Image attachment" : "Attachment"
+    }
+
+    var subtitle: String {
+        let filename = URL(fileURLWithPath: path).lastPathComponent
+        return filename.isEmpty ? path : filename
+    }
+}
+
+private struct UserMessageBodyPart: Identifiable {
+    enum Content {
+        case text(String)
+        case attachment(MessageAttachment)
+    }
+
+    var id: Int
+    var content: Content
+
+    static func parts(from body: String) -> [UserMessageBodyPart] {
+        var parts: [UserMessageBodyPart] = []
+        var textLines: [String] = []
+
+        func flushText() {
+            let text = textLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                parts.append(UserMessageBodyPart(id: parts.count, content: .text(text)))
+            }
+            textLines.removeAll()
+        }
+
+        for line in body.components(separatedBy: .newlines) {
+            if let attachment = AttachmentDisplay.attachment(fromDisplayLine: line) {
+                flushText()
+                parts.append(UserMessageBodyPart(id: parts.count, content: .attachment(attachment)))
+            } else {
+                textLines.append(line)
+            }
+        }
+        flushText()
+        if parts.isEmpty, !body.isEmpty {
+            parts.append(UserMessageBodyPart(id: 0, content: .text(body)))
+        }
+        return parts
+    }
+}
+
+private enum AttachmentDisplay {
+    static func attachment(fromDisplayLine line: String) -> MessageAttachment? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("["),
+              trimmed.hasSuffix("]"),
+              let separator = trimmed.firstIndex(of: ":")
+        else {
+            return nil
+        }
+        let kindStart = trimmed.index(after: trimmed.startIndex)
+        let kind = String(trimmed[kindStart..<separator]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isAttachmentKind(kind) else { return nil }
+        let valueStart = trimmed.index(after: separator)
+        let valueEnd = trimmed.index(before: trimmed.endIndex)
+        let path = String(trimmed[valueStart..<valueEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        return MessageAttachment(kind: kind, path: path)
+    }
+
+    static func isAttachmentKind(_ kind: String) -> Bool {
+        let normalized = kind.lowercased()
+        return normalized.contains("image") || normalized == "file" || normalized == "attachment"
+    }
+
+    static func isImageKind(_ kind: String) -> Bool {
+        kind.lowercased().contains("image")
+    }
+
+    static func isImagePath(_ path: String) -> Bool {
+        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        case "apng", "avif", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp":
+            true
+        default:
+            false
+        }
+    }
 }
 
 private struct AttachmentAlert: Identifiable {
@@ -1203,7 +1410,9 @@ struct ConversationSectionView: View {
 
     @ViewBuilder
     private var bodyText: some View {
-        if section.rendersMarkdown {
+        if section.kind == .user {
+            UserMessageBodyView(messageBody: section.body)
+        } else if section.rendersMarkdown {
             MarkdownText(section.body, id: section.id)
         } else {
             Text(section.body)

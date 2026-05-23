@@ -23,6 +23,7 @@ struct RootView: View {
                 preferredCompactColumn: $preferredCompactColumn
             )
                 .navigationTitle(model.selectedServer?.displayName ?? "Mobidex")
+                .navigationBarBackButtonHidden(true)
         } detail: {
             ConversationView()
         }
@@ -237,7 +238,7 @@ struct ProjectSessionListView: View {
                         )
 
                         if sessionSections.isEmpty {
-                            Section("Sessions") {
+                            Section {
                                 ContentUnavailableView(
                                     sessionsUnavailableTitle,
                                     systemImage: "bubble.left.and.bubble.right",
@@ -364,7 +365,7 @@ struct ProjectSessionListView: View {
                     }
                 }
                 Spacer()
-                if model.isBusy {
+                if model.connectionState == .connecting {
                     ProgressView()
                 }
             }
@@ -532,7 +533,7 @@ private struct ProjectListSection: View {
     @ViewBuilder
     var body: some View {
         if !projects.isEmpty {
-            Section(title) {
+            Section {
                 ForEach(projects) { project in
                     ProjectActionRow(
                         project: project,

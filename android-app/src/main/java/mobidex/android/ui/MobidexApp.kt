@@ -1,10 +1,15 @@
 package mobidex.android.ui
 
 import android.Manifest
+import android.app.Activity
 import android.animation.ValueAnimator
+import android.content.Context
+import android.content.ContextWrapper
+import android.graphics.BitmapFactory
 import android.media.MediaRecorder
 import android.net.Uri
 import android.util.Base64
+import android.view.WindowManager
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
@@ -20,6 +25,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -100,6 +106,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -114,10 +121,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -132,6 +142,7 @@ import androidx.webkit.WebViewAssetLoader
 import androidx.compose.foundation.text.KeyboardOptions
 import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -799,7 +810,7 @@ private fun ProjectList(
             LoadingListStatusRow("Loading projects...")
         }
         LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
-            section("Projects", sections.projects) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
+            section(sections.projects) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
             if (sections.isEmpty) {
                 item { EmptyState(projectEmptyTitle(state, sections, search), "Add a project to get started.", Icons.Default.Folder) }
             }
@@ -827,12 +838,10 @@ internal fun projectEmptyTitle(state: MobidexUiState, sections: AndroidProjectLi
     }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.section(
-    title: String,
     projects: List<ProjectRecord>,
     row: @Composable (ProjectRecord) -> Unit,
 ) {
     if (projects.isEmpty()) return
-    item { Text(title, modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 6.dp), style = MaterialTheme.typography.labelLarge) }
     items(projects, key = { it.id }) { project ->
         row(project)
         HorizontalDivider()
@@ -934,8 +943,10 @@ private fun ThreadList(
         } else {
             LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
                 sections.forEach { section ->
-                    item(key = "section-${section.id}") {
-                        Text(section.title, modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 6.dp), style = MaterialTheme.typography.labelLarge)
+                    if (section.title != "Sessions") {
+                        item(key = "section-${section.id}") {
+                            Text(section.title, modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 6.dp), style = MaterialTheme.typography.labelLarge)
+                        }
                     }
                     items(section.threads, key = { it.id }) { thread ->
                         ListItem(
@@ -1273,6 +1284,104 @@ private fun MutableMap<String, AndroidComposerDraft>.updateComposerDraft(
     }
 }
 
+private sealed interface UserMessagePart {
+    data class TextPart(val text: String) : UserMessagePart
+    data class AttachmentPart(val attachment: DisplayAttachment) : UserMessagePart
+}
+
+private data class DisplayAttachment(
+    val kind: String,
+    val path: String,
+) {
+    val isImage: Boolean
+        get() = kind.lowercase().contains("image") || path.hasImageAttachmentExtension()
+
+    val title: String
+        get() = if (isImage) "Image attachment" else "Attachment"
+
+    val subtitle: String
+        get() = path.substringAfterLast('/').ifEmpty { path }
+}
+
+private fun userMessageParts(body: String): List<UserMessagePart> {
+    val parts = mutableListOf<UserMessagePart>()
+    val textLines = mutableListOf<String>()
+
+    fun flushText() {
+        val text = textLines.joinToString("\n").trim()
+        if (text.isNotEmpty()) parts += UserMessagePart.TextPart(text)
+        textLines.clear()
+    }
+
+    body.lines().forEach { line ->
+        val attachment = displayAttachment(line)
+        if (attachment != null) {
+            flushText()
+            parts += UserMessagePart.AttachmentPart(attachment)
+        } else {
+            textLines += line
+        }
+    }
+    flushText()
+    return parts.ifEmpty { if (body.isBlank()) emptyList() else listOf(UserMessagePart.TextPart(body)) }
+}
+
+private fun displayAttachment(line: String): DisplayAttachment? {
+    val trimmed = line.trim()
+    if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null
+    val separator = trimmed.indexOf(':')
+    if (separator <= 1) return null
+    val kind = trimmed.substring(1, separator).trim()
+    if (!kind.lowercase().contains("image") && kind.lowercase() !in setOf("file", "attachment")) return null
+    val path = trimmed.substring(separator + 1, trimmed.length - 1).trim()
+    if (path.isEmpty()) return null
+    return DisplayAttachment(kind, path)
+}
+
+private fun String.hasImageAttachmentExtension(): Boolean =
+    substringAfterLast('.', missingDelimiterValue = "").lowercase() in setOf(
+        "apng",
+        "avif",
+        "gif",
+        "heic",
+        "heif",
+        "jpeg",
+        "jpg",
+        "png",
+        "tif",
+        "tiff",
+        "webp",
+    )
+
+@Composable
+private fun UserMessageContent(body: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        userMessageParts(body).forEachIndexed { index, part ->
+            when (part) {
+                is UserMessagePart.TextPart -> Text(part.text, style = MaterialTheme.typography.bodyMedium)
+                is UserMessagePart.AttachmentPart -> MessageAttachmentTile(part.attachment, Modifier.semantics { contentDescription = "${part.attachment.title} ${index + 1}" })
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageAttachmentTile(attachment: DisplayAttachment, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f), MaterialTheme.shapes.medium)
+            .padding(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        PathAttachmentThumbnail(attachment.path, attachment.isImage, Modifier.size(54.dp).clip(MaterialTheme.shapes.small))
+        Column {
+            Text(attachment.title, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            Text(attachment.subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
 private fun LazyListState.isNearTimelineBottom(bufferItems: Int = 2, bufferPixels: Int = 96): Boolean {
     val info = layoutInfo
     if (info.totalItemsCount == 0) return true
@@ -1328,11 +1437,15 @@ private fun ConversationSectionRow(section: ConversationSection) {
         ) {
             Text(section.title, style = MaterialTheme.typography.labelLarge, color = sectionAccent(section))
             if (section.body.isNotBlank()) {
-                Text(
-                    section.body,
-                    fontFamily = if (section.usesCompactTypography) FontFamily.Monospace else FontFamily.Default,
-                    style = if (section.usesCompactTypography) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-                )
+                if (section.kind == ConversationSectionKind.User) {
+                    UserMessageContent(section.body)
+                } else {
+                    Text(
+                        section.body,
+                        fontFamily = if (section.usesCompactTypography) FontFamily.Monospace else FontFamily.Default,
+                        style = if (section.usesCompactTypography) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                    )
+                }
             }
             if (!section.detail.isNullOrBlank()) Text(section.detail!!, style = MaterialTheme.typography.bodySmall)
             if (!section.status.isNullOrBlank()) Text(section.status!!, style = MaterialTheme.typography.labelSmall)
@@ -1354,6 +1467,7 @@ private fun Composer(
     onTranscript: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val coroutineScope = rememberCoroutineScope()
     var showAttachOptions by remember { mutableStateOf(false) }
     var showEffort by remember { mutableStateOf(false) }
@@ -1365,6 +1479,18 @@ private fun Composer(
     var isTranscribingAudio by remember { mutableStateOf(false) }
     var audioError by remember { mutableStateOf<String?>(null) }
     val sendEnabled = !isTranscribingAudio && (value.trim().isNotEmpty() || attachmentUris.isNotEmpty()) && state.canSendMessage
+    DisposableEffect(isRecordingAudio) {
+        val window = view.context.findActivity()?.window
+        val hadKeepScreenOn = window?.attributes?.flags?.and(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) != 0
+        if (isRecordingAudio) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            if (isRecordingAudio && hadKeepScreenOn == false) {
+                window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
+    }
     fun stopAndTranscribeAudio() {
         val file = audioFile
         val recorder = audioRecorder
@@ -1458,11 +1584,7 @@ private fun Composer(
         if (attachmentUris.isNotEmpty()) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 attachmentUris.forEach { uri ->
-                    AssistChip(
-                        onClick = { onAttachmentUrisChange(attachmentUris - uri) },
-                        label = { Text(uri.lastPathSegment ?: "Attachment", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
-                    )
+                    ComposerAttachmentTile(uri = uri, onRemove = { onAttachmentUrisChange(attachmentUris - uri) })
                 }
             }
         }
@@ -1574,6 +1696,94 @@ private fun Composer(
         audioError?.let {
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+@Composable
+private fun ComposerAttachmentTile(uri: Uri, onRemove: () -> Unit) {
+    val context = LocalContext.current
+    val isImage = remember(uri) { context.contentResolver.getType(uri)?.startsWith("image/") == true }
+    Surface(
+        onClick = onRemove,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
+    ) {
+        Box(Modifier.size(74.dp)) {
+            UriAttachmentThumbnail(uri, isImage, Modifier.fillMaxSize())
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .background(Color.Black.copy(alpha = 0.38f), CircleShape),
+            ) {
+                Icon(Icons.Default.Close, contentDescription = "Remove attachment", tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+            Text(
+                uri.lastPathSegment ?: "Attachment",
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 5.dp, vertical = 2.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun UriAttachmentThumbnail(uri: Uri, isImage: Boolean, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var bitmap by remember(uri) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(uri, isImage) {
+        bitmap = if (isImage) {
+            withContext(Dispatchers.IO) {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    BitmapFactory.decodeStream(input)?.asImageBitmap()
+                }
+            }
+        } else {
+            null
+        }
+    }
+    if (bitmap != null) {
+        Image(bitmap!!, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
+    } else {
+        AttachmentPlaceholder(isImage, modifier)
+    }
+}
+
+@Composable
+private fun PathAttachmentThumbnail(path: String, isImage: Boolean, modifier: Modifier = Modifier) {
+    var bitmap by remember(path) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+    LaunchedEffect(path, isImage) {
+        bitmap = if (isImage) {
+            withContext(Dispatchers.IO) {
+                File(path).takeIf { it.exists() }?.inputStream()?.use { input ->
+                    BitmapFactory.decodeStream(input)?.asImageBitmap()
+                }
+            }
+        } else {
+            null
+        }
+    }
+    if (bitmap != null) {
+        Image(bitmap!!, contentDescription = null, modifier = modifier, contentScale = ContentScale.Crop)
+    } else {
+        AttachmentPlaceholder(isImage, modifier)
+    }
+}
+
+@Composable
+private fun AttachmentPlaceholder(isImage: Boolean, modifier: Modifier = Modifier) {
+    Box(
+        modifier.background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(if (isImage) Icons.Default.Photo else Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -2118,3 +2328,10 @@ private fun sectionAccent(section: ConversationSection): Color =
 
 private fun changedLineCount(diff: String): Int =
     diff.lineSequence().count { (it.startsWith("+") && !it.startsWith("+++")) || (it.startsWith("-") && !it.startsWith("---")) }
+
+private tailrec fun Context.findActivity(): Activity? =
+    when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
