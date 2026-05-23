@@ -118,4 +118,24 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertTrue(markdown.contains("one\ntwo"))
         XCTAssertFalse(markdown.contains("one  \ntwo"))
     }
+
+    func testConversationInlineMarkdownParsesLinksAndCodeSpans() throws {
+        let runs = ConversationInlineMarkdownParser.runs(
+            from: "Updated [worker.rs](/Users/mazdak/Code/qlaw/worker.rs) with `Capacity available`."
+        )
+
+        XCTAssertEqual(
+            runs,
+            [
+                .text("Updated "),
+                .link(label: "worker.rs", destination: "/Users/mazdak/Code/qlaw/worker.rs"),
+                .text(" with "),
+                .code("Capacity available"),
+                .text("."),
+            ]
+        )
+
+        XCTAssertNil(ConversationInlineMarkdownParser.url(from: "/Users/mazdak/Code/qlaw/worker.rs"))
+        XCTAssertEqual(ConversationInlineMarkdownParser.url(from: "https://example.com")?.scheme, "https")
+    }
 }

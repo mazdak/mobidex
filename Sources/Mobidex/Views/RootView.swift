@@ -208,6 +208,7 @@ struct ProjectSessionListView: View {
     @State private var editingServer: ServerRecord?
     @State private var serverPendingDeletion: ServerRecord?
     @State private var isDeleteServerConfirmationPresented = false
+    @State private var isNewSessionDialogPresented = false
 
     var body: some View {
         Group {
@@ -306,6 +307,10 @@ struct ProjectSessionListView: View {
                         canCreateSession: model.canCreateSession && !serverContentDisabled,
                         onStartNewSession: {
                             promoteDetailIfCompact()
+                            isNewSessionDialogPresented = true
+                        },
+                        onStartInNewWorktree: {
+                            promoteDetailIfCompact()
                             Task { await model.startNewSession() }
                         },
                         onStartInProjectDirectory: {
@@ -337,6 +342,23 @@ struct ProjectSessionListView: View {
                     Button("Cancel", role: .cancel) {
                         serverPendingDeletion = nil
                     }
+                }
+                .confirmationDialog(
+                    "Start New Session",
+                    isPresented: $isNewSessionDialogPresented,
+                    titleVisibility: .visible
+                ) {
+                    Button("Start in New Worktree") {
+                        promoteDetailIfCompact()
+                        Task { await model.startNewSession() }
+                    }
+                    Button("Start in Project Directory") {
+                        promoteDetailIfCompact()
+                        Task { await model.startNewSession(location: .projectDirectory) }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("New worktree keeps changes isolated from the project directory.")
                 }
             } else {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
@@ -673,6 +695,7 @@ private struct SelectedServerToolbar: ToolbarContent {
     let onBackToProjects: () -> Void
     let canCreateSession: Bool
     let onStartNewSession: () -> Void
+    let onStartInNewWorktree: () -> Void
     let onStartInProjectDirectory: () -> Void
     @Binding var showingProjectAdd: Bool
     @Binding var showingTerminal: Bool
@@ -697,6 +720,7 @@ private struct SelectedServerToolbar: ToolbarContent {
                 NewSessionButton(
                     canCreateSession: canCreateSession,
                     onStartNewSession: onStartNewSession,
+                    onStartInNewWorktree: onStartInNewWorktree,
                     onStartInProjectDirectory: onStartInProjectDirectory
                 )
             }
@@ -781,6 +805,7 @@ private struct ProjectSessionScopeRow: View {
 private struct NewSessionButton: View {
     let canCreateSession: Bool
     let onStartNewSession: () -> Void
+    let onStartInNewWorktree: () -> Void
     let onStartInProjectDirectory: () -> Void
 
     var body: some View {
@@ -792,7 +817,7 @@ private struct NewSessionButton: View {
         .accessibilityIdentifier("projectNewSessionButton")
         .contextMenu {
             Button {
-                onStartNewSession()
+                onStartInNewWorktree()
             } label: {
                 Label("Start in New Worktree", systemImage: "arrow.triangle.branch")
             }

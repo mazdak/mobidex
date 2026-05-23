@@ -23,6 +23,7 @@ struct ConversationView: View {
     @State private var isTranscribingAudio = false
     @State private var attachmentAlert: AttachmentAlert?
     @State private var isQueueSheetPresented = false
+    @State private var isNewSessionDialogPresented = false
     @State private var isTimelineNearBottom = true
     @State private var timelineDistanceFromBottom: CGFloat = 0
     @State private var autoFollowStreaming = true
@@ -204,7 +205,7 @@ struct ConversationView: View {
             }
             Spacer()
             Button {
-                Task { await model.startNewSession() }
+                isNewSessionDialogPresented = true
             } label: {
                 Label("New Session", systemImage: "plus.bubble")
             }
@@ -225,6 +226,21 @@ struct ConversationView: View {
             }
         }
         .padding()
+        .confirmationDialog(
+            "Start New Session",
+            isPresented: $isNewSessionDialogPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Start in New Worktree") {
+                Task { await model.startNewSession() }
+            }
+            Button("Start in Project Directory") {
+                Task { await model.startNewSession(location: .projectDirectory) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("New worktree keeps changes isolated from the project directory.")
+        }
     }
 
     private var detailPicker: some View {
@@ -1636,33 +1652,112 @@ private struct InlineMarkdownText: View {
     }
 
     var body: some View {
-        inlineText
+        Text(attributedText)
     }
 
-    private var inlineText: Text {
-        var result = Text("")
-        var remainder = text[...]
-        var isCode = false
-
-        while let marker = remainder.firstIndex(of: "`") {
-            let prefix = String(remainder[..<marker])
-            result = result + styledText(prefix, isCode: isCode)
-            remainder = remainder[remainder.index(after: marker)...]
-            isCode.toggle()
+    private var attributedText: AttributedString {
+        var result = AttributedString()
+        for run in ConversationInlineMarkdownParser.runs(from: text) {
+            var value: AttributedString
+            switch run {
+            case .text(let text):
+                value = AttributedString(text)
+            case .code(let code):
+                value = AttributedString(code)
+                value.font = .system(.body, design: .monospaced)
+                value.foregroundColor = .primary
+            case .link(let label, let destination):
+                value = AttributedString(label)
+                value.foregroundColor = .accentColor
+                if let url = ConversationInlineMarkdownParser.url(from: destination) {
+                    value.link = url
+                }
+            }
+            result += value
         }
-
-        result = result + styledText(String(remainder), isCode: isCode)
         return result
     }
+}
 
-    private func styledText(_ value: String, isCode: Bool) -> Text {
-        guard !value.isEmpty else { return Text("") }
-        if isCode {
-            return Text(value)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.primary)
+enum ConversationInlineMarkdownRun: Equatable {
+    case text(String)
+    case code(String)
+    case link(label: String, destination: String)
+}
+
+enum ConversationInlineMarkdownParser {
+    static func runs(from text: String) -> [ConversationInlineMarkdownRun] {
+        var runs: [ConversationInlineMarkdownRun] = []
+        var index = text.startIndex
+
+        func appendText(_ value: String) {
+            guard !value.isEmpty else { return }
+            if case .text(let existing) = runs.last {
+                runs[runs.count - 1] = .text(existing + value)
+            } else {
+                runs.append(.text(value))
+            }
         }
-        return Text(value)
+
+        while index < text.endIndex {
+            if text[index] == "`" {
+                let contentStart = text.index(after: index)
+                if let closing = text[contentStart...].firstIndex(of: "`") {
+                    runs.append(.code(String(text[contentStart..<closing])))
+                    index = text.index(after: closing)
+                } else {
+                    appendText(String(text[index...]))
+                    break
+                }
+            } else if text[index] == "[",
+                      let parsedLink = parseLink(in: text, from: index) {
+                runs.append(.link(label: parsedLink.label, destination: parsedLink.destination))
+                index = parsedLink.endIndex
+            } else {
+                let nextCode = text[index...].firstIndex(of: "`")
+                let nextLink = text[index...].firstIndex(of: "[")
+                let candidates = [nextCode, nextLink].compactMap { $0 }.filter { $0 > index }
+                let next = candidates.min() ?? text.endIndex
+                appendText(String(text[index..<next]))
+                index = next
+            }
+        }
+
+        return runs
+    }
+
+    static func url(from destination: String) -> URL? {
+        let trimmed = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: trimmed), url.scheme != nil {
+            return url
+        }
+        return nil
+    }
+
+    private static func parseLink(
+        in text: String,
+        from start: String.Index
+    ) -> (label: String, destination: String, endIndex: String.Index)? {
+        let labelStart = text.index(after: start)
+        guard let labelEnd = text[labelStart...].firstIndex(of: "]"),
+              labelEnd < text.index(before: text.endIndex)
+        else {
+            return nil
+        }
+        let openParen = text.index(after: labelEnd)
+        guard openParen < text.endIndex, text[openParen] == "(" else {
+            return nil
+        }
+        let destinationStart = text.index(after: openParen)
+        guard let destinationEnd = text[destinationStart...].firstIndex(of: ")") else {
+            return nil
+        }
+        let label = String(text[labelStart..<labelEnd])
+        let destination = String(text[destinationStart..<destinationEnd])
+        guard !label.isEmpty, !destination.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return (label, destination, text.index(after: destinationEnd))
     }
 }
 

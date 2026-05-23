@@ -29,6 +29,9 @@ final class MobidexUITests: XCTestCase {
         }
         XCTAssertTrue(waitForEnabled(newSessionButton, timeout: timeout), "New Session button did not become enabled after opening the seeded project.")
         newSessionButton.tap()
+        let startInWorktreeButton = app.buttons["Start in New Worktree"]
+        XCTAssertTrue(startInWorktreeButton.waitForExistence(timeout: timeout), "New Session location chooser did not appear.")
+        startInWorktreeButton.tap()
 
         let composer = app.descendants(matching: .any)["messageComposer"]
         XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after starting a new session.")

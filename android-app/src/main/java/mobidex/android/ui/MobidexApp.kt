@@ -131,13 +131,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1160,8 +1163,9 @@ private fun NewSessionMenuButton(
     onStartInProjectDirectory: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var showingChoice by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = onStart, enabled = enabled) {
+        IconButton(onClick = { showingChoice = true }, enabled = enabled) {
             Icon(Icons.Default.Add, contentDescription = "New Session")
         }
         IconButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.size(28.dp).align(Alignment.BottomEnd)) {
@@ -1183,6 +1187,29 @@ private fun NewSessionMenuButton(
                 },
             )
         }
+    }
+    if (showingChoice) {
+        AlertDialog(
+            onDismissRequest = { showingChoice = false },
+            title = { Text("Start New Session") },
+            text = { Text("New worktree keeps changes isolated from the project directory.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showingChoice = false
+                    onStart()
+                }) {
+                    Text("Start in New Worktree")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showingChoice = false
+                    onStartInProjectDirectory()
+                }) {
+                    Text("Project Directory")
+                }
+            },
+        )
     }
 }
 
@@ -1577,30 +1604,116 @@ private fun MarkdownContent(body: String) {
 @Composable
 private fun InlineMarkdownText(text: String, modifier: Modifier = Modifier) {
     val annotated = buildAnnotatedString {
-        var remaining = text
-        var isCode = false
-        while (true) {
-            val marker = remaining.indexOf('`')
-            if (marker < 0) break
-            val prefix = remaining.substring(0, marker)
-            appendMarkdownSpan(prefix, isCode)
-            remaining = remaining.substring(marker + 1)
-            isCode = !isCode
+        parseInlineMarkdownRuns(text).forEach { run ->
+            when (run) {
+                is InlineMarkdownRun.Text -> append(run.text)
+                is InlineMarkdownRun.Code -> appendMarkdownCode(run.text)
+                is InlineMarkdownRun.Link -> {
+                    val linkStyle = SpanStyle(color = MaterialTheme.colorScheme.primary)
+                    val url = markdownUrl(run.destination)
+                    if (url == null) {
+                        withStyle(linkStyle) {
+                            append(run.label)
+                        }
+                    } else {
+                        withLink(LinkAnnotation.Url(url = url, styles = TextLinkStyles(style = linkStyle))) {
+                            append(run.label)
+                        }
+                    }
+                }
+            }
         }
-        appendMarkdownSpan(remaining, isCode)
     }
-    Text(annotated, modifier = modifier, style = MaterialTheme.typography.bodyMedium)
+    Text(
+        text = annotated,
+        modifier = modifier,
+        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+    )
 }
 
-private fun androidx.compose.ui.text.AnnotatedString.Builder.appendMarkdownSpan(text: String, isCode: Boolean) {
+private fun androidx.compose.ui.text.AnnotatedString.Builder.appendMarkdownCode(text: String) {
     if (text.isEmpty()) return
-    if (isCode) {
-        withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
-            append(text)
-        }
-    } else {
+    withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
         append(text)
     }
+}
+
+private sealed interface InlineMarkdownRun {
+    data class Text(val text: String) : InlineMarkdownRun
+    data class Code(val text: String) : InlineMarkdownRun
+    data class Link(val label: String, val destination: String) : InlineMarkdownRun
+}
+
+private fun parseInlineMarkdownRuns(text: String): List<InlineMarkdownRun> {
+    val runs = mutableListOf<InlineMarkdownRun>()
+    var index = 0
+
+    fun appendText(value: String) {
+        if (value.isEmpty()) return
+        val last = runs.lastOrNull()
+        if (last is InlineMarkdownRun.Text) {
+            runs[runs.lastIndex] = InlineMarkdownRun.Text(last.text + value)
+        } else {
+            runs += InlineMarkdownRun.Text(value)
+        }
+    }
+
+    while (index < text.length) {
+        when (text[index]) {
+            '`' -> {
+                val close = text.indexOf('`', startIndex = index + 1)
+                if (close < 0) {
+                    appendText(text.substring(index))
+                    index = text.length
+                } else {
+                    runs += InlineMarkdownRun.Code(text.substring(index + 1, close))
+                    index = close + 1
+                }
+            }
+            '[' -> {
+                val parsed = parseInlineMarkdownLink(text, index)
+                if (parsed == null) {
+                    appendText("[")
+                    index += 1
+                } else {
+                    runs += InlineMarkdownRun.Link(parsed.label, parsed.destination)
+                    index = parsed.nextIndex
+                }
+            }
+            else -> {
+                val nextCode = text.indexOf('`', startIndex = index).takeIf { it >= 0 } ?: text.length
+                val nextLink = text.indexOf('[', startIndex = index).takeIf { it >= 0 } ?: text.length
+                val next = minOf(nextCode, nextLink)
+                appendText(text.substring(index, next))
+                index = next
+            }
+        }
+    }
+
+    return runs
+}
+
+private data class ParsedInlineMarkdownLink(val label: String, val destination: String, val nextIndex: Int)
+
+private fun parseInlineMarkdownLink(text: String, start: Int): ParsedInlineMarkdownLink? {
+    val labelEnd = text.indexOf(']', startIndex = start + 1)
+    if (labelEnd <= start + 1 || labelEnd + 1 >= text.length || text[labelEnd + 1] != '(') return null
+    val destinationStart = labelEnd + 2
+    val destinationEnd = text.indexOf(')', startIndex = destinationStart)
+    if (destinationEnd <= destinationStart) return null
+    val destination = text.substring(destinationStart, destinationEnd).trim()
+    if (destination.isEmpty()) return null
+    return ParsedInlineMarkdownLink(
+        label = text.substring(start + 1, labelEnd),
+        destination = destination,
+        nextIndex = destinationEnd + 1,
+    )
+}
+
+private fun markdownUrl(destination: String): String? {
+    val trimmed = destination.trim()
+    if (trimmed.startsWith("/")) return null
+    return trimmed.takeIf { Uri.parse(it).scheme != null }
 }
 
 private fun parseMarkdownBlocks(body: String): List<MarkdownBlock> =
