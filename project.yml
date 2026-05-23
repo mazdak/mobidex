@@ -71,6 +71,9 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: JX3932QCN8
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+      configs:
+        Release:
+          CODE_SIGN_IDENTITY: iPhone Distribution
 
   MobidexTests:
     type: bundle.unit-test
