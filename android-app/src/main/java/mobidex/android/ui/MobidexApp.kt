@@ -27,7 +27,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -344,17 +346,12 @@ private fun ServerPane(
                         },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clickable {
+                                model.switchServerFromList(server.id)
+                                onOpenProjects()
+                            }
                             .background(Color.Transparent),
                     )
-                    TextButton(
-                        onClick = {
-                            model.switchServerFromList(server.id)
-                            onOpenProjects()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Select")
-                    }
                     HorizontalDivider()
                 }
             }
@@ -885,17 +882,11 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
             }
         },
         modifier = Modifier
-            .fillMaxWidth(),
+            .fillMaxWidth()
+            .clickable(enabled = enabled) {
+                onOpenDetail(project)
+            },
     )
-    TextButton(
-        onClick = {
-            onOpenDetail(project)
-        },
-        enabled = enabled,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text("Open")
-    }
 }
 
 @Composable
@@ -982,16 +973,14 @@ private fun ThreadList(
                                     Text(if (thread.isArchived) "Unarchive" else "Archive")
                                 }
                             },
-                            modifier = Modifier.background(if (thread.id == state.selectedThreadID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(if (thread.id == state.selectedThreadID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+                                .clickable(enabled = !contentDisabled) {
+                                    model.openThread(thread)
+                                    onOpenDetail()
+                                },
                         )
-                        TextButton(
-                            onClick = {
-                                model.openThread(thread)
-                                onOpenDetail()
-                            },
-                            enabled = !contentDisabled,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Open") }
                         HorizontalDivider()
                     }
                 }
@@ -2298,24 +2287,35 @@ private fun ChangesView(state: MobidexUiState, model: AppViewModel, modifier: Mo
 @Composable
 private fun DiffContent(snapshot: GitDiffSnapshot) {
     var selectedPath by remember(snapshot) { mutableStateOf(snapshot.files.firstOrNull()?.path) }
-    Row(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.width(260.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))) {
+    val selectedDiff = snapshot.files.firstOrNull { it.path == selectedPath }?.diff ?: snapshot.diff
+    Column(Modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+        ) {
             items(snapshot.files, key = { it.path }) { file ->
                 ListItem(
                     headlineContent = { Text(file.path, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                     supportingContent = { Text("${changedLineCount(file.diff)} changed lines") },
-                    modifier = Modifier.background(if (selectedPath == file.path) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(if (selectedPath == file.path) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+                        .clickable { selectedPath = file.path },
                 )
-                TextButton(onClick = { selectedPath = file.path }, modifier = Modifier.fillMaxWidth()) { Text("View") }
                 HorizontalDivider()
             }
         }
+        val verticalScroll = rememberScrollState()
+        val horizontalScroll = rememberScrollState()
         Text(
-            text = snapshot.files.firstOrNull { it.path == selectedPath }?.diff ?: snapshot.diff,
+            text = selectedDiff,
             modifier = Modifier
+                .fillMaxWidth()
                 .weight(1f)
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
+                .horizontalScroll(horizontalScroll)
+                .verticalScroll(verticalScroll)
                 .padding(16.dp),
             fontFamily = FontFamily.Monospace,
             style = MaterialTheme.typography.bodySmall,
@@ -2485,15 +2485,13 @@ private fun ProjectAddDialog(model: AppViewModel, onDismiss: () -> Unit, onAdd: 
                             headlineContent = { Text(project.displayName, fontWeight = FontWeight.SemiBold) },
                             supportingContent = { Text(project.path, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onAdd(project.path)
+                                    onDismiss()
+                                },
                         )
-                        TextButton(
-                            onClick = {
-                                onAdd(project.path)
-                                onDismiss()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Add") }
                         HorizontalDivider()
                     }
                 }
@@ -2604,11 +2602,10 @@ private fun RemoteDirectoryBrowserDialog(
                             ListItem(
                                 headlineContent = { Text(entry.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { load(entry.path) },
                             )
-                            TextButton(onClick = { load(entry.path) }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Open")
-                            }
                             HorizontalDivider()
                         }
                     }
@@ -2629,17 +2626,58 @@ private fun parentPath(path: String): String {
 
 @Composable
 private fun PaneHeader(title: String, icon: ImageVector, actions: @Composable RowScope.() -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(64.dp)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Icon(icon, contentDescription = null)
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-        actions()
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth < 520.dp) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .height(96.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(icon, contentDescription = null)
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End,
+                    content = actions,
+                )
+            }
+        } else {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Icon(icon, contentDescription = null)
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                actions()
+            }
+        }
     }
     HorizontalDivider()
 }
