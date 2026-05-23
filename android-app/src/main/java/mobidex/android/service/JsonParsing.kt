@@ -90,6 +90,7 @@ internal fun parseThread(element: JsonElement): CodexThread {
         createdAtEpochSeconds = element.long("createdAt") ?: 0,
         name = element.string("name"),
         sourceKind = sourceKind,
+        isArchived = element.bool("archived") ?: false,
         turns = element.array("turns")?.map(::parseTurn) ?: emptyList(),
     )
 }

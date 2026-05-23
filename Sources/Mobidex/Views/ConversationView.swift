@@ -22,7 +22,7 @@ struct ConversationView: View {
     @State private var idleTimerWasDisabledBeforeRecording = false
     @State private var isTranscribingAudio = false
     @State private var attachmentAlert: AttachmentAlert?
-    @State private var showsContextPopover = false
+    @State private var isQueueSheetPresented = false
     @State private var isTimelineNearBottom = true
     @State private var timelineDistanceFromBottom: CGFloat = 0
     @State private var autoFollowStreaming = true
@@ -211,6 +211,18 @@ struct ConversationView: View {
             .buttonStyle(.borderedProminent)
             .disabled(!model.canCreateSession)
             .accessibilityIdentifier("projectNewSessionButton")
+            .contextMenu {
+                Button {
+                    Task { await model.startNewSession() }
+                } label: {
+                    Label("Start in New Worktree", systemImage: "arrow.triangle.branch")
+                }
+                Button {
+                    Task { await model.startNewSession(location: .projectDirectory) }
+                } label: {
+                    Label("Start in Project Directory", systemImage: "folder")
+                }
+            }
         }
         .padding()
     }
@@ -361,7 +373,10 @@ struct ConversationView: View {
     }
 
     private var projectEmptyDescription: String {
-        model.canSendMessage ? "Start a new session for this project." : "Connect to start a session for this project."
+        if model.isRefreshingSessions {
+            return ""
+        }
+        return model.canSendMessage ? "Start a new session for this project." : "Connect to start a session for this project."
     }
 
     private func scrollToConversationBottom(_ proxy: ScrollViewProxy) {
@@ -427,6 +442,10 @@ struct ConversationView: View {
     private var composer: some View {
         VStack(spacing: 0) {
             VStack(spacing: 12) {
+                if !model.queuedTurnInputs.isEmpty {
+                    queuedMessagesTray
+                }
+
                 TextField("Ask for follow-up changes", text: composerTextBinding, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(2...6)
@@ -457,6 +476,42 @@ struct ConversationView: View {
         .padding(.horizontal)
         .padding(.vertical, 10)
         .background(.bar)
+        .sheet(isPresented: $isQueueSheetPresented) {
+            QueuedMessagesSheet()
+                .environmentObject(model)
+                .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var queuedMessagesTray: some View {
+        Button {
+            isQueueSheetPresented = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "text.line.first.and.arrowtriangle.forward")
+                    .foregroundStyle(.secondary)
+                Text(queueTrayTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer()
+                Image(systemName: "chevron.up")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var queueTrayTitle: String {
+        let count = model.queuedTurnInputs.count
+        guard count == 1, let item = model.queuedTurnInputs.first else {
+            return "\(count) queued"
+        }
+        return "1 queued: \(item.preview)"
     }
 
     private var sendDisabled: Bool {
@@ -499,13 +554,6 @@ struct ConversationView: View {
 
     private var composerTrailingControls: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                if shouldShowContextIndicator {
-                    contextIndicator
-                }
-                modelLabel
-                sendButton
-            }
             HStack(spacing: 8) {
                 modelLabel
                 sendButton
@@ -629,13 +677,13 @@ struct ConversationView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Text("5.5")
+                Text("5.5 \(model.selectedReasoningEffort.label)")
                     .fontWeight(.medium)
                 Image(systemName: "chevron.down")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            .frame(minWidth: 44, minHeight: 32)
+            .frame(minHeight: 32)
         }
         .font(.subheadline)
         .foregroundStyle(.primary)
@@ -644,7 +692,7 @@ struct ConversationView: View {
 
     private var sendButton: some View {
         Button {
-            submitComposerInput(queueWhenActive: false)
+            submitComposerInput(queueWhenActive: model.selectedThread?.status.isActive == true)
         } label: {
             Image(systemName: "arrow.up")
                 .font(.title3.weight(.semibold))
@@ -656,11 +704,11 @@ struct ConversationView: View {
         .disabled(sendDisabled)
         .contextMenu {
             if model.selectedThread?.status.isActive == true {
-                Button("Send to Codex") {
-                    submitComposerInput(queueWhenActive: false)
-                }
-                Button("Send as Follow-up") {
+                Button("Queue after Current Turn") {
                     submitComposerInput(queueWhenActive: true)
+                }
+                Button("Steer Active Turn") {
+                    submitComposerInput(queueWhenActive: false)
                 }
             }
         }
@@ -736,39 +784,6 @@ struct ConversationView: View {
     private func clearComposerDraft(for key: String?) {
         guard let key else { return }
         composerDrafts.removeValue(forKey: key)
-    }
-
-    private var contextIndicator: some View {
-        let fraction = model.contextUsageFraction
-        let percent = model.contextUsagePercent
-        return Button {
-            showsContextPopover = true
-        } label: {
-            ZStack {
-                Circle()
-                    .stroke(Color.secondary.opacity(0.25), lineWidth: 3)
-                    .frame(width: 20, height: 20)
-                if let fraction {
-                    Circle()
-                        .trim(from: 0, to: fraction)
-                        .stroke(Color.secondary, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: 20, height: 20)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showsContextPopover) {
-            Text(percent.map { "Context window \($0)% used" } ?? "Context window unavailable")
-                .font(.caption)
-                .padding(10)
-                .presentationCompactAdaptation(.popover)
-        }
-        .accessibilityLabel(percent.map { "Context window \($0) percent used" } ?? "Context window")
-    }
-
-    private var shouldShowContextIndicator: Bool {
-        model.contextUsagePercent != nil
     }
 
     private var attachmentStrip: some View {
@@ -995,6 +1010,70 @@ private enum AudioComposerRecorderError: LocalizedError {
 private struct ComposerDraft {
     var text: String
     var attachmentPaths: [String]
+}
+
+private struct QueuedMessagesSheet: View {
+    @EnvironmentObject private var model: AppViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(Array(model.queuedTurnInputs.enumerated()), id: \.element.id) { index, item in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(item.preview)
+                            .font(.body)
+                            .lineLimit(4)
+                        Text("Queued \(index + 1) of \(model.queuedTurnInputs.count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            model.deleteQueuedTurnInput(item.id)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .contextMenu {
+                        Button {
+                            Task { await model.steerQueuedTurnInputNow(item.id) }
+                        } label: {
+                            Label("Steer Active Turn Now", systemImage: "arrow.triangle.turn.up.right.circle")
+                        }
+                        Button {
+                            model.moveQueuedTurnInput(item.id, direction: -1)
+                        } label: {
+                            Label("Move Up", systemImage: "arrow.up")
+                        }
+                        .disabled(index == 0)
+                        Button {
+                            model.moveQueuedTurnInput(item.id, direction: 1)
+                        } label: {
+                            Label("Move Down", systemImage: "arrow.down")
+                        }
+                        .disabled(index == model.queuedTurnInputs.count - 1)
+                        Button(role: .destructive) {
+                            model.deleteQueuedTurnInput(item.id)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+            .overlay {
+                if model.queuedTurnInputs.isEmpty {
+                    ContentUnavailableView("No Queued Messages", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+            }
+            .navigationTitle("Queued Messages")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
 }
 
 private struct ComposerAttachmentTile: View {
@@ -1491,134 +1570,188 @@ struct ConversationSectionView: View {
 }
 
 private struct MarkdownText: View {
-    private let id: String
-    private let markdown: String
+    private let blocks: [ConversationMarkdownBlock]
 
     init(_ markdown: String, id: String) {
-        self.id = id
-        self.markdown = ConversationTextPresentation.displayBody(from: markdown)
+        self.blocks = ConversationMarkdownParser.blocks(from: markdown)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(ConversationMarkdownRenderCache.shared.segments(for: id, markdown: markdown)) { segment in
-                if let attributed = segment.attributed {
-                    Text(attributed)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    Text(segment.text)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            ForEach(blocks) { block in
+                blockView(block)
             }
         }
         .transaction { transaction in
             transaction.animation = nil
         }
     }
+
+    @ViewBuilder
+    private func blockView(_ block: ConversationMarkdownBlock) -> some View {
+        switch block {
+        case .paragraph(_, let text):
+            InlineMarkdownText(text)
+                .fixedSize(horizontal: false, vertical: true)
+        case .bulletList(_, let items):
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(items.indices, id: \.self) { index in
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Text("•")
+                        InlineMarkdownText(items[index])
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        case .orderedList(_, let items):
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(items.indices, id: \.self) { index in
+                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                        Text("\(index + 1).")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                        InlineMarkdownText(items[index])
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        case .codeBlock(_, let code):
+            ScrollView(.horizontal, showsIndicators: true) {
+                Text(code)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+    }
 }
 
-private struct ConversationMarkdownSegment: Identifiable {
-    var id: String
-    var text: String
-    var attributed: AttributedString?
-}
+private struct InlineMarkdownText: View {
+    let text: String
 
-@MainActor
-private final class ConversationMarkdownRenderCache {
-    static let shared = ConversationMarkdownRenderCache()
-
-    private struct Entry {
-        var markdown: String
-        var prefix: String
-        var prefixSegments: [ConversationMarkdownSegment]
-        var segments: [ConversationMarkdownSegment]
+    init(_ text: String) {
+        self.text = text
     }
 
-    private var entries: [String: Entry] = [:]
-    private var accessOrder: [String] = []
-    private let maximumEntries = 96
-    private let targetTailCharacters = 4_096
-    private let minimumReusablePrefixCharacters = 1_024
+    var body: some View {
+        inlineText
+    }
 
-    func segments(for id: String, markdown: String) -> [ConversationMarkdownSegment] {
-        if let entry = entries[id], entry.markdown == markdown {
-            touch(id)
-            return entry.segments
+    private var inlineText: Text {
+        var result = Text("")
+        var remainder = text[...]
+        var isCode = false
+
+        while let marker = remainder.firstIndex(of: "`") {
+            let prefix = String(remainder[..<marker])
+            result = result + styledText(prefix, isCode: isCode)
+            remainder = remainder[remainder.index(after: marker)...]
+            isCode.toggle()
         }
 
-        let previous = entries[id]
-        let nextEntry = buildEntry(id: id, markdown: markdown, previous: previous)
-        entries[id] = nextEntry
-        touch(id)
-        trimIfNeeded()
-        return nextEntry.segments
+        result = result + styledText(String(remainder), isCode: isCode)
+        return result
     }
 
-    private func buildEntry(id: String, markdown: String, previous: Entry?) -> Entry {
-        guard markdown.count > minimumReusablePrefixCharacters,
-              let anchor = reusableTailAnchor(in: markdown),
-              anchor > markdown.startIndex
+    private func styledText(_ value: String, isCode: Bool) -> Text {
+        guard !value.isEmpty else { return Text("") }
+        if isCode {
+            return Text(value)
+                .font(.system(.body, design: .monospaced))
+                .foregroundStyle(.primary)
+        }
+        return Text(value)
+    }
+}
+
+private enum ConversationMarkdownBlock: Identifiable {
+    case paragraph(String, String)
+    case bulletList(String, [String])
+    case orderedList(String, [String])
+    case codeBlock(String, String)
+
+    var id: String {
+        switch self {
+        case .paragraph(let id, _), .bulletList(let id, _), .orderedList(let id, _), .codeBlock(let id, _):
+            id
+        }
+    }
+}
+
+private enum ConversationMarkdownParser {
+    static func blocks(from body: String) -> [ConversationMarkdownBlock] {
+        ConversationTextPresentation.markdownBlocks(from: ConversationTextPresentation.displayBody(from: body))
+            .enumerated()
+            .map { offset, block in
+                parseBlock(block, offset: offset)
+            }
+    }
+
+    private static func parseBlock(_ block: String, offset: Int) -> ConversationMarkdownBlock {
+        let id = "\(offset)-\(stableHash(block))"
+        let lines = block
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+
+        if let code = fencedCode(from: lines) {
+            return .codeBlock(id, code)
+        }
+
+        let nonEmptyLines = lines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        let bulletItems = nonEmptyLines.compactMap(bulletItem(from:))
+        if !bulletItems.isEmpty, bulletItems.count == nonEmptyLines.count {
+            return .bulletList(id, bulletItems)
+        }
+
+        let orderedItems = nonEmptyLines.compactMap(orderedItem(from:))
+        if !orderedItems.isEmpty, orderedItems.count == nonEmptyLines.count {
+            return .orderedList(id, orderedItems)
+        }
+
+        return .paragraph(id, paragraphText(from: lines))
+    }
+
+    private static func fencedCode(from lines: [String]) -> String? {
+        guard let first = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+              first.hasPrefix("```") || first.hasPrefix("~~~")
         else {
-            let segments = parseSegments(id: id, namespace: "full", markdown: markdown)
-            return Entry(markdown: markdown, prefix: "", prefixSegments: [], segments: segments)
-        }
-
-        let prefix = String(markdown[..<anchor])
-        let tail = String(markdown[anchor...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefixSegments: [ConversationMarkdownSegment]
-        if let previous, previous.prefix == prefix {
-            prefixSegments = previous.prefixSegments
-        } else {
-            prefixSegments = parseSegments(id: id, namespace: "prefix", markdown: prefix)
-        }
-        let tailSegments = parseSegments(id: id, namespace: "tail", markdown: tail)
-        return Entry(markdown: markdown, prefix: prefix, prefixSegments: prefixSegments, segments: prefixSegments + tailSegments)
-    }
-
-    private func reusableTailAnchor(in markdown: String) -> String.Index? {
-        guard markdown.count > targetTailCharacters + minimumReusablePrefixCharacters else {
             return nil
         }
-        let tailStart = markdown.index(markdown.endIndex, offsetBy: -targetTailCharacters)
-        var search = markdown[..<tailStart]
-        while let range = search.range(of: "\n\n", options: .backwards) {
-            let anchor = range.upperBound
-            guard markdown.distance(from: markdown.startIndex, to: anchor) >= minimumReusablePrefixCharacters else {
-                return nil
-            }
-            let prefix = markdown[..<anchor]
-            let fenceCount = prefix.components(separatedBy: "```").count - 1
-            let tildeFenceCount = prefix.components(separatedBy: "~~~").count - 1
-            if fenceCount.isMultiple(of: 2), tildeFenceCount.isMultiple(of: 2) {
-                return anchor
-            }
-            search = markdown[..<range.lowerBound]
+        var codeLines = lines
+        codeLines.removeFirst()
+        if let last = codeLines.last?.trimmingCharacters(in: .whitespacesAndNewlines),
+           last.hasPrefix("```") || last.hasPrefix("~~~") {
+            codeLines.removeLast()
         }
-        return nil
+        return codeLines.joined(separator: "\n")
     }
 
-    private func parseSegments(id: String, namespace: String, markdown: String) -> [ConversationMarkdownSegment] {
-        ConversationTextPresentation.markdownBlocks(from: markdown).enumerated().map { offset, block in
-            let segmentID = "\(id)-\(namespace)-\(offset)-\(Self.stableHash(block))"
-            return ConversationMarkdownSegment(
-                id: segmentID,
-                text: block,
-                attributed: try? AttributedString(markdown: ConversationTextPresentation.markdownForRendering(from: block))
-            )
-        }
+    private static func bulletItem(from line: String) -> String? {
+        guard line.hasPrefix("- ") || line.hasPrefix("* ") else { return nil }
+        return String(line.dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func touch(_ id: String) {
-        accessOrder.removeAll { $0 == id }
-        accessOrder.append(id)
+    private static func orderedItem(from line: String) -> String? {
+        guard let marker = line.firstIndex(of: ".") else { return nil }
+        let number = line[..<marker]
+        guard !number.isEmpty, number.allSatisfy(\.isNumber) else { return nil }
+        let afterMarker = line[line.index(after: marker)...]
+        guard afterMarker.first == " " else { return nil }
+        return String(afterMarker.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func trimIfNeeded() {
-        guard accessOrder.count > maximumEntries else { return }
-        for id in accessOrder.prefix(accessOrder.count - maximumEntries) {
-            entries.removeValue(forKey: id)
-        }
-        accessOrder = Array(accessOrder.suffix(maximumEntries))
+    private static func paragraphText(from lines: [String]) -> String {
+        lines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 
     private static func stableHash(_ text: String) -> String {

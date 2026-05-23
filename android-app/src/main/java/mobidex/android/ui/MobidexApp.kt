@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -130,10 +131,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -150,6 +154,8 @@ import kotlinx.coroutines.withContext
 import mobidex.android.AndroidProjectListSections
 import mobidex.android.AppViewModel
 import mobidex.android.MobidexUiState
+import mobidex.android.NewSessionLocation
+import mobidex.android.QueuedTurnInput
 import mobidex.android.model.CodexThread
 import mobidex.android.model.PendingApproval
 import mobidex.android.model.ProjectRecord
@@ -385,7 +391,7 @@ private fun ProjectSessionPane(
     val connectionMode = state.connectionState == ServerConnectionState.Connecting
 
     Column(modifier) {
-        PaneHeader(sessionsProject?.displayName ?: server?.displayName ?: "Mobidex", Icons.Default.FolderOpen) {
+        PaneHeader(sessionsProject?.let { "${it.displayName} Sessions" } ?: server?.displayName ?: "Mobidex", Icons.Default.FolderOpen) {
             if (sessionsProject != null) {
                 TextButton(
                     onClick = {
@@ -412,6 +418,18 @@ private fun ProjectSessionPane(
                 IconButton(onClick = onAddProject, enabled = server != null) {
                     Icon(Icons.Default.Add, contentDescription = "Add Project")
                 }
+            } else {
+                NewSessionMenuButton(
+                    enabled = state.canCreateSession && !connectionMode,
+                    onStart = {
+                        model.startNewSession()
+                        onOpenDetail()
+                    },
+                    onStartInProjectDirectory = {
+                        model.startNewSession(NewSessionLocation.ProjectDirectory)
+                        onOpenDetail()
+                    },
+                )
             }
             if (server != null) {
                 SelectedServerActionsMenu(
@@ -899,17 +917,8 @@ private fun ThreadList(
                 ) {
                     Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Column(Modifier.weight(1f)) {
-                        Text("Sessions in ${project.displayName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(project.displayName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                         Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    IconButton(
-                        onClick = {
-                            model.startNewSession()
-                            onOpenDetail()
-                        },
-                        enabled = state.canCreateSession && !contentDisabled,
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "New Session")
                     }
                 }
             }
@@ -933,11 +942,7 @@ private fun ThreadList(
         if (sections.isEmpty()) {
             EmptyState(
                 sessionEmptyTitle(state),
-                if (!state.isShowingAllSessions && state.selectedProject != null && state.connectionState == ServerConnectionState.Connected) {
-                    "Start a new session for this project."
-                } else {
-                    "Sessions you open will show up here."
-                },
+                sessionEmptyDetail(state),
                 Icons.Default.Description,
             )
         } else {
@@ -959,6 +964,20 @@ private fun ThreadList(
                             },
                             leadingContent = {
                                 Box(Modifier.size(10.dp).clip(CircleShape).background(threadStatusColor(thread)))
+                            },
+                            trailingContent = {
+                                TextButton(
+                                    onClick = {
+                                        if (thread.isArchived) {
+                                            model.unarchiveThread(thread)
+                                        } else {
+                                            model.archiveThread(thread)
+                                        }
+                                    },
+                                    enabled = !contentDisabled,
+                                ) {
+                                    Text(if (thread.isArchived) "Unarchive" else "Archive")
+                                }
                             },
                             modifier = Modifier.background(if (thread.id == state.selectedThreadID) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent),
                         )
@@ -1005,7 +1024,7 @@ private fun ConversationPane(
             ProjectHeader(project, state, model)
             EmptyState(
                 projectSessionEmptyTitle(state),
-                "Start a new session for this project.",
+                projectSessionEmptyDetail(state),
                 Icons.Default.Description,
                 Modifier.weight(1f),
             )
@@ -1047,12 +1066,23 @@ internal fun sessionEmptyTitle(state: MobidexUiState): String =
         else -> "Connect to Load Sessions"
     }
 
+internal fun sessionEmptyDetail(state: MobidexUiState): String =
+    when {
+        state.isRefreshingSessions -> ""
+        !state.isShowingAllSessions && state.selectedProject != null && state.connectionState == ServerConnectionState.Connected ->
+            "Start a new session for this project."
+        else -> "Sessions you open will show up here."
+    }
+
 internal fun projectSessionEmptyTitle(state: MobidexUiState): String =
     when {
         state.isRefreshingSessions -> "Loading Sessions..."
         state.connectionState == ServerConnectionState.Connected -> "No Sessions Yet"
         else -> "Connect to Create a Session"
     }
+
+internal fun projectSessionEmptyDetail(state: MobidexUiState): String =
+    if (state.isRefreshingSessions) "" else "Start a new session for this project."
 
 @Composable
 private fun ConversationHeader(thread: CodexThread, state: MobidexUiState, model: AppViewModel) {
@@ -1114,11 +1144,46 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
             Text(project.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(project.path, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        IconButton(onClick = { model.startNewSession() }, enabled = state.canCreateSession) {
-            Icon(Icons.Default.Add, contentDescription = "New Session")
-        }
+        NewSessionMenuButton(
+            enabled = state.canCreateSession,
+            onStart = { model.startNewSession() },
+            onStartInProjectDirectory = { model.startNewSession(NewSessionLocation.ProjectDirectory) },
+        )
     }
     HorizontalDivider()
+}
+
+@Composable
+private fun NewSessionMenuButton(
+    enabled: Boolean,
+    onStart: () -> Unit,
+    onStartInProjectDirectory: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = onStart, enabled = enabled) {
+            Icon(Icons.Default.Add, contentDescription = "New Session")
+        }
+        IconButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.size(28.dp).align(Alignment.BottomEnd)) {
+            Icon(Icons.Default.KeyboardArrowDown, contentDescription = "New Session Options")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("Start in New Worktree") },
+                onClick = {
+                    expanded = false
+                    onStart()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Start in Project Directory") },
+                onClick = {
+                    expanded = false
+                    onStartInProjectDirectory()
+                },
+            )
+        }
+    }
 }
 
 @Composable
@@ -1243,6 +1308,9 @@ private fun ChatTimeline(
             state = state,
             model = model,
             onSend = {
+                submitComposerInput(queueWhenActive = state.selectedThread?.status?.isActive == true)
+            },
+            onSendNow = {
                 submitComposerInput(queueWhenActive = false)
             },
             onSendFollowUp = {
@@ -1439,6 +1507,8 @@ private fun ConversationSectionRow(section: ConversationSection) {
             if (section.body.isNotBlank()) {
                 if (section.kind == ConversationSectionKind.User) {
                     UserMessageContent(section.body)
+                } else if (section.kind in markdownSectionKinds) {
+                    MarkdownContent(section.body)
                 } else {
                     Text(
                         section.body,
@@ -1453,6 +1523,179 @@ private fun ConversationSectionRow(section: ConversationSection) {
     }
 }
 
+private val markdownSectionKinds = setOf(
+    ConversationSectionKind.Assistant,
+    ConversationSectionKind.Reasoning,
+    ConversationSectionKind.Plan,
+    ConversationSectionKind.Review,
+    ConversationSectionKind.System,
+)
+
+private sealed interface MarkdownBlock {
+    data class Paragraph(val text: String) : MarkdownBlock
+    data class BulletList(val items: List<String>) : MarkdownBlock
+    data class OrderedList(val items: List<String>) : MarkdownBlock
+    data class CodeBlock(val code: String) : MarkdownBlock
+}
+
+@Composable
+private fun MarkdownContent(body: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        parseMarkdownBlocks(body).forEach { block ->
+            when (block) {
+                is MarkdownBlock.Paragraph -> InlineMarkdownText(block.text)
+                is MarkdownBlock.BulletList -> Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    block.items.forEach { item ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text("•", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            InlineMarkdownText(item, Modifier.weight(1f))
+                        }
+                    }
+                }
+                is MarkdownBlock.OrderedList -> Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    block.items.forEachIndexed { index, item ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            Text("${index + 1}.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            InlineMarkdownText(item, Modifier.weight(1f))
+                        }
+                    }
+                }
+                is MarkdownBlock.CodeBlock -> Text(
+                    block.code,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f), MaterialTheme.shapes.small)
+                        .padding(10.dp),
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun InlineMarkdownText(text: String, modifier: Modifier = Modifier) {
+    val annotated = buildAnnotatedString {
+        var remaining = text
+        var isCode = false
+        while (true) {
+            val marker = remaining.indexOf('`')
+            if (marker < 0) break
+            val prefix = remaining.substring(0, marker)
+            appendMarkdownSpan(prefix, isCode)
+            remaining = remaining.substring(marker + 1)
+            isCode = !isCode
+        }
+        appendMarkdownSpan(remaining, isCode)
+    }
+    Text(annotated, modifier = modifier, style = MaterialTheme.typography.bodyMedium)
+}
+
+private fun androidx.compose.ui.text.AnnotatedString.Builder.appendMarkdownSpan(text: String, isCode: Boolean) {
+    if (text.isEmpty()) return
+    if (isCode) {
+        withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
+            append(text)
+        }
+    } else {
+        append(text)
+    }
+}
+
+private fun parseMarkdownBlocks(body: String): List<MarkdownBlock> =
+    markdownBlocks(displayBody(body)).map { block ->
+        val lines = block.replace("\r\n", "\n").replace("\r", "\n").lines()
+        fencedCode(lines)
+            ?: bulletList(lines)
+            ?: orderedList(lines)
+            ?: MarkdownBlock.Paragraph(lines.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" "))
+    }.filterNot { it is MarkdownBlock.Paragraph && it.text.isBlank() }
+
+private fun displayBody(body: String): String =
+    stripCodexAppDirectives(body).trim()
+
+private fun markdownBlocks(body: String): List<String> {
+    val blocks = mutableListOf<String>()
+    val current = mutableListOf<String>()
+    var isInFence = false
+    body.replace("\r\n", "\n").replace("\r", "\n").lines().forEach { line ->
+        val trimmed = line.trim()
+        if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) isInFence = !isInFence
+        if (trimmed.isEmpty() && !isInFence) {
+            if (current.isNotEmpty()) {
+                blocks += current.joinToString("\n").trim()
+                current.clear()
+            }
+        } else {
+            current += line
+        }
+    }
+    if (current.isNotEmpty()) blocks += current.joinToString("\n").trim()
+    return blocks.filter { it.isNotEmpty() }
+}
+
+private fun fencedCode(lines: List<String>): MarkdownBlock.CodeBlock? {
+    val first = lines.firstOrNull()?.trim() ?: return null
+    if (!first.startsWith("```") && !first.startsWith("~~~")) return null
+    val codeLines = lines.drop(1).let { remaining ->
+        val last = remaining.lastOrNull()?.trim()
+        if (last?.startsWith("```") == true || last?.startsWith("~~~") == true) remaining.dropLast(1) else remaining
+    }
+    return MarkdownBlock.CodeBlock(codeLines.joinToString("\n"))
+}
+
+private fun bulletList(lines: List<String>): MarkdownBlock.BulletList? {
+    val items = lines.map { it.trim() }.filter { it.isNotEmpty() }.mapNotNull { line ->
+        when {
+            line.startsWith("- ") -> line.removePrefix("- ").trim()
+            line.startsWith("* ") -> line.removePrefix("* ").trim()
+            else -> null
+        }
+    }
+    return if (items.isNotEmpty() && items.size == lines.count { it.trim().isNotEmpty() }) MarkdownBlock.BulletList(items) else null
+}
+
+private fun orderedList(lines: List<String>): MarkdownBlock.OrderedList? {
+    val nonEmpty = lines.map { it.trim() }.filter { it.isNotEmpty() }
+    val items = nonEmpty.mapNotNull { line ->
+        val marker = line.indexOf(". ")
+        if (marker <= 0 || line.take(marker).any { !it.isDigit() }) null else line.substring(marker + 2).trim()
+    }
+    return if (items.isNotEmpty() && items.size == nonEmpty.size) MarkdownBlock.OrderedList(items) else null
+}
+
+private fun stripCodexAppDirectives(body: String): String {
+    var isInFence = false
+    return body.lines().filter { line ->
+        val trimmed = line.trim()
+        if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
+            isInFence = !isInFence
+            true
+        } else {
+            isInFence || !isCodexAppDirectiveLine(trimmed)
+        }
+    }.joinToString("\n")
+}
+
+private fun isCodexAppDirectiveLine(line: String): Boolean {
+    var remaining = line
+    var foundDirective = false
+    val names = listOf("archive", "code-comment", "git-commit", "git-create-branch", "git-create-pr", "git-push", "git-stage")
+    while (remaining.isNotEmpty()) {
+        remaining = remaining.trimStart()
+        if (remaining.isEmpty()) return foundDirective
+        val name = names.firstOrNull { remaining.startsWith("::$it") } ?: return false
+        remaining = remaining.drop(2 + name.length)
+        if (!remaining.startsWith("{")) return false
+        val closeBrace = remaining.indexOf('}')
+        if (closeBrace < 0) return false
+        remaining = remaining.drop(closeBrace + 1)
+        foundDirective = true
+    }
+    return foundDirective
+}
+
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 private fun Composer(
@@ -1463,6 +1706,7 @@ private fun Composer(
     state: MobidexUiState,
     model: AppViewModel,
     onSend: () -> Unit,
+    onSendNow: () -> Unit,
     onSendFollowUp: () -> Unit,
     onTranscript: (String) -> Unit,
 ) {
@@ -1473,6 +1717,7 @@ private fun Composer(
     var showEffort by remember { mutableStateOf(false) }
     var showAccess by remember { mutableStateOf(false) }
     var showSendOptions by remember { mutableStateOf(false) }
+    var showQueue by remember { mutableStateOf(false) }
     var audioRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var audioFile by remember { mutableStateOf<File?>(null) }
     var isRecordingAudio by remember { mutableStateOf(false) }
@@ -1572,6 +1817,11 @@ private fun Composer(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        if (state.queuedTurnInputs.isNotEmpty()) {
+            OutlinedButton(onClick = { showQueue = true }, modifier = Modifier.fillMaxWidth()) {
+                Text(queueTrayLabel(state.queuedTurnInputs), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
@@ -1664,9 +1914,6 @@ private fun Composer(
                     }
                 }
             }
-            state.tokenUsagePercent?.let { percent ->
-                ContextUsageIndicator(percent)
-            }
             Spacer(Modifier.weight(1f))
             Box {
                 SendIconButton(
@@ -1677,17 +1924,17 @@ private fun Composer(
                 )
                 DropdownMenu(expanded = showSendOptions, onDismissRequest = { showSendOptions = false }) {
                     DropdownMenuItem(
-                        text = { Text("Send to Codex") },
-                        onClick = {
-                            showSendOptions = false
-                            onSend()
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Send as Follow-up") },
+                        text = { Text("Queue after Current Turn") },
                         onClick = {
                             showSendOptions = false
                             onSendFollowUp()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Steer Active Turn") },
+                        onClick = {
+                            showSendOptions = false
+                            onSendNow()
                         },
                     )
                 }
@@ -1697,6 +1944,60 @@ private fun Composer(
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
     }
+    if (showQueue) {
+        QueuedMessagesDialog(
+            queuedInputs = state.queuedTurnInputs,
+            model = model,
+            onDismiss = { showQueue = false },
+        )
+    }
+}
+
+private fun queueTrayLabel(queuedInputs: List<QueuedTurnInput>): String =
+    if (queuedInputs.size == 1) "1 queued: ${queuedInputs.first().preview}" else "${queuedInputs.size} queued"
+
+@Composable
+private fun QueuedMessagesDialog(
+    queuedInputs: List<QueuedTurnInput>,
+    model: AppViewModel,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Queued Messages") },
+        text = {
+            if (queuedInputs.isEmpty()) {
+                Text("No queued messages")
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(queuedInputs, key = { _, item -> item.id }) { index, item ->
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(item.preview, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                            Text("Queued ${index + 1} of ${queuedInputs.size}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                TextButton(onClick = { model.steerQueuedTurnInputNow(item.id) }) {
+                                    Text("Steer now")
+                                }
+                                TextButton(onClick = { model.moveQueuedTurnInput(item.id, -1) }, enabled = index > 0) {
+                                    Text("Up")
+                                }
+                                TextButton(onClick = { model.moveQueuedTurnInput(item.id, 1) }, enabled = index < queuedInputs.lastIndex) {
+                                    Text("Down")
+                                }
+                                TextButton(onClick = { model.deleteQueuedTurnInput(item.id) }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                                    Text("Delete")
+                                }
+                            }
+                            if (index < queuedInputs.lastIndex) HorizontalDivider()
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        },
+    )
 }
 
 @Composable
@@ -1819,26 +2120,6 @@ private fun RecordingIndicator(onStop: () -> Unit) {
                 Spacer(Modifier.width(6.dp))
                 Text("Stop")
             }
-        }
-    }
-}
-
-@Composable
-private fun ContextUsageIndicator(percent: Int) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { expanded = true }, modifier = Modifier.size(36.dp)) {
-            CircularProgressIndicator(
-                progress = { (percent.coerceIn(0, 100) / 100f) },
-                modifier = Modifier.size(20.dp),
-                strokeWidth = 2.dp,
-            )
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text("Context window $percent% used") },
-                onClick = { expanded = false },
-            )
         }
     }
 }

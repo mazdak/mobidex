@@ -123,7 +123,11 @@ actor CodexAppServerClient {
                 method: "thread/list",
                 params: SharedKMPBridge.threadListParams(cwd: cwd, limit: limit, cursor: cursor, archived: archived)
             )
-            threads.append(contentsOf: response.data.filter(\.isUserFacingSession))
+            threads.append(contentsOf: response.data.filter(\.isUserFacingSession).map { thread in
+                var thread = thread
+                thread.isArchived = archived
+                return thread
+            })
             cursor = response.nextCursor
             pageCount += 1
         } while cursor != nil && pageCount < (pageLimit ?? Int.max)
@@ -224,6 +228,22 @@ actor CodexAppServerClient {
             method: "turn/steer",
             params: SharedKMPBridge.steerTurnParams(threadID: threadID, expectedTurnID: expectedTurnID, input: input)
         )
+    }
+
+    func archiveThread(threadID: String) async throws {
+        _ = try await request(
+            method: "thread/archive",
+            params: SharedKMPBridge.archiveThreadParams(threadID: threadID)
+        )
+    }
+
+    func unarchiveThread(threadID: String) async throws -> CodexThread {
+        let response = try await requestDecoded(
+            ThreadReadResponse.self,
+            method: "thread/unarchive",
+            params: SharedKMPBridge.unarchiveThreadParams(threadID: threadID)
+        )
+        return response.thread
     }
 
     func gitDiffToRemote(cwd: String) async throws -> GitDiffToRemoteResponse {

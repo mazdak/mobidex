@@ -174,6 +174,7 @@ protocol SSHService: Sendable {
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject]
     func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
     func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
+    func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String]
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient
 }
@@ -378,6 +379,35 @@ final class CitadelSSHService: TerminalSSHService {
                 inShell: true
             )
             return try SharedKMPBridge.decodeRemoteDirectoryListing(from: String(buffer: output))
+        }
+    }
+
+    func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {
+        try await withClient(server: server, credential: credential) { client in
+            let command = """
+            set -eu
+            root=$(git -C \(projectPath.shellQuotedForRemoteCommand()) rev-parse --show-toplevel)
+            name=$(basename "$root" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')
+            [ -n "$name" ] || name=repo
+            token=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' | cut -c1-4 || true)
+            [ -n "$token" ] || token=$(date +%s | tail -c 5)
+            base="$HOME/.codex/worktrees/$token"
+            target="$base/$name"
+            mkdir -p "$base"
+            git -C "$root" worktree add --detach "$target" HEAD >/dev/null 2>&1
+            printf '%s\\n' "$target"
+            """
+            let output = try await client.executeCommand(
+                command,
+                maxResponseSize: 16_384,
+                mergeStreams: true,
+                inShell: true
+            )
+            let path = String(buffer: output).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !path.isEmpty, path.hasPrefix("/") else {
+                throw SSHServiceError.connectionClosed("creating Codex worktree: \(path)")
+            }
+            return path
         }
     }
 

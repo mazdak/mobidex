@@ -275,6 +275,18 @@ object CodexRpcRequests {
         return CodexRpcRequest(id = id, method = "thread/list", params = jsonObject(params))
     }
 
+    fun archiveThread(id: Long, threadId: String): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "thread/archive",
+        params = jsonObject(mapOf("threadId" to jsonString(threadId))),
+    )
+
+    fun unarchiveThread(id: Long, threadId: String): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "thread/unarchive",
+        params = jsonObject(mapOf("threadId" to jsonString(threadId))),
+    )
+
     fun initialize(id: Long, name: String, title: String, version: String): CodexRpcRequest = CodexRpcRequest(
         id = id,
         method = "initialize",

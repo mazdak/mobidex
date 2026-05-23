@@ -22,8 +22,6 @@ struct RootView: View {
                 columnVisibility: $columnVisibility,
                 preferredCompactColumn: $preferredCompactColumn
             )
-                .navigationTitle(model.selectedServer?.displayName ?? "Mobidex")
-                .navigationBarBackButtonHidden(true)
         } detail: {
             ConversationView()
         }
@@ -221,15 +219,16 @@ struct ProjectSessionListView: View {
                         let sessionSections = filteredSessionSections(model.sessionSections)
                         SessionsContent(
                             selectedProject: project,
-                            canCreateSession: model.canCreateSession,
                             showsArchivedSessions: $model.showsArchivedSessions,
                             sections: sessionSections,
                             selectedThreadID: model.selectedThreadID,
                             serverContentDisabled: serverContentDisabled,
                             contentOpacity: contentOpacity,
-                            onStartNewSession: {
-                                promoteDetailIfCompact()
-                                Task { await model.startNewSession() }
+                            onArchive: { thread in
+                                Task { await model.archiveThread(thread) }
+                            },
+                            onUnarchive: { thread in
+                                Task { await model.unarchiveThread(thread) }
                             },
                             onOpen: { thread in
                                 promoteDetailIfCompact()
@@ -239,11 +238,20 @@ struct ProjectSessionListView: View {
 
                         if sessionSections.isEmpty {
                             Section {
-                                ContentUnavailableView(
-                                    sessionsUnavailableTitle,
-                                    systemImage: "bubble.left.and.bubble.right",
-                                    description: Text(sessionsUnavailableDescription)
-                                )
+                                Group {
+                                    if let sessionsUnavailableDescription {
+                                        ContentUnavailableView(
+                                            sessionsUnavailableTitle,
+                                            systemImage: "bubble.left.and.bubble.right",
+                                            description: Text(sessionsUnavailableDescription)
+                                        )
+                                    } else {
+                                        ContentUnavailableView(
+                                            sessionsUnavailableTitle,
+                                            systemImage: "bubble.left.and.bubble.right"
+                                        )
+                                    }
+                                }
                                     .frame(maxWidth: .infinity, minHeight: 260)
                                     .listRowSeparator(.hidden)
                             }
@@ -295,6 +303,15 @@ struct ProjectSessionListView: View {
                             sessionsProjectID = nil
                             sessionSearchText = ""
                         },
+                        canCreateSession: model.canCreateSession && !serverContentDisabled,
+                        onStartNewSession: {
+                            promoteDetailIfCompact()
+                            Task { await model.startNewSession() }
+                        },
+                        onStartInProjectDirectory: {
+                            promoteDetailIfCompact()
+                            Task { await model.startNewSession(location: .projectDirectory) }
+                        },
                         showingProjectAdd: $showingProjectAdd,
                         showingTerminal: $showingTerminal,
                         showingDiagnostics: $showingDiagnostics,
@@ -325,6 +342,26 @@ struct ProjectSessionListView: View {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
             }
         }
+        .navigationTitle(navigationTitle)
+        .navigationBarBackButtonHidden(sessionsProjectID != nil)
+        .simultaneousGesture(edgeBackToProjectsGesture)
+    }
+
+    private var edgeBackToProjectsGesture: some Gesture {
+        DragGesture(minimumDistance: 24, coordinateSpace: .global)
+            .onEnded { value in
+                guard sessionsProjectID != nil,
+                      value.startLocation.x <= 24,
+                      value.translation.width >= 80,
+                      abs(value.translation.height) <= 60
+                else {
+                    return
+                }
+                withAnimation {
+                    sessionsProjectID = nil
+                    sessionSearchText = ""
+                }
+            }
     }
 
     private func handleArchivedSessionsChange() {
@@ -404,7 +441,10 @@ struct ProjectSessionListView: View {
         return model.connectionState == .connected ? "No Sessions Yet" : "Connect to Load Sessions"
     }
 
-    private var sessionsUnavailableDescription: String {
+    private var sessionsUnavailableDescription: String? {
+        if isSessionRefreshRequested || model.isRefreshingSessions {
+            return nil
+        }
         if model.selectedProject != nil, model.connectionState == .connected {
             return "Start a new session for this project."
         }
@@ -428,6 +468,16 @@ struct ProjectSessionListView: View {
 
     private var searchPrompt: String {
         sessionsProjectID == nil ? "Search Projects" : "Search Sessions"
+    }
+
+    private var navigationTitle: String {
+        guard let server = model.selectedServer else { return "Mobidex" }
+        guard let sessionsProjectID,
+              let project = server.projects.first(where: { $0.id == sessionsProjectID })
+        else {
+            return server.displayName
+        }
+        return "\(project.displayName) Sessions"
     }
 
     private var searchTextBinding: Binding<String> {
@@ -621,6 +671,9 @@ private struct SelectedServerToolbar: ToolbarContent {
     let showingProjectSessions: Bool
     let disabled: Bool
     let onBackToProjects: () -> Void
+    let canCreateSession: Bool
+    let onStartNewSession: () -> Void
+    let onStartInProjectDirectory: () -> Void
     @Binding var showingProjectAdd: Bool
     @Binding var showingTerminal: Bool
     @Binding var showingDiagnostics: Bool
@@ -640,6 +693,12 @@ private struct SelectedServerToolbar: ToolbarContent {
             RefreshServerButton(showingProjectSessions: showingProjectSessions, disabled: disabled)
             if !showingProjectSessions {
                 AddProjectButton(showingProjectAdd: $showingProjectAdd, disabled: disabled)
+            } else {
+                NewSessionButton(
+                    canCreateSession: canCreateSession,
+                    onStartNewSession: onStartNewSession,
+                    onStartInProjectDirectory: onStartInProjectDirectory
+                )
             }
             SelectedServerMenu(
                 server: server,
@@ -700,15 +759,13 @@ private struct AddProjectButton: View {
 
 private struct ProjectSessionScopeRow: View {
     let project: ProjectRecord
-    let canCreateSession: Bool
-    let onStartNewSession: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "folder")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Sessions in \(project.displayName)")
+                Text(project.displayName)
                     .font(.subheadline.weight(.semibold))
                 Text(project.path)
                     .font(.caption)
@@ -716,41 +773,53 @@ private struct ProjectSessionScopeRow: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button(action: onStartNewSession) {
-                Image(systemName: "plus.bubble")
-                    .font(.title3)
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(canCreateSession ? Color.accentColor : Color.secondary)
-            .contentShape(Circle())
-            .disabled(!canCreateSession)
-            .accessibilityLabel("New Session")
-            .accessibilityIdentifier("projectNewSessionButton")
         }
         .padding(.vertical, 2)
     }
 }
 
+private struct NewSessionButton: View {
+    let canCreateSession: Bool
+    let onStartNewSession: () -> Void
+    let onStartInProjectDirectory: () -> Void
+
+    var body: some View {
+        Button(action: onStartNewSession) {
+            Image(systemName: "plus.bubble")
+        }
+        .disabled(!canCreateSession)
+        .accessibilityLabel("New Session")
+        .accessibilityIdentifier("projectNewSessionButton")
+        .contextMenu {
+            Button {
+                onStartNewSession()
+            } label: {
+                Label("Start in New Worktree", systemImage: "arrow.triangle.branch")
+            }
+            Button {
+                onStartInProjectDirectory()
+            } label: {
+                Label("Start in Project Directory", systemImage: "folder")
+            }
+        }
+    }
+}
+
 private struct SessionsContent: View {
     let selectedProject: ProjectRecord
-    let canCreateSession: Bool
     @Binding var showsArchivedSessions: Bool
     let sections: [SessionListSection]
     let selectedThreadID: String?
     let serverContentDisabled: Bool
     let contentOpacity: Double
-    let onStartNewSession: () -> Void
+    let onArchive: (CodexThread) -> Void
+    let onUnarchive: (CodexThread) -> Void
     let onOpen: (CodexThread) -> Void
 
     @ViewBuilder
     var body: some View {
         Section {
-            ProjectSessionScopeRow(
-                project: selectedProject,
-                canCreateSession: canCreateSession && !serverContentDisabled,
-                onStartNewSession: onStartNewSession
-            )
+            ProjectSessionScopeRow(project: selectedProject)
             Toggle("Show archived sessions", isOn: $showsArchivedSessions)
                 .font(.subheadline)
         }
@@ -760,6 +829,8 @@ private struct SessionsContent: View {
         SessionSectionsList(
             sections: sections,
             selectedThreadID: selectedThreadID,
+            onArchive: onArchive,
+            onUnarchive: onUnarchive,
             onOpen: onOpen
         )
         .disabled(serverContentDisabled)
@@ -770,6 +841,8 @@ private struct SessionsContent: View {
 private struct SessionSectionsList: View {
     let sections: [SessionListSection]
     let selectedThreadID: String?
+    let onArchive: (CodexThread) -> Void
+    let onUnarchive: (CodexThread) -> Void
     let onOpen: (CodexThread) -> Void
 
     var body: some View {
@@ -782,6 +855,30 @@ private struct SessionSectionsList: View {
                         ThreadRow(thread: thread, selected: thread.id == selectedThreadID)
                     }
                     .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing) {
+                        if thread.isArchived {
+                            Button { onUnarchive(thread) } label: {
+                                Label("Unarchive", systemImage: "tray.and.arrow.up")
+                            }
+                            .tint(.blue)
+                        } else {
+                            Button { onArchive(thread) } label: {
+                                Label("Archive", systemImage: "archivebox")
+                            }
+                            .tint(.orange)
+                        }
+                    }
+                    .contextMenu {
+                        if thread.isArchived {
+                            Button { onUnarchive(thread) } label: {
+                                Label("Unarchive", systemImage: "tray.and.arrow.up")
+                            }
+                        } else {
+                            Button { onArchive(thread) } label: {
+                                Label("Archive", systemImage: "archivebox")
+                            }
+                        }
+                    }
                     .accessibilityIdentifier("threadRow")
                 }
             }

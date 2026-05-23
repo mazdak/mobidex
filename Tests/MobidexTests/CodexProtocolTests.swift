@@ -285,6 +285,51 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testArchiveAndUnarchiveThreadUseSupportedAppServerMethods() async throws {
+        let archiveTransport = MockCodexLineTransport()
+        let archiveClient = CodexAppServerClient(transport: archiveTransport)
+        let archiveTask = Task { try await archiveClient.archiveThread(threadID: "thread-1") }
+
+        let archiveLine = try await waitForSentLine(in: archiveTransport)
+        let archiveObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(archiveLine.utf8)) as? [String: Any])
+        let archiveID = try XCTUnwrap(archiveObject["id"] as? Int)
+        let archiveParams = try XCTUnwrap(archiveObject["params"] as? [String: Any])
+
+        XCTAssertEqual(archiveObject["method"] as? String, "thread/archive")
+        XCTAssertEqual(archiveParams["threadId"] as? String, "thread-1")
+        archiveTransport.receive(#"{"id":\#(archiveID),"result":{}}"#)
+        try await archiveTask.value
+        await archiveClient.close()
+
+        let unarchiveTransport = MockCodexLineTransport()
+        let unarchiveClient = CodexAppServerClient(transport: unarchiveTransport)
+        let unarchiveTask = Task { try await unarchiveClient.unarchiveThread(threadID: "thread-1") }
+
+        let unarchiveLine = try await waitForSentLine(in: unarchiveTransport)
+        let unarchiveObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(unarchiveLine.utf8)) as? [String: Any])
+        let unarchiveID = try XCTUnwrap(unarchiveObject["id"] as? Int)
+        let unarchiveParams = try XCTUnwrap(unarchiveObject["params"] as? [String: Any])
+
+        XCTAssertEqual(unarchiveObject["method"] as? String, "thread/unarchive")
+        XCTAssertEqual(unarchiveParams["threadId"] as? String, "thread-1")
+        unarchiveTransport.receive("""
+        {"id":\(unarchiveID),"result":{"thread":{
+          "id":"thread-1",
+          "preview":"Restored",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[]
+        }}}
+        """)
+
+        let thread = try await unarchiveTask.value
+        XCTAssertEqual(thread.id, "thread-1")
+        XCTAssertEqual(thread.title, "Restored")
+        await unarchiveClient.close()
+    }
+
     func testGitDiffParserBuildsFileDiffs() {
         let diff = """
         diff --git a/Sources/App.swift b/Sources/App.swift

@@ -3,6 +3,20 @@ import NIOCore
 @testable import Mobidex
 
 final class AppViewModelTests: XCTestCase {
+    func testQueuedTurnInputPreviewPrefersTextAndFallsBackToAttachmentCount() {
+        let textInput = QueuedTurnInput(
+            id: UUID(),
+            input: [.text("  Fix spacing  "), .localImage(path: "/tmp/screenshot.png")]
+        )
+        XCTAssertEqual(textInput.preview, "Fix spacing")
+
+        let attachmentInput = QueuedTurnInput(
+            id: UUID(),
+            input: [.localImage(path: "/tmp/one.png"), .imageURL("https://example.com/two.png")]
+        )
+        XCTAssertEqual(attachmentInput.preview, "2 attachments")
+    }
+
     @MainActor
     func testOpenAIAPIKeySettingsPersistAndUpdateState() {
         let credentials = InMemoryCredentialStore()
@@ -841,12 +855,12 @@ final class AppViewModelTests: XCTestCase {
         let newSessionTask = Task { await viewModel.startNewSession() }
         let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
         let startParams = try requestParams(for: startThread, in: transport)
-        XCTAssertEqual(startParams["cwd"] as? String, "/srv/app")
+        XCTAssertEqual(startParams["cwd"] as? String, "/srv/app-worktree")
         transport.receive("""
         {"id":\(startThread.id),"result":{"thread":{
           "id":"thread-new",
           "preview":"New work",
-          "cwd":"/srv/app",
+          "cwd":"/srv/app-worktree",
           "status":{"type":"idle"},
           "updatedAt":1770000700,
           "createdAt":1770000700,
@@ -994,6 +1008,7 @@ final class AppViewModelTests: XCTestCase {
         ],"nextCursor":null}}
         """)
         await projectRefreshTask.value
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
         XCTAssertEqual(viewModel.threads.map(\.id), ["thread-tools-worktree", "thread-tools-direct"])
         XCTAssertNil(viewModel.selectedThreadID)
 
@@ -1656,12 +1671,12 @@ final class AppViewModelTests: XCTestCase {
         let newSessionTask = Task { await viewModel.startNewSession() }
         let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
         let params = try requestParams(for: startThread, in: transport)
-        XCTAssertEqual(params["cwd"] as? String, "/srv/app")
+        XCTAssertEqual(params["cwd"] as? String, "/srv/app-worktree")
         transport.receive("""
         {"id":\(startThread.id),"result":{"thread":{
           "id":"thread-new",
           "preview":"New thread",
-          "cwd":"/srv/app",
+          "cwd":"/srv/app-worktree",
           "status":{"type":"idle"},
           "updatedAt":1770000400,
           "createdAt":1770000400,
@@ -1675,7 +1690,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.threads.map(\.id), ["thread-new", "thread-1"])
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
         XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
-        XCTAssertEqual(viewModel.statusMessage, "New session created.")
+        XCTAssertEqual(viewModel.statusMessage, "New session created in a worktree.")
         await viewModel.disconnect()
     }
 
@@ -1809,6 +1824,7 @@ final class AppViewModelTests: XCTestCase {
         """)
         await connectTask.value
         try await waitForConversationSection(kind: .assistant, containing: "One detail", in: viewModel)
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
 
         viewModel.selectProject(projectTwo.id)
         let projectTwoTask = Task { await viewModel.refreshThreadsIfNeeded() }
@@ -4150,9 +4166,10 @@ final class AppViewModelTests: XCTestCase {
         let credentials = InMemoryCredentialStore()
         try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
         let transport = MockCodexLineTransport()
+        let stageGate = AsyncGate()
         let sshService = ScriptedSSHService(
             appServer: CodexAppServerClient(transport: transport),
-            stageDelayNanoseconds: 200_000_000
+            stageGate: stageGate
         )
         let viewModel = AppViewModel(
             repository: repository,
@@ -4186,6 +4203,7 @@ final class AppViewModelTests: XCTestCase {
         }}}
         """)
         await connectTask.value
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
 
         let sendTask = Task {
             await viewModel.sendComposerInput(
@@ -4194,17 +4212,22 @@ final class AppViewModelTests: XCTestCase {
             )
         }
         try await waitForCannotSend(in: viewModel)
+        try await waitForStagedLocalPaths(["/tmp/example.png"], in: sshService)
         let refreshTask = Task { await viewModel.refreshThreads() }
         let refreshList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = refreshList.nextCursor
         transport.receive(#"{"id":\#(refreshList.id),"result":{"data":[],"nextCursor":null}}"#)
         try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
         await refreshTask.value
-        await sendTask.value
+        XCTAssertNil(viewModel.selectedThreadID)
+        await stageGate.open()
+        let didSend = try await taskValue(sendTask, timeoutNanoseconds: 5_000_000_000)
+        XCTAssertFalse(didSend)
 
         XCTAssertFalse(transport.sentLinesSnapshot[cursor...].contains { methodName($0) == "thread/start" })
         XCTAssertFalse(transport.sentLinesSnapshot[cursor...].contains { methodName($0) == "turn/start" })
         XCTAssertEqual(viewModel.statusMessage, "The selected session changed before the message could be sent.")
+        await viewModel.disconnect()
     }
 
     @MainActor
@@ -4383,6 +4406,7 @@ final class AppViewModelTests: XCTestCase {
         }}}
         """)
         await connectTask.value
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
 
         await viewModel.sendComposerText("Queued follow-up")
         XCTAssertEqual(viewModel.queuedTurnInputCount, 1)
@@ -4505,6 +4529,7 @@ final class AppViewModelTests: XCTestCase {
         }}}
         """)
         await connectTask.value
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
 
         transport.receive("""
         {"method":"error","params":{"threadId":"thread-active","turnId":"turn-active","willRetry":false,"error":{
@@ -4820,6 +4845,7 @@ final class AppViewModelTests: XCTestCase {
         }}}
         """)
         await connectTask.value
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
 
         transport.receive("""
         {"method":"item/plan/delta","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"item-plan","delta":"Inspect the failure"}}
@@ -5278,6 +5304,10 @@ private final class BlockingOpenSSHService: SSHService, @unchecked Sendable {
         RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
     }
 
+    func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {
+        "\(projectPath)-worktree"
+    }
+
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] {
         localPaths.map { "/tmp/mobidex-uploaded/\(URL(fileURLWithPath: $0).lastPathComponent)" }
     }
@@ -5325,6 +5355,7 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
 
     private let testConnectionError: Error?
     private let stageDelayNanoseconds: UInt64
+    private let stageGate: AsyncGate?
     private let lock = NSLock()
     private var appServerOpenResults: [AppServerOpenResult]
     private var discoveredProjectBatches: [[RemoteProject]]
@@ -5335,31 +5366,36 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         appServer: CodexAppServerClient,
         testConnectionError: Error? = nil,
         discoveredProjectBatches: [[RemoteProject]] = [[]],
-        stageDelayNanoseconds: UInt64 = 0
+        stageDelayNanoseconds: UInt64 = 0,
+        stageGate: AsyncGate? = nil
     ) {
         self.appServerOpenResults = [.client(appServer)]
         self.testConnectionError = testConnectionError
         self.discoveredProjectBatches = discoveredProjectBatches
         self.stageDelayNanoseconds = stageDelayNanoseconds
+        self.stageGate = stageGate
     }
 
     init(
         appServers: [CodexAppServerClient],
         testConnectionError: Error? = nil,
         discoveredProjectBatches: [[RemoteProject]] = [[]],
-        stageDelayNanoseconds: UInt64 = 0
+        stageDelayNanoseconds: UInt64 = 0,
+        stageGate: AsyncGate? = nil
     ) {
         self.appServerOpenResults = appServers.map(AppServerOpenResult.client)
         self.testConnectionError = testConnectionError
         self.discoveredProjectBatches = discoveredProjectBatches
         self.stageDelayNanoseconds = stageDelayNanoseconds
+        self.stageGate = stageGate
     }
 
     init(
         appServerOpenResults: [Result<CodexAppServerClient, Error>],
         testConnectionError: Error? = nil,
         discoveredProjectBatches: [[RemoteProject]] = [[]],
-        stageDelayNanoseconds: UInt64 = 0
+        stageDelayNanoseconds: UInt64 = 0,
+        stageGate: AsyncGate? = nil
     ) {
         self.appServerOpenResults = appServerOpenResults.map { result in
             switch result {
@@ -5372,6 +5408,7 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         self.testConnectionError = testConnectionError
         self.discoveredProjectBatches = discoveredProjectBatches
         self.stageDelayNanoseconds = stageDelayNanoseconds
+        self.stageGate = stageGate
     }
 
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws {
@@ -5431,7 +5468,14 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         if stageDelayNanoseconds > 0 {
             try await Task.sleep(nanoseconds: stageDelayNanoseconds)
         }
+        if let stageGate {
+            await stageGate.wait()
+        }
         return localPaths.map { "/tmp/mobidex-uploaded/\(URL(fileURLWithPath: $0).lastPathComponent)" }
+    }
+
+    func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {
+        "\(projectPath)-worktree"
     }
 
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {
@@ -5517,6 +5561,10 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
 
     func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
         RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
+    }
+
+    func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {
+        "\(projectPath)-worktree"
     }
 
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] {
@@ -5613,6 +5661,40 @@ private func waitForRequest(method: String, in transport: MockCodexLineTransport
         try await Task.sleep(nanoseconds: 10_000_000)
     }
     return try XCTUnwrap(nil as CapturedRequest?, "Timed out waiting for \(method).")
+}
+
+private enum TestTaskTimeout: Error {
+    case timedOut
+}
+
+private func taskValue<T>(_ task: Task<T, Never>, timeoutNanoseconds: UInt64) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            await task.value
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: timeoutNanoseconds)
+            task.cancel()
+            throw TestTaskTimeout.timedOut
+        }
+        guard let value = try await group.next() else {
+            throw TestTaskTimeout.timedOut
+        }
+        group.cancelAll()
+        return value
+    }
+}
+
+private func skipSettledBackgroundRequests(in transport: MockCodexLineTransport, cursor: inout Int) async {
+    for _ in 0..<5 {
+        let count = transport.sentLinesSnapshot.count
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        if transport.sentLinesSnapshot.count == count {
+            cursor = count
+            return
+        }
+    }
+    cursor = transport.sentLinesSnapshot.count
 }
 
 private func respondToEmptyUnscopedThreadListFallback(in transport: MockCodexLineTransport, cursor: inout Int) async throws {
@@ -5809,6 +5891,16 @@ private func waitForCannotSend(in viewModel: AppViewModel) async throws {
         try await Task.sleep(nanoseconds: 10_000_000)
     }
     XCTFail("Timed out waiting for composer send operation to start.")
+}
+
+private func waitForStagedLocalPaths(_ expected: [String], in sshService: ScriptedSSHService) async throws {
+    for _ in 0..<200 {
+        if sshService.stagedLocalPaths == expected {
+            return
+        }
+        try await Task.sleep(nanoseconds: 10_000_000)
+    }
+    XCTFail("Timed out waiting for attachment staging to start.")
 }
 
 @MainActor

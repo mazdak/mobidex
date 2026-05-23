@@ -10,6 +10,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
     var name: String?
     var sourceKind: String?
     var turns: [CodexTurn]
+    var isArchived: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -22,6 +23,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         case sourceKind
         case source
         case turns
+        case archived
     }
 
     init(
@@ -33,6 +35,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         createdAt: Date,
         name: String? = nil,
         sourceKind: String? = nil,
+        isArchived: Bool = false,
         turns: [CodexTurn] = []
     ) {
         self.id = id
@@ -43,6 +46,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         self.createdAt = createdAt
         self.name = name
         self.sourceKind = sourceKind
+        self.isArchived = isArchived
         self.turns = turns
     }
 
@@ -56,6 +60,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         createdAt = Date(timeIntervalSince1970: TimeInterval(try container.decode(Int.self, forKey: .createdAt)))
         name = try container.decodeIfPresent(String.self, forKey: .name)
         sourceKind = try Self.decodeSourceKind(from: container)
+        isArchived = try container.decodeIfPresent(Bool.self, forKey: .archived) ?? false
         turns = try container.decodeIfPresent([CodexTurn].self, forKey: .turns) ?? []
     }
 

@@ -232,6 +232,37 @@ private enum ActiveTurnSendBehavior {
     case steer
 }
 
+enum NewSessionLocation: Equatable {
+    case codexWorktree
+    case projectDirectory
+}
+
+struct QueuedTurnInput: Identifiable, Equatable {
+    let id: UUID
+    var input: [CodexInputItem]
+
+    var preview: String {
+        let text = input.compactMap { item -> String? in
+            if case .text(let value) = item {
+                return value.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return nil
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+
+        if !text.isEmpty {
+            return text
+        }
+        let attachmentCount = input.filter {
+            if case .localImage = $0 { return true }
+            if case .imageURL = $0 { return true }
+            return false
+        }.count
+        return attachmentCount == 1 ? "1 attachment" : "\(max(attachmentCount, 1)) attachments"
+    }
+}
+
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published private(set) var servers: [ServerRecord] = []
@@ -258,6 +289,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var changedFiles: [String] = []
     @Published private(set) var diffSnapshot: GitDiffSnapshot = .empty
     @Published private(set) var queuedTurnInputCount = 0
+    @Published private(set) var queuedTurnInputs: [QueuedTurnInput] = []
     @Published private(set) var selectedThreadTokenUsage: CodexTokenUsage?
     @Published private(set) var switchingServerID: UUID?
     @Published var selectedReasoningEffort: CodexReasoningEffortOption = .medium
@@ -290,7 +322,7 @@ final class AppViewModel: ObservableObject {
     private var selectedThreadLoadingCounts: [String: Int] = [:]
     private var sessionRefreshListLoadGeneration = 0
     private var sessionRefreshDetailLoadGeneration = 0
-    private var queuedTurnInputsByThreadID: [String: [[CodexInputItem]]] = [:]
+    private var queuedTurnInputsByThreadID: [String: [QueuedTurnInput]] = [:]
     private var isConnectingAppServer = false
     private var didLoadServers = false
     private var suppressThreadAutoSelection = false
@@ -499,6 +531,7 @@ final class AppViewModel: ObservableObject {
         }
         isShowingAllSessions = false
         suppressThreadAutoSelection = true
+        invalidateSessionRefreshes()
         selectedProjectID = projectID
         if restoreCachedSessionState(for: currentThreadLoadScope) {
             return
@@ -512,6 +545,7 @@ final class AppViewModel: ObservableObject {
         }
         isShowingAllSessions = true
         suppressThreadAutoSelection = true
+        invalidateSessionRefreshes()
         selectedProjectID = nil
         if restoreCachedSessionState(for: currentThreadLoadScope) {
             return
@@ -1086,9 +1120,9 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func startNewSession() async {
+    func startNewSession(location: NewSessionLocation = .codexWorktree) async {
         guard let cwd = selectedProject?.path ?? selectedThread?.cwd else { return }
-        guard appServer != nil else {
+        guard appServer != nil, let selectedServer else {
             statusMessage = "Connect to the server before starting a new session."
             return
         }
@@ -1099,8 +1133,16 @@ final class AppViewModel: ObservableObject {
                 statusMessage = "Connect to the server before starting a new session."
                 return
             }
-            let thread = try await appServer.startThread(cwd: cwd)
-            guard currentThreadLoadScope == scope, threadMatchesScope(thread, scope: scope) else {
+            let sessionCwd: String
+            switch location {
+            case .codexWorktree:
+                let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
+                sessionCwd = try await sshService.createCodexWorktree(from: cwd, server: selectedServer, credential: credential)
+            case .projectDirectory:
+                sessionCwd = cwd
+            }
+            let thread = try await appServer.startThread(cwd: sessionCwd)
+            guard currentThreadLoadScope == scope else {
                 return
             }
             selectedThreadID = thread.id
@@ -1114,7 +1156,7 @@ final class AppViewModel: ObservableObject {
             invalidateSessionCaches(for: selectedServerID)
             cacheThreadList(threads, scope: currentThreadLoadScope)
             cacheThreadDetail(thread: thread, liveItems: liveItems, sections: conversationSections)
-            statusMessage = "New session created."
+            statusMessage = location == .codexWorktree ? "New session created in a worktree." : "New session created."
         }
     }
 
@@ -1184,9 +1226,101 @@ final class AppViewModel: ObservableObject {
             _ = await sendComposerText(trimmed)
             return
         }
-        queuedTurnInputsByThreadID[selectedThreadID, default: []].append([.text(trimmed)])
+        queuedTurnInputsByThreadID[selectedThreadID, default: []].append(QueuedTurnInput(id: UUID(), input: [.text(trimmed)]))
         refreshQueuedTurnInputCount()
         statusMessage = "Queued message for after the current turn."
+    }
+
+    func deleteQueuedTurnInput(_ id: UUID) {
+        guard let selectedThreadID else { return }
+        queuedTurnInputsByThreadID[selectedThreadID]?.removeAll { $0.id == id }
+        if queuedTurnInputsByThreadID[selectedThreadID]?.isEmpty == true {
+            queuedTurnInputsByThreadID.removeValue(forKey: selectedThreadID)
+        }
+        refreshQueuedTurnInputCount()
+    }
+
+    func moveQueuedTurnInput(_ id: UUID, direction: Int) {
+        guard direction != 0, let selectedThreadID,
+              var queue = queuedTurnInputsByThreadID[selectedThreadID],
+              let index = queue.firstIndex(where: { $0.id == id })
+        else { return }
+        let nextIndex = min(max(index + direction, 0), queue.count - 1)
+        guard nextIndex != index else { return }
+        let item = queue.remove(at: index)
+        queue.insert(item, at: nextIndex)
+        queuedTurnInputsByThreadID[selectedThreadID] = queue
+        refreshQueuedTurnInputCount()
+    }
+
+    func steerQueuedTurnInputNow(_ id: UUID) async {
+        guard let appServer, let selectedThreadID,
+              selectedThread?.status.isActive == true,
+              let activeTurnID,
+              var queue = queuedTurnInputsByThreadID[selectedThreadID],
+              let index = queue.firstIndex(where: { $0.id == id })
+        else {
+            statusMessage = "There is no active turn to steer."
+            return
+        }
+        let item = queue.remove(at: index)
+        queuedTurnInputsByThreadID[selectedThreadID] = queue
+        refreshQueuedTurnInputCount()
+        let scope = currentThreadLoadScope
+        let sent = await runOperation(.sending, status: "Steering active turn") {
+            guard currentThreadLoadScope == scope, self.selectedThreadID == selectedThreadID else { return }
+            try await appServer.steer(threadID: selectedThreadID, expectedTurnID: activeTurnID, input: item.input)
+            await refreshThreadListAfterEvent()
+        }
+        if !sent {
+            prependQueuedInput(item, threadID: selectedThreadID)
+        }
+    }
+
+    func archiveThread(_ thread: CodexThread) async {
+        guard let appServer else {
+            statusMessage = "Connect to the server before archiving a session."
+            return
+        }
+        let archivedID = thread.id
+        await runOperation(.openingThread, status: "Archiving session") {
+            try await appServer.archiveThread(threadID: archivedID)
+            queuedTurnInputsByThreadID.removeValue(forKey: archivedID)
+            threads.removeAll { $0.id == archivedID }
+            threadListCache.removeAll()
+            threadDetailCache.removeValue(forKey: threadDetailCacheKey(threadID: archivedID))
+            if selectedThreadID == archivedID {
+                if let fallback = threads.first {
+                    selectedThreadID = fallback.id
+                    hydrateConversation(from: fallback, cacheDetail: false)
+                } else {
+                    selectedThreadID = nil
+                    selectedThread = nil
+                    liveItems = []
+                    selectedThreadTokenUsage = nil
+                    publishConversationSections([])
+                }
+            }
+            refreshQueuedTurnInputCount()
+            await refreshThreadListAfterEvent()
+        }
+    }
+
+    func unarchiveThread(_ thread: CodexThread) async {
+        guard let appServer else {
+            statusMessage = "Connect to the server before unarchiving a session."
+            return
+        }
+        await runOperation(.openingThread, status: "Unarchiving session") {
+            let restored = try await appServer.unarchiveThread(threadID: thread.id)
+            if let index = threads.firstIndex(where: { $0.id == restored.id }) {
+                threads[index] = restored
+            } else {
+                threads.insert(restored, at: 0)
+            }
+            threadListCache.removeAll()
+            await refreshThreadListAfterEvent()
+        }
     }
 
     @discardableResult
@@ -1290,7 +1424,7 @@ final class AppViewModel: ObservableObject {
                         thread = hydrated
                     }
                     if thread.status.isActive {
-                        queuedTurnInputsByThreadID[thread.id, default: []].append(input)
+                        queuedTurnInputsByThreadID[thread.id, default: []].append(QueuedTurnInput(id: UUID(), input: input))
                         refreshQueuedTurnInputCount()
                         statusMessage = "Queued message for after the current turn."
                         didSubmitInput = true
@@ -1311,7 +1445,7 @@ final class AppViewModel: ObservableObject {
                 }
                 if thread.status.isActive, activeTurnBehavior == .steer {
                     guard let activeTurnID else {
-                        queuedTurnInputsByThreadID[thread.id, default: []].append(input)
+                        queuedTurnInputsByThreadID[thread.id, default: []].append(QueuedTurnInput(id: UUID(), input: input))
                         refreshQueuedTurnInputCount()
                         statusMessage = "Queued message until the active turn is available."
                         didSubmitInput = true
@@ -1805,12 +1939,22 @@ final class AppViewModel: ObservableObject {
             prioritizedThreads.first { $0.id == id }
         }
         if currentSelection == nil, selectedThreadID != nil {
+            selectedThreadID = nil
+            selectedThread = nil
+            liveItems = []
+            selectedThreadTokenUsage = nil
+            publishConversationSections([])
+            changedFiles = []
+            diffSnapshot = .empty
+            clearSelectedThreadLoads()
+            refreshQueuedTurnInputCount()
             return
         }
         if currentSelection == nil, suppressThreadAutoSelection {
             selectedThreadID = nil
             selectedThread = nil
             liveItems = []
+            selectedThreadTokenUsage = nil
             publishConversationSections([])
             changedFiles = []
             diffSnapshot = .empty
@@ -1822,6 +1966,7 @@ final class AppViewModel: ObservableObject {
             selectedThreadID = nil
             selectedThread = nil
             liveItems = []
+            selectedThreadTokenUsage = nil
             publishConversationSections([])
             changedFiles = []
             diffSnapshot = .empty
@@ -1850,6 +1995,12 @@ final class AppViewModel: ObservableObject {
     ) {
         Task {
             do {
+                await Task.yield()
+                guard self.appServer === appServer,
+                      sessionRefreshListLoadGeneration == listLoadGeneration,
+                      currentThreadLoadScope == scope else {
+                    return
+                }
                 let loadedThreads = try await listThreads(matching: scope, appServer: appServer)
                 guard self.appServer === appServer,
                       sessionRefreshListLoadGeneration == listLoadGeneration,
@@ -1873,6 +2024,11 @@ final class AppViewModel: ObservableObject {
                 statusMessage = "Session list failed to finish loading: \(error.localizedDescription)"
             }
         }
+    }
+
+    private func invalidateSessionRefreshes() {
+        sessionRefreshListLoadGeneration &+= 1
+        sessionRefreshDetailLoadGeneration &+= 1
     }
 
     private func selectThreadAfterCompleteListLoad(
@@ -2016,7 +2172,8 @@ final class AppViewModel: ObservableObject {
     }
 
     private func sortedThreadsPreservingSelectedThread(_ loadedThreads: [CodexThread], scope: ThreadLoadScope) -> [CodexThread] {
-        guard let selectedThreadID,
+        guard !loadedThreads.isEmpty,
+              let selectedThreadID,
               !loadedThreads.contains(where: { $0.id == selectedThreadID }),
               let selectedThread,
               selectedThread.id == selectedThreadID,
@@ -2782,7 +2939,7 @@ final class AppViewModel: ObservableObject {
               selectedThreadID == threadID,
               selectedThread?.status.isActive != true,
               !isOperationActive(.sending),
-              let input = dequeueQueuedInput(threadID: threadID)
+              let queuedInput = dequeueQueuedInput(threadID: threadID)
         else {
             return
         }
@@ -2799,7 +2956,7 @@ final class AppViewModel: ObservableObject {
 
             let turn = try await appServer.startTurn(
                 threadID: threadID,
-                input: input,
+                input: queuedInput.input,
                 options: currentTurnOptions(cwd: selectedThread?.cwd ?? scope.cwd)
             )
             queuedTurnSent = true
@@ -2840,7 +2997,7 @@ final class AppViewModel: ObservableObject {
         }
 
         if !didStart || !queuedTurnSent {
-            prependQueuedInput(input, threadID: threadID)
+            prependQueuedInput(queuedInput, threadID: threadID)
         } else if selectedThreadID == threadID,
                   selectedThread?.status.isActive != true,
                   queuedTurnInputsByThreadID[threadID]?.isEmpty == false {
@@ -2848,7 +3005,7 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func dequeueQueuedInput(threadID: String) -> [CodexInputItem]? {
+    private func dequeueQueuedInput(threadID: String) -> QueuedTurnInput? {
         guard var queue = queuedTurnInputsByThreadID[threadID], !queue.isEmpty else {
             refreshQueuedTurnInputCount()
             return nil
@@ -2863,7 +3020,7 @@ final class AppViewModel: ObservableObject {
         return input
     }
 
-    private func prependQueuedInput(_ input: [CodexInputItem], threadID: String) {
+    private func prependQueuedInput(_ input: QueuedTurnInput, threadID: String) {
         var queue = queuedTurnInputsByThreadID[threadID] ?? []
         queue.insert(input, at: 0)
         queuedTurnInputsByThreadID[threadID] = queue
@@ -2871,7 +3028,8 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refreshQueuedTurnInputCount() {
-        queuedTurnInputCount = selectedThreadID.flatMap { queuedTurnInputsByThreadID[$0]?.count } ?? 0
+        queuedTurnInputs = selectedThreadID.flatMap { queuedTurnInputsByThreadID[$0] } ?? []
+        queuedTurnInputCount = queuedTurnInputs.count
     }
 
     private func appendAgentMessageDelta(itemID: String?, delta: String?) {

@@ -127,6 +127,14 @@ class CodexProtocolWireEncodingTest {
             "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"thread/start\",\"params\":{\"cwd\":\"/srv/app\"}}",
             CodexRpcRequests.startThread(id = 5, cwd = "/srv/app").encodeJsonLine(),
         )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"thread/archive\",\"params\":{\"threadId\":\"thread-1\"}}",
+            CodexRpcRequests.archiveThread(id = 6, threadId = "thread-1").encodeJsonLine(),
+        )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"thread/unarchive\",\"params\":{\"threadId\":\"thread-1\"}}",
+            CodexRpcRequests.unarchiveThread(id = 7, threadId = "thread-1").encodeJsonLine(),
+        )
     }
 
     @Test

@@ -280,6 +280,9 @@ private struct CredentialStorageStubSSHService: SSHService {
     func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
         RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
     }
+    func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {
+        "\(projectPath)-worktree"
+    }
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] { [] }
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {
         throw SSHServiceError.authenticationFailed

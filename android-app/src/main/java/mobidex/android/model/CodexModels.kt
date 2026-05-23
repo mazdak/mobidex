@@ -21,6 +21,7 @@ data class CodexThread(
     val createdAtEpochSeconds: Long,
     val name: String? = null,
     val sourceKind: String? = null,
+    val isArchived: Boolean = false,
     val turns: List<CodexTurn> = emptyList(),
 ) {
     val title: String

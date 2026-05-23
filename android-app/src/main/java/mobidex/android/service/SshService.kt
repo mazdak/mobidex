@@ -49,6 +49,7 @@ interface MobidexSshService {
     suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject>
     suspend fun listDirectories(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
     suspend fun createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
+    suspend fun createCodexWorktree(projectPath: String, server: ServerRecord, credential: SSHCredential): String
     suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String>
     suspend fun openAppServer(server: ServerRecord, credential: SSHCredential): CodexAppServerClient
     suspend fun openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential): RemoteTerminalSession
@@ -83,6 +84,24 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
     override suspend fun createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =
         withClient(server, credential) { client ->
             RemoteDirectoryBrowser.decodeListing(client.execString(RemoteDirectoryBrowser.createDirectoryShellCommand(parentPath, folderName)))
+        }
+
+    override suspend fun createCodexWorktree(projectPath: String, server: ServerRecord, credential: SSHCredential): String =
+        withClient(server, credential) { client ->
+            val command = """
+                set -eu
+                root=${'$'}(git -C ${projectPath.shellQuoted()} rev-parse --show-toplevel)
+                name=${'$'}(basename "${'$'}root" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*${'$'}//')
+                [ -n "${'$'}name" ] || name=repo
+                token=${'$'}(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' | cut -c1-4 || true)
+                [ -n "${'$'}token" ] || token=${'$'}(date +%s | tail -c 5)
+                base="${'$'}HOME/.codex/worktrees/${'$'}token"
+                target="${'$'}base/${'$'}name"
+                mkdir -p "${'$'}base"
+                git -C "${'$'}root" worktree add --detach "${'$'}target" HEAD >/dev/null 2>&1
+                printf '%s\n' "${'$'}target"
+            """.trimIndent()
+            client.execString(command).trim().ifEmpty { error("Could not create Codex worktree.") }
         }
 
     override suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String> =

@@ -326,6 +326,14 @@ enum SharedKMPBridge {
         params(from: MobidexShared.CodexRpcRequests.shared.resumeThread(id: 0, threadId: threadID))
     }
 
+    static func archiveThreadParams(threadID: String) -> JSONValue? {
+        params(from: MobidexShared.CodexRpcRequests.shared.archiveThread(id: 0, threadId: threadID))
+    }
+
+    static func unarchiveThreadParams(threadID: String) -> JSONValue? {
+        params(from: MobidexShared.CodexRpcRequests.shared.unarchiveThread(id: 0, threadId: threadID))
+    }
+
     static func startThreadParams(cwd: String?) -> JSONValue? {
         params(from: MobidexShared.CodexRpcRequests.shared.startThread(id: 0, cwd: cwd))
     }

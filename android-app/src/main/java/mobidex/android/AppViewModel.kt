@@ -102,6 +102,7 @@ data class MobidexUiState(
     val diffSnapshot: GitDiffSnapshot = GitDiffSnapshot.Empty,
     val isRefreshingChanges: Boolean = false,
     val tokenUsagePercent: Int? = null,
+    val queuedTurnInputs: List<QueuedTurnInput> = emptyList(),
     val dismissedMacOSPrivacyWarning: Boolean = false,
 ) {
     val selectedServer: ServerRecord?
@@ -118,6 +119,26 @@ data class MobidexUiState(
 
     val activeTurnID: String?
         get() = selectedThread?.turns?.lastOrNull { it.status == "inProgress" }?.id
+}
+
+enum class NewSessionLocation {
+    CodexWorktree,
+    ProjectDirectory,
+}
+
+data class QueuedTurnInput(
+    val id: String = UUID.randomUUID().toString(),
+    val input: List<CodexInputItem>,
+) {
+    val preview: String
+        get() {
+            val text = input.filterIsInstance<CodexInputItem.Text>()
+                .joinToString(" ") { it.text.trim() }
+                .trim()
+            if (text.isNotEmpty()) return text
+            val attachments = input.count { it is CodexInputItem.LocalImage || it is CodexInputItem.ImageUrl }
+            return if (attachments == 1) "1 attachment" else "${maxOf(attachments, 1)} attachments"
+        }
 }
 
 data class AndroidProjectListSections(
@@ -184,7 +205,7 @@ class AppViewModel(
     private var sessionRefreshDetailLoadGeneration = 0L
     private val sessionListInitialPageLimit = 1
     private var isSendingInput = false
-    private val queuedTurnInputsByThreadID = mutableMapOf<String, MutableList<List<CodexInputItem>>>()
+    private val queuedTurnInputsByThreadID = mutableMapOf<String, MutableList<QueuedTurnInput>>()
     private val threadListCache = mutableMapOf<ThreadScopeCacheKey, CachedThreadList>()
     private val threadDetailCache = mutableMapOf<ThreadDetailCacheKey, CachedThreadDetail>()
     private val reconnectAttemptsByServerID = mutableMapOf<String, Int>()
@@ -677,7 +698,20 @@ class AppViewModel(
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
                                 selectedThreadIDToHydrate = selectedID
                             }
-                            current.copy(threads = sorted)
+                            if (current.selectedThreadID != null && selectedID == null) {
+                                current.copy(
+                                    threads = sorted,
+                                    selectedThreadID = null,
+                                    selectedThread = null,
+                                    conversationSections = emptyList(),
+                                    pendingApprovals = emptyList(),
+                                    diffSnapshot = GitDiffSnapshot.Empty,
+                                    tokenUsagePercent = null,
+                                    queuedTurnInputs = emptyList(),
+                                )
+                            } else {
+                                current.copy(threads = sorted)
+                            }
                         }
                     }
                     selectedThreadIDToHydrate?.let { threadID ->
@@ -756,7 +790,20 @@ class AppViewModel(
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
                                 selectedThreadIDToHydrate = selectedID
                             }
-                            current.copy(threads = sorted)
+                            if (current.selectedThreadID != null && selectedID == null) {
+                                current.copy(
+                                    threads = sorted,
+                                    selectedThreadID = null,
+                                    selectedThread = null,
+                                    conversationSections = emptyList(),
+                                    pendingApprovals = emptyList(),
+                                    diffSnapshot = GitDiffSnapshot.Empty,
+                                    tokenUsagePercent = null,
+                                    queuedTurnInputs = emptyList(),
+                                )
+                            } else {
+                                current.copy(threads = sorted)
+                            }
                         }
                     }
                     selectedThreadIDToHydrate?.let { threadID ->
@@ -873,6 +920,7 @@ class AppViewModel(
         val selectedID = state.selectedThreadID
         val selectedThread = state.selectedThread
         val threads = if (
+            loadedThreads.isNotEmpty() &&
             selectedID != null &&
             selectedThread?.id == selectedID &&
             loadedThreads.none { it.id == selectedID } &&
@@ -1002,7 +1050,7 @@ class AppViewModel(
         }
     }
 
-    fun startNewSession() {
+    fun startNewSession(location: NewSessionLocation = NewSessionLocation.CodexWorktree) {
         viewModelScope.launch {
             runBusy("Starting session") {
                 val state = _state.value
@@ -1011,8 +1059,13 @@ class AppViewModel(
                 val requestServerID = state.selectedServerID
                 val requestProjectID = state.selectedProjectID
                 val requestThreadID = state.selectedThreadID
+                val server = state.selectedServer ?: return@runBusy
                 val cwd = state.selectedProject?.path ?: return@runBusy
-                val thread = client.startThread(cwd)
+                val sessionCwd = when (location) {
+                    NewSessionLocation.CodexWorktree -> sshService.createCodexWorktree(cwd, server, credentialStore.loadCredential(server.id))
+                    NewSessionLocation.ProjectDirectory -> cwd
+                }
+                val thread = client.startThread(sessionCwd)
                 hydrateConversationIfCurrent(
                     thread,
                     requestServerID,
@@ -1021,7 +1074,7 @@ class AppViewModel(
                     clearPerThreadState = true,
                 )
                 _state.update { current ->
-                    if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                    if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID || current.selectedThreadID != thread.id) {
                         current
                     } else {
                         current.copy(threads = (listOf(thread) + current.threads).distinctBy { item -> item.id })
@@ -1076,7 +1129,8 @@ class AppViewModel(
                     if (thread.status.isActive) {
                         val activeTurnID = _state.value.activeTurnID
                         if (queueWhenActive) {
-                            queuedTurnInputsByThreadID.getOrPut(thread.id) { mutableListOf() }.add(input)
+                            queuedTurnInputsByThreadID.getOrPut(thread.id) { mutableListOf() }.add(QueuedTurnInput(input = input))
+                            refreshQueuedTurnInputs()
                             _state.update {
                                 if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                                     it.copy(statusMessage = "Queued message for after the current turn.")
@@ -1096,7 +1150,8 @@ class AppViewModel(
                             }
                             didSubmitInput = true
                         } else {
-                            queuedTurnInputsByThreadID.getOrPut(thread.id) { mutableListOf() }.add(input)
+                            queuedTurnInputsByThreadID.getOrPut(thread.id) { mutableListOf() }.add(QueuedTurnInput(input = input))
+                            refreshQueuedTurnInputs()
                             _state.update {
                                 if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                                     it.copy(statusMessage = "Queued message until the active turn is available.")
@@ -1126,6 +1181,97 @@ class AppViewModel(
             }
             onComplete(didSubmitInput)
         }
+    }
+
+    fun archiveThread(thread: CodexThread) {
+        viewModelScope.launch {
+            runBusy("Archiving session") {
+                val client = appServer ?: error("Connect to the server before archiving a session.")
+                client.archiveThread(thread.id)
+                queuedTurnInputsByThreadID.remove(thread.id)
+                refreshQueuedTurnInputs()
+                _state.update { state ->
+                    val nextThreads = state.threads.filterNot { it.id == thread.id }
+                    if (state.selectedThreadID == thread.id) {
+                        val fallback = nextThreads.firstOrNull()
+                        state.copy(
+                            threads = nextThreads,
+                            selectedThreadID = fallback?.id,
+                            selectedThread = fallback,
+                            conversationSections = fallback?.conversationSections().orEmpty(),
+                        )
+                    } else {
+                        state.copy(threads = nextThreads)
+                    }
+                }
+                threadListCache.clear()
+                threadDetailCache.remove(ThreadDetailCacheKey(_state.value.selectedServerID, thread.id))
+                refreshThreads()
+            }
+        }
+    }
+
+    fun unarchiveThread(thread: CodexThread) {
+        viewModelScope.launch {
+            runBusy("Unarchiving session") {
+                val client = appServer ?: error("Connect to the server before unarchiving a session.")
+                val restored = client.unarchiveThread(thread.id)
+                _state.update { state ->
+                    val nextThreads = state.threads.filterNot { it.id == restored.id }.toMutableList()
+                    nextThreads.add(0, restored)
+                    state.copy(threads = nextThreads)
+                }
+                threadListCache.clear()
+                refreshThreads()
+            }
+        }
+    }
+
+    fun deleteQueuedTurnInput(id: String) {
+        val threadID = _state.value.selectedThreadID ?: return
+        queuedTurnInputsByThreadID[threadID]?.removeAll { it.id == id }
+        if (queuedTurnInputsByThreadID[threadID]?.isEmpty() == true) queuedTurnInputsByThreadID.remove(threadID)
+        refreshQueuedTurnInputs()
+    }
+
+    fun moveQueuedTurnInput(id: String, direction: Int) {
+        if (direction == 0) return
+        val threadID = _state.value.selectedThreadID ?: return
+        val queue = queuedTurnInputsByThreadID[threadID] ?: return
+        val index = queue.indexOfFirst { it.id == id }
+        if (index < 0) return
+        val nextIndex = (index + direction).coerceIn(0, queue.lastIndex)
+        if (nextIndex == index) return
+        val item = queue.removeAt(index)
+        queue.add(nextIndex, item)
+        refreshQueuedTurnInputs()
+    }
+
+    fun steerQueuedTurnInputNow(id: String) {
+        viewModelScope.launch {
+            val threadID = _state.value.selectedThreadID ?: return@launch
+            val activeTurnID = _state.value.activeTurnID ?: return@launch
+            val queue = queuedTurnInputsByThreadID[threadID] ?: return@launch
+            val index = queue.indexOfFirst { it.id == id }
+            if (index < 0) return@launch
+            val item = queue.removeAt(index)
+            refreshQueuedTurnInputs()
+            try {
+                val client = appServer ?: error("Connect to the server before steering.")
+                client.steer(threadID, activeTurnID, item.input)
+                refreshThreads()
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                queue.add(index.coerceAtMost(queue.size), item)
+                refreshQueuedTurnInputs()
+                _state.update { it.copy(statusMessage = error.message) }
+            }
+        }
+    }
+
+    private fun refreshQueuedTurnInputs() {
+        val threadID = _state.value.selectedThreadID
+        _state.update { it.copy(queuedTurnInputs = threadID?.let { id -> queuedTurnInputsByThreadID[id].orEmpty() }.orEmpty()) }
     }
 
     private suspend fun stageAttachmentInputs(uris: List<Uri>, server: ServerRecord): List<CodexInputItem> {
@@ -1753,6 +1899,7 @@ class AppViewModel(
                 selectedThreadID = thread.id,
                 selectedThread = thread,
                 conversationSections = thread.conversationSections(),
+                queuedTurnInputs = queuedTurnInputsByThreadID[thread.id].orEmpty(),
             )
         }
         cacheThreads(currentThreadScopeCacheKey(), _state.value.threads)
@@ -1824,13 +1971,14 @@ class AppViewModel(
                 if (thread.status.isActive) return
                 val turn = client.startTurn(
                     threadID = thread.id,
-                    input = queuedInput,
+                    input = queuedInput.input,
                     options = turnOptions(state.selectedReasoningEffort, state.selectedAccessMode, thread.cwd),
                 )
                 queuedTurnInputsByThreadID[threadID]?.removeFirstOrNull()
                 if (queuedTurnInputsByThreadID[threadID]?.isEmpty() == true) {
                     queuedTurnInputsByThreadID.remove(threadID)
                 }
+                refreshQueuedTurnInputs()
                 if (state.selectedThreadID == threadID) {
                     hydrateConversation(thread.copy(status = thread.status.copy(type = if (turn.status == "inProgress") "active" else "idle"), turns = thread.turns.upsert(turn)))
                 }

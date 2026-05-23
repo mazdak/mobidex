@@ -4,14 +4,39 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import mobidex.android.AndroidProjectListSections
 import mobidex.android.MobidexUiState
+import mobidex.android.QueuedTurnInput
 import mobidex.android.model.CodexThread
 import mobidex.android.model.CodexThreadStatus
 import mobidex.android.model.ProjectRecord
 import mobidex.android.model.ServerConnectionState
 import mobidex.android.model.ServerAuthMethod
 import mobidex.android.model.ServerRecord
+import mobidex.shared.CodexInputItem
 
 class ProjectLabelsTest {
+    @Test
+    fun queuedTurnInputPreviewPrefersTextAndFallsBackToAttachmentCount() {
+        assertEquals(
+            "Fix spacing",
+            QueuedTurnInput(
+                input = listOf(
+                    CodexInputItem.Text("  Fix spacing  "),
+                    CodexInputItem.LocalImage("/tmp/screenshot.png"),
+                )
+            ).preview,
+        )
+
+        assertEquals(
+            "2 attachments",
+            QueuedTurnInput(
+                input = listOf(
+                    CodexInputItem.LocalImage("/tmp/one.png"),
+                    CodexInputItem.ImageUrl("https://example.com/two.png"),
+                )
+            ).preview,
+        )
+    }
+
     @Test
     fun macOSProtectedWarningIncludesICloudAndVolumes() {
         assertEquals(

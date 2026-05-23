@@ -82,7 +82,7 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
             val obj = result.jsonObject
             threads += obj["data"]?.let { array ->
                 array as? JsonArray
-            }?.map(::parseThread).orEmpty()
+            }?.map { parseThread(it).copy(isArchived = archived) }.orEmpty()
                 .filter { it.isUserFacingSession }
             cursor = obj["nextCursor"]?.jsonPrimitive?.contentOrNull
             pageCount += 1
@@ -124,6 +124,15 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
 
     suspend fun steer(threadID: String, expectedTurnID: String, input: List<CodexInputItem>) {
         request("turn/steer", CodexRpcRequests.steerTurn(0, threadID, expectedTurnID, input).params?.toJsonElement())
+    }
+
+    suspend fun archiveThread(threadID: String) {
+        request("thread/archive", CodexRpcRequests.archiveThread(0, threadID).params?.toJsonElement())
+    }
+
+    suspend fun unarchiveThread(threadID: String): CodexThread {
+        val result = request("thread/unarchive", CodexRpcRequests.unarchiveThread(0, threadID).params?.toJsonElement())
+        return parseThread(result.jsonObject["thread"] ?: result)
     }
 
     suspend fun interrupt(threadID: String, turnID: String) {
