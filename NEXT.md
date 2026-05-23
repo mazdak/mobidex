@@ -4,8 +4,8 @@
 - [x] Make app-target Release signing fully App Store distribution scoped.
 - [x] Validate distribution configuration.
 - [x] Pin TestFlight export signing to exact App Store profile.
-- [ ] Upload build to TestFlight.
-- [ ] Submit build to external testers.
+- [x] Upload build to TestFlight.
+- [x] Submit build to external testers.
 
 ## Parked
 
