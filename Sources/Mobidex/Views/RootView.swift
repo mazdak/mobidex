@@ -208,7 +208,6 @@ struct ProjectSessionListView: View {
     @State private var editingServer: ServerRecord?
     @State private var serverPendingDeletion: ServerRecord?
     @State private var isDeleteServerConfirmationPresented = false
-    @State private var isNewSessionDialogPresented = false
 
     var body: some View {
         Group {
@@ -304,11 +303,7 @@ struct ProjectSessionListView: View {
                             sessionsProjectID = nil
                             sessionSearchText = ""
                         },
-                        canCreateSession: model.canCreateSession && !serverContentDisabled,
-                        onStartNewSession: {
-                            promoteDetailIfCompact()
-                            isNewSessionDialogPresented = true
-                        },
+                        canCreateSession: model.canChooseNewSessionLocation,
                         onStartInNewWorktree: {
                             promoteDetailIfCompact()
                             Task { await model.startNewSession() }
@@ -342,23 +337,6 @@ struct ProjectSessionListView: View {
                     Button("Cancel", role: .cancel) {
                         serverPendingDeletion = nil
                     }
-                }
-                .confirmationDialog(
-                    "Start New Session",
-                    isPresented: $isNewSessionDialogPresented,
-                    titleVisibility: .visible
-                ) {
-                    Button("Start in New Worktree") {
-                        promoteDetailIfCompact()
-                        Task { await model.startNewSession() }
-                    }
-                    Button("Start in Project Directory") {
-                        promoteDetailIfCompact()
-                        Task { await model.startNewSession(location: .projectDirectory) }
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("New worktree keeps changes isolated from the project directory.")
                 }
             } else {
                 ContentUnavailableView("Select a Server", systemImage: "server.rack")
@@ -436,7 +414,7 @@ struct ProjectSessionListView: View {
     }
 
     private var serverContentDisabled: Bool {
-        contentIsLoading || serverControlsDisabled
+        contentIsLoading
     }
 
     private var contentIsLoading: Bool {
@@ -694,7 +672,6 @@ private struct SelectedServerToolbar: ToolbarContent {
     let disabled: Bool
     let onBackToProjects: () -> Void
     let canCreateSession: Bool
-    let onStartNewSession: () -> Void
     let onStartInNewWorktree: () -> Void
     let onStartInProjectDirectory: () -> Void
     @Binding var showingProjectAdd: Bool
@@ -719,7 +696,6 @@ private struct SelectedServerToolbar: ToolbarContent {
             } else {
                 NewSessionButton(
                     canCreateSession: canCreateSession,
-                    onStartNewSession: onStartNewSession,
                     onStartInNewWorktree: onStartInNewWorktree,
                     onStartInProjectDirectory: onStartInProjectDirectory
                 )
@@ -804,18 +780,11 @@ private struct ProjectSessionScopeRow: View {
 
 private struct NewSessionButton: View {
     let canCreateSession: Bool
-    let onStartNewSession: () -> Void
     let onStartInNewWorktree: () -> Void
     let onStartInProjectDirectory: () -> Void
 
     var body: some View {
-        Button(action: onStartNewSession) {
-            Image(systemName: "plus.bubble")
-        }
-        .disabled(!canCreateSession)
-        .accessibilityLabel("New Session")
-        .accessibilityIdentifier("projectNewSessionButton")
-        .contextMenu {
+        Menu {
             Button {
                 onStartInNewWorktree()
             } label: {
@@ -826,7 +795,12 @@ private struct NewSessionButton: View {
             } label: {
                 Label("Start in Project Directory", systemImage: "folder")
             }
+        } label: {
+            Image(systemName: "plus.bubble")
         }
+        .disabled(!canCreateSession)
+        .accessibilityLabel("New Session")
+        .accessibilityIdentifier("projectNewSessionButton")
     }
 }
 

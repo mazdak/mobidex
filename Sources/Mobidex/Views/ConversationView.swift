@@ -23,7 +23,6 @@ struct ConversationView: View {
     @State private var isTranscribingAudio = false
     @State private var attachmentAlert: AttachmentAlert?
     @State private var isQueueSheetPresented = false
-    @State private var isNewSessionDialogPresented = false
     @State private var isTimelineNearBottom = true
     @State private var timelineDistanceFromBottom: CGFloat = 0
     @State private var autoFollowStreaming = true
@@ -57,15 +56,19 @@ struct ConversationView: View {
                     SessionChangesView(cwd: thread.cwd)
                 }
             } else if let project = model.selectedProject {
-                macOSPrivacyWarningBanner(warning: project.macOSPrivacyWarning)
-                projectHeader(project)
-                Divider()
-                ContentUnavailableView(
-                    projectEmptyTitle,
-                    systemImage: "bubble.left.and.bubble.right",
-                    description: Text(projectEmptyDescription)
-                )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if model.isStartingNewSession {
+                    newSessionStartingView
+                } else {
+                    macOSPrivacyWarningBanner(warning: project.macOSPrivacyWarning)
+                    projectHeader(project)
+                    Divider()
+                    ContentUnavailableView(
+                        projectEmptyTitle,
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text(projectEmptyDescription)
+                    )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 ContentUnavailableView("Select a Session", systemImage: "bubble.left.and.bubble.right")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -88,6 +91,9 @@ struct ConversationView: View {
                 selectedPhotoItems = []
                 photoAttachmentGeneration &+= 1
                 composerEditGeneration &+= 1
+            }
+            .onChange(of: model.selectedThreadID) { _, newThreadID in
+                focusComposerForFreshThreadIfNeeded(threadID: newThreadID)
             }
             .onChange(of: selectedPhotoItems) { _, items in
                 guard !items.isEmpty else { return }
@@ -204,15 +210,7 @@ struct ConversationView: View {
                     .lineLimit(1)
             }
             Spacer()
-            Button {
-                isNewSessionDialogPresented = true
-            } label: {
-                Label("New Session", systemImage: "plus.bubble")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.canCreateSession)
-            .accessibilityIdentifier("projectNewSessionButton")
-            .contextMenu {
+            Menu {
                 Button {
                     Task { await model.startNewSession() }
                 } label: {
@@ -223,24 +221,14 @@ struct ConversationView: View {
                 } label: {
                     Label("Start in Project Directory", systemImage: "folder")
                 }
+            } label: {
+                Label("New Session", systemImage: "plus.bubble")
             }
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.canChooseNewSessionLocation)
+            .accessibilityIdentifier("projectNewSessionButton")
         }
         .padding()
-        .confirmationDialog(
-            "Start New Session",
-            isPresented: $isNewSessionDialogPresented,
-            titleVisibility: .visible
-        ) {
-            Button("Start in New Worktree") {
-                Task { await model.startNewSession() }
-            }
-            Button("Start in Project Directory") {
-                Task { await model.startNewSession(location: .projectDirectory) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("New worktree keeps changes isolated from the project directory.")
-        }
     }
 
     private var detailPicker: some View {
@@ -382,6 +370,9 @@ struct ConversationView: View {
     }
 
     private var projectEmptyTitle: String {
+        if model.isStartingNewSession {
+            return "Starting New Session..."
+        }
         if model.isRefreshingSessions {
             return "Loading Sessions..."
         }
@@ -389,10 +380,25 @@ struct ConversationView: View {
     }
 
     private var projectEmptyDescription: String {
+        if model.isStartingNewSession {
+            return "Mobidex is preparing a fresh Codex thread."
+        }
         if model.isRefreshingSessions {
             return ""
         }
         return model.canSendMessage ? "Start a new session for this project." : "Connect to start a session for this project."
+    }
+
+    private var newSessionStartingView: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+            Text(projectEmptyTitle)
+                .font(.headline)
+            Text(projectEmptyDescription)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func scrollToConversationBottom(_ proxy: ScrollViewProxy) {
@@ -496,6 +502,14 @@ struct ConversationView: View {
             QueuedMessagesSheet()
                 .environmentObject(model)
                 .presentationDetents([.medium, .large])
+        }
+    }
+
+    private func focusComposerForFreshThreadIfNeeded(threadID: String?) {
+        guard let threadID, model.selectedThread?.id == threadID, model.selectedThread?.turns.isEmpty == true else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard model.selectedThread?.id == threadID, model.selectedThread?.turns.isEmpty == true else { return }
+            isComposerFocused = true
         }
     }
 
@@ -706,7 +720,24 @@ struct ConversationView: View {
         .accessibilityLabel("Model GPT-5.5 next turn reasoning \(model.selectedReasoningEffort.label)")
     }
 
+    @ViewBuilder
     private var sendButton: some View {
+        if model.selectedThread?.status.isActive == true {
+            sendButtonBase
+                .contextMenu {
+                    Button("Queue after Current Turn") {
+                        submitComposerInput(queueWhenActive: true)
+                    }
+                    Button("Steer Active Turn") {
+                        submitComposerInput(queueWhenActive: false)
+                    }
+                }
+        } else {
+            sendButtonBase
+        }
+    }
+
+    private var sendButtonBase: some View {
         Button {
             submitComposerInput(queueWhenActive: model.selectedThread?.status.isActive == true)
         } label: {
@@ -718,16 +749,6 @@ struct ConversationView: View {
         }
         .buttonStyle(.plain)
         .disabled(sendDisabled)
-        .contextMenu {
-            if model.selectedThread?.status.isActive == true {
-                Button("Queue after Current Turn") {
-                    submitComposerInput(queueWhenActive: true)
-                }
-                Button("Steer Active Turn") {
-                    submitComposerInput(queueWhenActive: false)
-                }
-            }
-        }
         .accessibilityLabel("Send")
         .accessibilityIdentifier("sendButton")
     }

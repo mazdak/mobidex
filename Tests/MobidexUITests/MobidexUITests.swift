@@ -31,7 +31,9 @@ final class MobidexUITests: XCTestCase {
         newSessionButton.tap()
         let startInWorktreeButton = app.buttons["Start in New Worktree"]
         XCTAssertTrue(startInWorktreeButton.waitForExistence(timeout: timeout), "New Session location chooser did not appear.")
-        startInWorktreeButton.tap()
+        let startInProjectDirectoryButton = app.buttons["Start in Project Directory"]
+        XCTAssertTrue(startInProjectDirectoryButton.waitForExistence(timeout: timeout), "Project directory session option did not appear.")
+        startInProjectDirectoryButton.tap()
 
         let composer = app.descendants(matching: .any)["messageComposer"]
         XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after starting a new session.")
@@ -40,6 +42,8 @@ final class MobidexUITests: XCTestCase {
 
         let sendButton = app.buttons["sendButton"]
         XCTAssertTrue(sendButton.waitForExistence(timeout: timeout), "Send button did not appear.")
+        sendButton.press(forDuration: 1.0)
+        XCTAssertTrue(sendButton.waitForExistence(timeout: timeout), "Send button disappeared after long press.")
         sendButton.tap()
 
         let approveButton = app.buttons["approveButton"]
@@ -50,7 +54,10 @@ final class MobidexUITests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer disappeared before steering.")
         composer.tap()
         composer.typeText(smokeText("STEER_TEXT", defaultValue: "Steer control smoke"))
-        sendButton.tap()
+        sendButton.press(forDuration: 1.0)
+        let steerActiveTurnButton = app.buttons["Steer Active Turn"]
+        XCTAssertTrue(steerActiveTurnButton.waitForExistence(timeout: timeout), "Steer active turn option did not appear.")
+        steerActiveTurnButton.tap()
 
         let expectedText = smokeText("EXPECTED_TEXT", defaultValue: "control steer accepted")
         let assistantText = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", expectedText)).firstMatch

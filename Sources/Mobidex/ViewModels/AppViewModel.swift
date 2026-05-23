@@ -163,11 +163,20 @@ struct AppServerReconnectStatus: Equatable {
 
 private enum AppViewModelError: LocalizedError {
     case selectionChanged
+    case missingProject
+    case newSessionBlocked
+    case newSessionConnectionFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .selectionChanged:
             "The selected server or project changed before the operation finished."
+        case .missingProject:
+            "Select a project before starting a new session."
+        case .newSessionBlocked:
+            "Finish the current session action before starting a new session."
+        case .newSessionConnectionFailed(let message):
+            message
         }
     }
 }
@@ -430,6 +439,21 @@ final class AppViewModel: ObservableObject {
 
     var canCreateSession: Bool {
         appServer != nil && selectedProject != nil && !isSessionMutationInFlight
+    }
+
+    var canChooseNewSessionLocation: Bool {
+        selectedServer != nil && selectedProject != nil && !isNewSessionBlockedBySessionAction
+    }
+
+    var isStartingNewSession: Bool {
+        isOperationActive(.startingSession)
+    }
+
+    private var isNewSessionBlockedBySessionAction: Bool {
+        isOperationActive(.startingSession)
+            || isOperationActive(.sending)
+            || isOperationActive(.interrupting)
+            || isOperationActive(.respondingToApproval)
     }
 
     var sessionSections: [SessionListSection] {
@@ -1121,26 +1145,61 @@ final class AppViewModel: ObservableObject {
     }
 
     func startNewSession(location: NewSessionLocation = .codexWorktree) async {
-        guard let cwd = selectedProject?.path ?? selectedThread?.cwd else { return }
-        guard appServer != nil, let selectedServer else {
-            statusMessage = "Connect to the server before starting a new session."
+        guard let selectedServer else { return }
+        guard let selectedProject else {
+            statusMessage = AppViewModelError.missingProject.localizedDescription
             return
         }
-        guard !isOperationActive(.startingSession) else { return }
+        guard !isNewSessionBlockedBySessionAction else {
+            statusMessage = AppViewModelError.newSessionBlocked.localizedDescription
+            return
+        }
+        let cwd = selectedProject.path
         let scope = currentThreadLoadScope
+        var didCreateSession = false
+        suppressThreadAutoSelection = true
+        invalidateSessionRefreshes()
+        resetSessionState(clearThreads: false)
         await runOperation(.startingSession, status: "Starting session") {
+            if appServer == nil {
+                statusMessage = "Connecting before starting session"
+                if isConnectingAppServer {
+                    await waitForAppServerConnectionAttempt()
+                }
+                if appServer == nil {
+                    await connectSelectedServer(syncActiveChatCounts: false, preservingVisibleState: true)
+                }
+            }
             guard let appServer else {
-                statusMessage = "Connect to the server before starting a new session."
-                return
+                throw AppViewModelError.newSessionConnectionFailed(
+                    statusMessage ?? "Connect to the server before starting a new session."
+                )
+            }
+            guard selectedServerID == selectedServer.id,
+                  selectedProjectID == selectedProject.id,
+                  currentThreadLoadScope == scope else {
+                throw AppViewModelError.selectionChanged
             }
             let sessionCwd: String
             switch location {
             case .codexWorktree:
+                statusMessage = "Creating worktree"
                 let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
+                guard selectedServerID == selectedServer.id,
+                      selectedProjectID == selectedProject.id,
+                      currentThreadLoadScope == scope else {
+                    throw AppViewModelError.selectionChanged
+                }
                 sessionCwd = try await sshService.createCodexWorktree(from: cwd, server: selectedServer, credential: credential)
             case .projectDirectory:
                 sessionCwd = cwd
             }
+            guard selectedServerID == selectedServer.id,
+                  selectedProjectID == selectedProject.id,
+                  currentThreadLoadScope == scope else {
+                throw AppViewModelError.selectionChanged
+            }
+            statusMessage = "Creating session"
             let thread = try await appServer.startThread(cwd: sessionCwd)
             guard currentThreadLoadScope == scope else {
                 return
@@ -1152,11 +1211,28 @@ final class AppViewModel: ObservableObject {
             pendingApprovals = []
             hydrateConversation(from: thread)
             suppressThreadAutoSelection = false
+            didCreateSession = true
             threads = sortedThreads([thread] + threads.filter { $0.id != thread.id })
             invalidateSessionCaches(for: selectedServerID)
             cacheThreadList(threads, scope: currentThreadLoadScope)
             cacheThreadDetail(thread: thread, liveItems: liveItems, sections: conversationSections)
             statusMessage = location == .codexWorktree ? "New session created in a worktree." : "New session created."
+        }
+        if !didCreateSession,
+           selectedServerID == selectedServer.id,
+           selectedProjectID == selectedProject.id,
+           currentThreadLoadScope == scope {
+            suppressThreadAutoSelection = false
+        }
+    }
+
+    private func waitForAppServerConnectionAttempt() async {
+        while isConnectingAppServer {
+            do {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            } catch {
+                return
+            }
         }
     }
 
