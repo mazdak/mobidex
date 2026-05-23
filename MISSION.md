@@ -13,3 +13,5 @@ Guardrails:
 
 Critical learnings:
 - Release archives were using automatic development signing while a distribution identity was specified.
+- Export also needs manual signing pinned to the exact App Store profile, or Xcode picks a generic team profile.
+- Ad Hoc currently shares Release signing and should be split later if that workflow remains needed.
