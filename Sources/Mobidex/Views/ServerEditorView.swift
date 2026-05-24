@@ -55,14 +55,14 @@ struct ServerEditorView: View {
                 }
 
                 Section {
-                    TextField("Target Shell RC File", text: $targetShellRCFile, prompt: Text(SharedKMPBridge.defaultTargetShellRCFile))
+                    TextField("Target Shell Startup File", text: $targetShellRCFile, prompt: Text("$HOME/.zprofile"))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .accessibilityIdentifier("targetShellRCFileField")
                 } header: {
                     Text("Shell Environment")
                 } footer: {
-                    Text("Mobidex sources this file before resolving or starting Codex for the app-server session.")
+                    Text("Defaults to $HOME/.zprofile. Existing .zshrc paths are migrated to the matching .zprofile path.")
                 }
 
                 Section {

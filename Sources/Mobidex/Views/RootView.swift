@@ -305,12 +305,10 @@ struct ProjectSessionListView: View {
                         },
                         canCreateSession: model.canChooseNewSessionLocation,
                         onStartInNewWorktree: {
-                            promoteDetailIfCompact()
-                            Task { await model.startNewSession() }
+                            Task { await startNewSessionAndPromote(location: .codexWorktree) }
                         },
                         onStartInProjectDirectory: {
-                            promoteDetailIfCompact()
-                            Task { await model.startNewSession(location: .projectDirectory) }
+                            Task { await startNewSessionAndPromote(location: .projectDirectory) }
                         },
                         showingProjectAdd: $showingProjectAdd,
                         showingTerminal: $showingTerminal,
@@ -456,6 +454,15 @@ struct ProjectSessionListView: View {
             preferredCompactColumn = .detail
             columnVisibility = .detailOnly
         }
+    }
+
+    @MainActor
+    private func startNewSessionAndPromote(location: NewSessionLocation) async {
+        let createdThreadID = await model.startNewSession(location: location)
+        guard createdThreadID != nil, model.selectedThreadID == createdThreadID else {
+            return
+        }
+        promoteDetailIfCompact()
     }
 
     private var trimmedProjectSearch: String {

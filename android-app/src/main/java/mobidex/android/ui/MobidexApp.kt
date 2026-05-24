@@ -2366,7 +2366,7 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
                 OutlinedTextField(host, { host = it }, label = { Text("Host") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(port, { port = it.filter(Char::isDigit) }, label = { Text("Port") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(username, { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(shellRc, { shellRc = it }, label = { Text("Target Shell RC File") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(shellRc, { shellRc = it }, label = { Text("Target Shell Startup File") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(codexPath, { codexPath = it }, label = { Text("Full Path to Codex") }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = authMethod == ServerAuthMethod.Password, onClick = { authMethod = ServerAuthMethod.Password })

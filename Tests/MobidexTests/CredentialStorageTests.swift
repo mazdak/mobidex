@@ -89,14 +89,15 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertEqual(
             server.appServerCommand,
-            "mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi; export PATH=\"$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://"
+            "export PATH=\"$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2 || true; fi; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://"
         )
     }
 
     func testServerRecordDefaultsAndDecodesTargetShellRCFile() throws {
         let server = ServerRecord(displayName: "Server", host: "host", username: "user", authMethod: .password)
-        XCTAssertEqual(server.targetShellRCFile, "$HOME/.zshrc")
-        XCTAssertTrue(server.appServerProxyCommand.hasPrefix("mobidex_shell_rc=\"${HOME}\"/'.zshrc'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi;"))
+        XCTAssertEqual(server.targetShellRCFile, "$HOME/.zprofile")
+        XCTAssertTrue(server.appServerProxyCommand.hasPrefix("export PATH="))
+        XCTAssertTrue(server.appServerProxyCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zprofile'"))
 
         let legacyPayload = Data("""
         {
@@ -114,7 +115,52 @@ final class CredentialStorageTests: XCTestCase {
         }
         """.utf8)
         let decoded = try JSONDecoder().decode(ServerRecord.self, from: legacyPayload)
-        XCTAssertEqual(decoded.targetShellRCFile, "$HOME/.zshrc")
+        XCTAssertEqual(decoded.targetShellRCFile, "$HOME/.zprofile")
+
+        let legacyDefaultPayload = Data("""
+        {
+          "id": "00000000-0000-0000-0000-000000000001",
+          "displayName": "Legacy",
+          "host": "host",
+          "port": 22,
+          "username": "user",
+          "codexPath": "codex",
+          "targetShellRCFile": "$HOME/.zshrc",
+          "authMethod": "password",
+          "projects": [],
+          "createdAt": 1770000000,
+          "updatedAt": 1770000000
+        }
+        """.utf8)
+        let decodedLegacyDefault = try JSONDecoder().decode(ServerRecord.self, from: legacyDefaultPayload)
+        XCTAssertEqual(decodedLegacyDefault.targetShellRCFile, "$HOME/.zprofile")
+
+        for (shellRCFile, expectedShellRCFile) in [
+            ("${HOME}/.zshrc", "${HOME}/.zprofile"),
+            ("~/.zshrc", "~/.zprofile"),
+            ("/Users/mazdak/.zshrc", "/Users/mazdak/.zprofile"),
+            ("/home/user/.bashrc", "/home/user/.bashrc")
+        ] {
+            let payload = Data("""
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "displayName": "Legacy",
+              "host": "host",
+              "port": 22,
+              "username": "user",
+              "codexPath": "codex",
+              "targetShellRCFile": "\(shellRCFile)",
+              "authMethod": "password",
+              "projects": [],
+              "createdAt": 1770000000,
+              "updatedAt": 1770000000
+            }
+            """.utf8)
+            let decodedShellRC = try JSONDecoder().decode(ServerRecord.self, from: payload)
+            XCTAssertEqual(decodedShellRC.targetShellRCFile, expectedShellRCFile, shellRCFile)
+            XCTAssertTrue(decodedShellRC.appServerProxyCommand.hasPrefix("export PATH="), shellRCFile)
+            XCTAssertTrue(decodedShellRC.appServerProxyCommand.contains("mobidex_shell_rc"), shellRCFile)
+        }
     }
 
     func testServerRecordDefaultAppServerCommandResolvesCodexExecutable() {
@@ -126,7 +172,8 @@ final class CredentialStorageTests: XCTestCase {
         )
 
         XCTAssertTrue(server.appServerCommand.contains("command -v codex"))
-        XCTAssertTrue(server.appServerCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zshrc'"))
+        XCTAssertTrue(server.appServerCommand.hasPrefix("export PATH="))
+        XCTAssertTrue(server.appServerCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zprofile'"))
         XCTAssertTrue(server.appServerCommand.contains("$HOME/.bun/bin/codex"))
         XCTAssertTrue(server.appServerCommand.contains("/opt/homebrew/opt/node@22/bin"))
         XCTAssertTrue(server.appServerCommand.contains("zsh bash"))
@@ -143,7 +190,8 @@ final class CredentialStorageTests: XCTestCase {
         )
 
         XCTAssertTrue(server.appServerProxyCommand.contains("command -v codex"))
-        XCTAssertTrue(server.appServerProxyCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zshrc'"))
+        XCTAssertTrue(server.appServerProxyCommand.hasPrefix("export PATH="))
+        XCTAssertTrue(server.appServerProxyCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zprofile'"))
         XCTAssertTrue(server.appServerProxyCommand.contains("app-server proxy --help"))
         XCTAssertTrue(server.appServerProxyCommand.contains("default_socket=\"${CODEX_HOME:-$HOME/.codex}/app-server-control/app-server-control.sock\""))
         XCTAssertTrue(server.appServerProxyCommand.contains("app-server-control/app-server-control.sock"))
@@ -167,7 +215,7 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertEqual(
             server.appServerCommand,
-            "mobidex_shell_rc=\"${HOME}\"/'.zshrc'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2; fi; export PATH=\"$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; \"${HOME}\"/'.bun/bin/codex' app-server --listen stdio://"
+            "export PATH=\"$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; mobidex_shell_rc=\"${HOME}\"/'.zprofile'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2 || true; fi; \"${HOME}\"/'.bun/bin/codex' app-server --listen stdio://"
         )
     }
 

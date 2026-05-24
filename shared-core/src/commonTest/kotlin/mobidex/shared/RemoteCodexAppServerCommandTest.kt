@@ -9,8 +9,32 @@ class RemoteCodexAppServerCommandTest {
     @Test
     fun launchConfigNormalizesSharedDefaults() {
         assertEquals(
-            RemoteServerLaunchConfig(codexPath = "codex", targetShellRCFile = "\$HOME/.zshrc"),
+            RemoteServerLaunchConfig(codexPath = "codex", targetShellRCFile = "\$HOME/.zprofile"),
             RemoteServerLaunchDefaults.normalize(codexPath = "  ", targetShellRCFile = ""),
+        )
+        assertEquals(
+            RemoteServerLaunchConfig(codexPath = "codex", targetShellRCFile = "\$HOME/.zprofile"),
+            RemoteServerLaunchDefaults.normalize(codexPath = "codex", targetShellRCFile = "\$HOME/.zshrc"),
+        )
+        assertEquals(
+            RemoteServerLaunchConfig(codexPath = "codex", targetShellRCFile = "\${HOME}/.zprofile"),
+            RemoteServerLaunchDefaults.normalize(codexPath = "codex", targetShellRCFile = "\${HOME}/.zshrc"),
+        )
+        assertEquals(
+            RemoteServerLaunchConfig(codexPath = "codex", targetShellRCFile = "~/.zprofile"),
+            RemoteServerLaunchDefaults.normalize(codexPath = "codex", targetShellRCFile = "~/.zshrc"),
+        )
+        assertEquals(
+            RemoteServerLaunchConfig(codexPath = "codex", targetShellRCFile = "/Users/mazdak/.zprofile"),
+            RemoteServerLaunchDefaults.normalize(codexPath = "codex", targetShellRCFile = "/Users/mazdak/.zshrc"),
+        )
+        assertEquals(
+            RemoteServerLaunchConfig(codexPath = "codex", targetShellRCFile = "/home/user/.bashrc"),
+            RemoteServerLaunchDefaults.normalize(codexPath = "codex", targetShellRCFile = "/home/user/.bashrc"),
+        )
+        assertEquals(
+            RemoteServerLaunchConfig(codexPath = "codex", targetShellRCFile = "/opt/mobidex/startup/"),
+            RemoteServerLaunchDefaults.normalize(codexPath = "codex", targetShellRCFile = "/opt/mobidex/startup/"),
         )
         assertEquals(
             RemoteServerLaunchConfig(codexPath = "~/.bun/bin/codex", targetShellRCFile = "~/.zprofile"),
@@ -26,7 +50,7 @@ class RemoteCodexAppServerCommandTest {
         )
 
         assertEquals(
-            "mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"\$mobidex_shell_rc\" ]; then . \"\$mobidex_shell_rc\" 1>&2; fi; export PATH=\"\$HOME/.bun/bin:\$HOME/.cargo/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://",
+            "export PATH=\"\$HOME/.bun/bin:\$HOME/.cargo/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"; mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"\$mobidex_shell_rc\" ]; then . \"\$mobidex_shell_rc\" 1>&2 || true; fi; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://",
             command,
         )
     }
@@ -36,7 +60,8 @@ class RemoteCodexAppServerCommandTest {
         val command = RemoteCodexAppServerCommand.stdioCommand()
 
         assertContains(command, "command -v codex")
-        assertContains(command, "mobidex_shell_rc=\"\${HOME}\"/'.zshrc'")
+        assertContains(command, "export PATH=")
+        assertContains(command, "mobidex_shell_rc=\"\${HOME}\"/'.zprofile'")
         assertContains(command, "\$HOME/.bun/bin/codex")
         assertContains(command, "\$HOME/.cargo/bin/codex")
         assertContains(command, "/opt/homebrew/opt/node@22/bin")
@@ -49,10 +74,11 @@ class RemoteCodexAppServerCommandTest {
     fun proxyCommandUsesDefaultUnixSocketProxyAndConfiguredShellRC() {
         val command = RemoteCodexAppServerCommand.proxyCommand(
             codexPath = "codex",
-            targetShellRCFile = "\$HOME/.zshrc",
+            targetShellRCFile = "~/.zprofile",
         )
 
-        assertContains(command, "mobidex_shell_rc=\"\${HOME}\"/'.zshrc'")
+        assertContains(command, "mobidex_shell_rc=\"\${HOME}\"/'.zprofile'")
+        assertContains(command, ". \"\$mobidex_shell_rc\" 1>&2 || true")
         assertContains(command, "command -v codex")
         assertContains(command, "app-server proxy --help")
         assertContains(command, "default_socket=\"\${CODEX_HOME:-\$HOME/.codex}/app-server-control/app-server-control.sock\"")
@@ -71,9 +97,11 @@ class RemoteCodexAppServerCommandTest {
     fun proxyCommandQuotesHomeRelativeCodexPath() {
         val command = RemoteCodexAppServerCommand.proxyCommand(
             codexPath = "~/.bun/bin/codex",
-            targetShellRCFile = "\$HOME/.zshrc",
+            targetShellRCFile = "",
         )
 
+        assertContains(command, "export PATH=")
+        assertContains(command, "mobidex_shell_rc=\"\${HOME}\"/'.zprofile'")
         assertContains(command, "codex_bin=\"\${HOME}\"/'.bun/bin/codex'")
         assertContains(command, "\"\$codex_bin\" app-server --listen unix://")
         assertContains(command, "exec \"\$codex_bin\" app-server proxy")

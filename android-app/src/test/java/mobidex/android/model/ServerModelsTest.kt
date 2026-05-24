@@ -8,20 +8,28 @@ import kotlin.test.assertFalse
 class ServerModelsTest {
     @Test
     fun serverRecordNormalizationUsesSharedLaunchDefaults() {
-        val server = ServerRecord(
-            displayName = "  ",
-            host = " build.example.com ",
-            username = " mazdak ",
-            codexPath = " ",
-            targetShellRCFile = "",
-            authMethod = ServerAuthMethod.Password,
-        ).normalized
+        for ((shellRCFile, expectedShellRCFile) in listOf(
+            "\$HOME/.zshrc" to "\$HOME/.zprofile",
+            "\${HOME}/.zshrc" to "\${HOME}/.zprofile",
+            "~/.zshrc" to "~/.zprofile",
+            "/Users/mazdak/.zshrc" to "/Users/mazdak/.zprofile",
+            "/home/user/.bashrc" to "/home/user/.bashrc",
+        )) {
+            val server = ServerRecord(
+                displayName = "  ",
+                host = " build.example.com ",
+                username = " mazdak ",
+                codexPath = " ",
+                targetShellRCFile = shellRCFile,
+                authMethod = ServerAuthMethod.Password,
+            ).normalized
 
-        assertEquals("build.example.com", server.displayName)
-        assertEquals("build.example.com", server.host)
-        assertEquals("mazdak", server.username)
-        assertEquals("codex", server.codexPath)
-        assertEquals("\$HOME/.zshrc", server.targetShellRCFile)
+            assertEquals("build.example.com", server.displayName)
+            assertEquals("build.example.com", server.host)
+            assertEquals("mazdak", server.username)
+            assertEquals("codex", server.codexPath)
+            assertEquals(expectedShellRCFile, server.targetShellRCFile)
+        }
     }
 
     @Test

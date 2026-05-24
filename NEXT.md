@@ -1,3 +1,22 @@
+## New Session And SSH Incident
+
+- [x] Inventory every visible app page/surface and name the phantom page.
+- [x] Fix iOS New Session navigation so it starts/selects a session before showing detail.
+- [x] Review the New Session/navigation change with a subagent.
+- [x] Fix SSH app-server startup on Mac without breaking Linux/shared Android command generation.
+- [x] Review the SSH bootstrap change with a subagent.
+- [x] Harden SSH launch against stored/custom interactive shell startup files such as `~/.zshrc`.
+- [x] Review the hardened SSH launch fix with a subagent.
+- [x] Re-run shared, Android, Xcode, simulator, and SSH smoke validation for the hardened fix.
+- [x] Correct SSH launch to source rc files after installing Mobidex's launch PATH.
+- [x] Review the corrected rc-sourcing launch fix with a subagent.
+- [x] Re-run shared, Android, Xcode, simulator, and SSH smoke validation with real `.zshrc` sourcing.
+- [x] Change the default startup file to `.zprofile` and migrate stored `.zshrc` paths.
+- [x] Review the `.zprofile` default/migration change with a subagent.
+- [x] Re-run shared, Android, Xcode, simulator, and SSH smoke validation for `.zprofile` migration.
+- [x] Run focused unit tests, shared/Android checks, xcodebuild tests, and simulator launch/screenshot validation.
+- [x] Record final critical learnings and remaining risks.
+
 ## Swipe Right Steer Now
 
 - [x] Confirm whether the gesture already exists.

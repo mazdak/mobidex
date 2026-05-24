@@ -11,7 +11,8 @@ class RemoteCodexDiscoveryTest {
     fun shellCommandWrapsPythonDiscoveryScript() {
         val command = RemoteCodexDiscovery.shellCommand
 
-        assertTrue(command.startsWith("mobidex_shell_rc=\"\${HOME}\"/'.zshrc';"))
+        assertTrue(command.startsWith("export PATH="))
+        assertTrue(command.contains("mobidex_shell_rc=\"\${HOME}\"/'.zprofile'"), command)
         assertTrue(command.contains("python3 - <<'PY'\n"))
         assertTrue(command.endsWith("\nPY\nmobidex_status=${'$'}?;exit ${'$'}mobidex_status"))
         assertTrue((command + ";exit\n").contains("\nPY\nmobidex_status=${'$'}?;exit ${'$'}mobidex_status;exit\n"))
@@ -29,7 +30,9 @@ class RemoteCodexDiscoveryTest {
     fun shellCommandUsesConfiguredLaunchEnvironment() {
         val command = RemoteCodexDiscovery.shellCommand(targetShellRCFile = "~/custom rc")
 
-        assertTrue(command.startsWith("mobidex_shell_rc=\"\${HOME}\"/'custom rc';"), command)
+        assertTrue(command.startsWith("export PATH="), command)
+        assertTrue(command.contains("mobidex_shell_rc=\"\${HOME}\"/'custom rc';"), command)
+        assertTrue(command.contains(". \"\$mobidex_shell_rc\" 1>&2 || true"), command)
         assertTrue(command.contains("export PATH="), command)
         assertTrue(command.contains("python3 - <<'PY'\n"), command)
     }

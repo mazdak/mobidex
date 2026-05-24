@@ -73,6 +73,7 @@ import mobidex.shared.ProjectCatalog
 import mobidex.shared.ProjectListSections
 import mobidex.shared.RemoteDirectoryListing
 import mobidex.shared.RemoteProject
+import mobidex.shared.RemoteServerLaunchDefaults
 import mobidex.shared.SessionListSections
 import mobidex.shared.jsonArray
 import mobidex.shared.jsonNull
@@ -2295,9 +2296,12 @@ private fun MobidexUiState.clearingSessionScope(): MobidexUiState =
         tokenUsagePercent = null,
     )
 
-private fun List<ServerRecord>.clearingAppServerProjectState(): List<ServerRecord> =
+internal fun List<ServerRecord>.clearingAppServerProjectState(): List<ServerRecord> =
     map { server ->
+        val launchConfig = RemoteServerLaunchDefaults.normalize(server.codexPath, server.targetShellRCFile)
         server.copy(
+            codexPath = launchConfig.codexPath,
+            targetShellRCFile = launchConfig.targetShellRCFile,
             projects = server.projects.map { project ->
                 project.copy(
                     activeChatCount = 0,

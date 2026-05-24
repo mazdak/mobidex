@@ -1144,19 +1144,20 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    func startNewSession(location: NewSessionLocation = .codexWorktree) async {
-        guard let selectedServer else { return }
+    @discardableResult
+    func startNewSession(location: NewSessionLocation = .codexWorktree) async -> String? {
+        guard let selectedServer else { return nil }
         guard let selectedProject else {
             statusMessage = AppViewModelError.missingProject.localizedDescription
-            return
+            return nil
         }
         guard !isNewSessionBlockedBySessionAction else {
             statusMessage = AppViewModelError.newSessionBlocked.localizedDescription
-            return
+            return nil
         }
         let cwd = selectedProject.path
         let scope = currentThreadLoadScope
-        var didCreateSession = false
+        var createdThreadID: String?
         suppressThreadAutoSelection = true
         invalidateSessionRefreshes()
         resetSessionState(clearThreads: false)
@@ -1211,19 +1212,20 @@ final class AppViewModel: ObservableObject {
             pendingApprovals = []
             hydrateConversation(from: thread)
             suppressThreadAutoSelection = false
-            didCreateSession = true
+            createdThreadID = thread.id
             threads = sortedThreads([thread] + threads.filter { $0.id != thread.id })
             invalidateSessionCaches(for: selectedServerID)
             cacheThreadList(threads, scope: currentThreadLoadScope)
             cacheThreadDetail(thread: thread, liveItems: liveItems, sections: conversationSections)
             statusMessage = location == .codexWorktree ? "New session created in a worktree." : "New session created."
         }
-        if !didCreateSession,
+        if createdThreadID == nil,
            selectedServerID == selectedServer.id,
            selectedProjectID == selectedProject.id,
            currentThreadLoadScope == scope {
             suppressThreadAutoSelection = false
         }
+        return createdThreadID
     }
 
     private func waitForAppServerConnectionAttempt() async {

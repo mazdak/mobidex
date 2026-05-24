@@ -853,7 +853,8 @@ final class AppViewModelTests: XCTestCase {
 
         cursor = transport.sentLinesSnapshot.count
         XCTAssertFalse(viewModel.canChooseNewSessionLocation)
-        await viewModel.startNewSession()
+        let createdThreadID = await viewModel.startNewSession()
+        XCTAssertNil(createdThreadID)
         XCTAssertEqual(viewModel.statusMessage, "Select a project before starting a new session.")
         XCTAssertFalse(transport.sentLinesSnapshot[cursor...].contains { methodName($0) == "thread/start" })
         await viewModel.disconnect()
@@ -1463,8 +1464,9 @@ final class AppViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.selectServer(server.id))
         viewModel.selectProject(project.id)
-        await viewModel.startNewSession()
+        let createdThreadID = await viewModel.startNewSession()
 
+        XCTAssertNil(createdThreadID)
         XCTAssertEqual(viewModel.statusMessage, "SSH authentication failed. Check the username and saved password or private key.")
     }
 
@@ -1673,8 +1675,9 @@ final class AppViewModelTests: XCTestCase {
           "turns":[]
         }}}
         """)
-        await newSessionTask.value
+        let createdThreadID = await newSessionTask.value
 
+        XCTAssertEqual(createdThreadID, "thread-new")
         XCTAssertEqual(viewModel.selectedThreadID, "thread-new")
         XCTAssertEqual(viewModel.selectedThread?.id, "thread-new")
         XCTAssertEqual(viewModel.threads.map(\.id), ["thread-new", "thread-1"])
@@ -1737,8 +1740,9 @@ final class AppViewModelTests: XCTestCase {
           "turns":[]
         }}}
         """)
-        await newSessionTask.value
+        let createdThreadID = await newSessionTask.value
 
+        XCTAssertEqual(createdThreadID, "thread-new")
         XCTAssertEqual(sshService.openAppServerCallCount, 1)
         XCTAssertEqual(viewModel.selectedThreadID, "thread-new")
         XCTAssertEqual(viewModel.selectedThread?.id, "thread-new")
@@ -1784,8 +1788,9 @@ final class AppViewModelTests: XCTestCase {
         let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
         cursor = startThread.nextCursor
         transport.receive(#"{"id":\#(startThread.id),"error":{"code":-32000,"message":"start failed"}}"#)
-        await failedNewSessionTask.value
+        let failedThreadID = await failedNewSessionTask.value
 
+        XCTAssertNil(failedThreadID)
         XCTAssertNil(viewModel.selectedThreadID)
         XCTAssertEqual(viewModel.statusMessage, "start failed")
 
@@ -1870,7 +1875,8 @@ final class AppViewModelTests: XCTestCase {
         cursor = startThread.nextCursor
         viewModel.selectProject(projectTwo.id)
         transport.receive(#"{"id":\#(startThread.id),"error":{"code":-32000,"message":"start failed"}}"#)
-        await staleStartTask.value
+        let staleThreadID = await staleStartTask.value
+        XCTAssertNil(staleThreadID)
 
         let projectTwoRefreshTask = Task { await viewModel.refreshThreads() }
         let projectTwoList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
@@ -1883,6 +1889,65 @@ final class AppViewModelTests: XCTestCase {
 
         XCTAssertNil(viewModel.selectedThreadID)
         XCTAssertEqual(viewModel.threads.map(\.id), ["thread-two"])
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testStaleSuccessfulNewSessionReturnsNilWhenProjectChanges() async throws {
+        let projectOne = ProjectRecord(path: "/srv/one", isAdded: true)
+        let projectTwo = ProjectRecord(path: "/srv/two", isAdded: true)
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [projectOne, projectTwo]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let sshService = ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: sshService
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let projectOneList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = projectOneList.nextCursor
+        transport.receive("""
+        {"id":\(projectOneList.id),"result":{"data":[],"nextCursor":null}}
+        """)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
+        await connectTask.value
+
+        let staleStartTask = Task { await viewModel.startNewSession(location: .projectDirectory) }
+        let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
+        cursor = startThread.nextCursor
+        viewModel.selectProject(projectTwo.id)
+        transport.receive("""
+        {"id":\(startThread.id),"result":{"thread":{
+          "id":"thread-stale",
+          "preview":"Stale new thread",
+          "cwd":"/srv/one",
+          "status":{"type":"idle"},
+          "updatedAt":1770000400,
+          "createdAt":1770000400,
+          "turns":[]
+        }}}
+        """)
+        let staleThreadID = await staleStartTask.value
+
+        XCTAssertNil(staleThreadID)
+        XCTAssertEqual(viewModel.selectedProjectID, projectTwo.id)
+        XCTAssertNil(viewModel.selectedThreadID)
+        XCTAssertFalse(viewModel.threads.contains { $0.id == "thread-stale" })
         await viewModel.disconnect()
     }
 
@@ -2285,7 +2350,7 @@ final class AppViewModelTests: XCTestCase {
           "turns":[]
         }}}
         """)
-        await newSessionTask.value
+        _ = await newSessionTask.value
         XCTAssertNil(viewModel.contextUsageFraction)
         await viewModel.disconnect()
     }
@@ -2538,7 +2603,7 @@ final class AppViewModelTests: XCTestCase {
           "turns":[]
         }}}
         """)
-        await firstTap.value
+        _ = await firstTap.value
         await viewModel.disconnect()
     }
 
@@ -4333,7 +4398,8 @@ final class AppViewModelTests: XCTestCase {
         }
         try await waitForCannotSend(in: viewModel)
         XCTAssertFalse(viewModel.canChooseNewSessionLocation)
-        await viewModel.startNewSession()
+        let blockedThreadID = await viewModel.startNewSession()
+        XCTAssertNil(blockedThreadID)
         XCTAssertEqual(viewModel.statusMessage, "Finish the current session action before starting a new session.")
         await viewModel.sendComposerText("Second send")
         XCTAssertFalse(transport.sentLinesSnapshot[cursor...].contains { methodName($0) == "thread/start" })

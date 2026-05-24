@@ -7,13 +7,27 @@ data class RemoteServerLaunchConfig(
 
 object RemoteServerLaunchDefaults {
     const val codexPath: String = "codex"
-    const val targetShellRCFile: String = "\$HOME/.zshrc"
+    const val targetShellRCFile: String = "\$HOME/.zprofile"
 
     fun normalize(codexPath: String?, targetShellRCFile: String?): RemoteServerLaunchConfig =
         RemoteServerLaunchConfig(
             codexPath = codexPath?.trim().orEmpty().ifEmpty { this.codexPath },
-            targetShellRCFile = targetShellRCFile?.trim().orEmpty().ifEmpty { this.targetShellRCFile },
+            targetShellRCFile = normalizeTargetShellRCFile(targetShellRCFile),
         )
+
+    private fun normalizeTargetShellRCFile(targetShellRCFile: String?): String {
+        val trimmed = targetShellRCFile?.trim().orEmpty().ifEmpty { this.targetShellRCFile }
+        return trimmed.replaceZshRcWithZprofile()
+    }
+
+    private fun String.replaceZshRcWithZprofile(): String {
+        val pathForMatch = trimEnd('/', '\\')
+        return if (pathForMatch.replace('\\', '/').substringAfterLast('/') == ".zshrc") {
+            pathForMatch.dropLast(".zshrc".length) + ".zprofile"
+        } else {
+            this
+        }
+    }
 }
 
 object RemoteCodexAppServerCommand {
@@ -93,14 +107,14 @@ object RemoteCodexAppServerCommand {
 
     private fun shellEnvironmentBootstrapCommand(targetShellRCFile: String): String =
         listOf(
-            targetShellRCBootstrapCommand(targetShellRCFile),
             "export PATH=\"\$HOME/.bun/bin:\$HOME/.cargo/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"",
+            targetShellRCBootstrapCommand(targetShellRCFile),
         ).joinToString("; ")
 
     private fun targetShellRCBootstrapCommand(targetShellRCFile: String): String {
         val rcFile = targetShellRCFile.trim()
         if (rcFile.isEmpty()) return "true"
-        return "mobidex_shell_rc=${rcFile.shellQuotedRemotePath()}; if [ -f \"\$mobidex_shell_rc\" ]; then . \"\$mobidex_shell_rc\" 1>&2; fi"
+        return "mobidex_shell_rc=${rcFile.shellQuotedRemotePath()}; if [ -f \"\$mobidex_shell_rc\" ]; then . \"\$mobidex_shell_rc\" 1>&2 || true; fi"
     }
 
     private val codexCandidates = listOf(

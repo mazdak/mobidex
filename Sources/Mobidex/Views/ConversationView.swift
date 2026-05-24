@@ -214,23 +214,6 @@ struct ConversationView: View {
                     .lineLimit(1)
             }
             Spacer()
-            Menu {
-                Button {
-                    Task { await model.startNewSession() }
-                } label: {
-                    Label("Start in New Worktree", systemImage: "arrow.triangle.branch")
-                }
-                Button {
-                    Task { await model.startNewSession(location: .projectDirectory) }
-                } label: {
-                    Label("Start in Project Directory", systemImage: "folder")
-                }
-            } label: {
-                Label("New Session", systemImage: "plus.bubble")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.canChooseNewSessionLocation)
-            .accessibilityIdentifier("projectNewSessionButton")
         }
         .padding()
     }
@@ -377,14 +360,14 @@ struct ConversationView: View {
         if model.isStartingNewSession {
             return "Starting New Session..."
         }
-        return model.canSendMessage ? "No Sessions Yet" : "Connect to Create a Session"
+        return "No Session Selected"
     }
 
     private var projectEmptyDescription: String {
         if model.isStartingNewSession {
             return "Mobidex is preparing a fresh Codex thread."
         }
-        return model.canSendMessage ? "Start a new session for this project." : "Connect to start a session for this project."
+        return model.canSendMessage ? "Session details appear after a thread opens." : "Connect to load sessions for this project."
     }
 
     private var sessionRefreshView: some View {
