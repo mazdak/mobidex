@@ -37,6 +37,7 @@
 - [x] Add `.env.test` real-host E2E harness for connection, new session, join, and visible UI New Session paths.
 - [x] Validate real Mac SSH connection, project-directory New Session, join existing session, and New Worktree visible UI smoke.
 - [x] Review the latest iOS E2E/TestFlight readiness changes with a subagent and apply release-blocking fixes.
+- [x] Publish TestFlight build `1.0 (32)` to internal testers and submit it for external beta review.
 
 ## Swipe Right Steer Now
 
