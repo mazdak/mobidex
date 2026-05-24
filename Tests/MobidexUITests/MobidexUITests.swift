@@ -21,22 +21,13 @@ final class MobidexUITests: XCTestCase {
         XCTAssertTrue(refreshServerButton.waitForExistence(timeout: timeout), "Connect/refresh button did not appear.")
         refreshServerButton.tap()
 
-        let newSessionButton = app.buttons["projectNewSessionButton"]
-        if !waitForEnabled(newSessionButton, timeout: 5) {
+        let composer = app.descendants(matching: .any)["messageComposer"]
+        if !composer.waitForExistence(timeout: 5) {
             let projectRow = app.buttons["projectRow"].firstMatch
             XCTAssertTrue(projectRow.waitForExistence(timeout: timeout), "Seeded project row did not appear.")
             projectRow.tap()
         }
-        XCTAssertTrue(waitForEnabled(newSessionButton, timeout: timeout), "New Session button did not become enabled after opening the seeded project.")
-        newSessionButton.tap()
-        let startInWorktreeButton = app.buttons["Start in New Worktree"]
-        XCTAssertTrue(startInWorktreeButton.waitForExistence(timeout: timeout), "New Session location chooser did not appear.")
-        let startInProjectDirectoryButton = app.buttons["Start in Project Directory"]
-        XCTAssertTrue(startInProjectDirectoryButton.waitForExistence(timeout: timeout), "Project directory session option did not appear.")
-        startInProjectDirectoryButton.tap()
-
-        let composer = app.descendants(matching: .any)["messageComposer"]
-        XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after starting a new session.")
+        XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Project composer did not appear before starting the first prompt.")
         composer.tap()
         composer.typeText(smokeText("PROMPT", defaultValue: "Start control smoke"))
 

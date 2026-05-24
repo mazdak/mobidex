@@ -32,6 +32,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -427,12 +428,14 @@ private fun ProjectSessionPane(
                 NewSessionMenuButton(
                     enabled = state.canCreateSession && !connectionMode,
                     onStart = {
-                        model.startNewSession()
-                        onOpenDetail()
+                        model.startNewSession { created ->
+                            if (created) onOpenDetail()
+                        }
                     },
                     onStartInProjectDirectory = {
-                        model.startNewSession(NewSessionLocation.ProjectDirectory)
-                        onOpenDetail()
+                        model.startNewSession(NewSessionLocation.ProjectDirectory) { created ->
+                            if (created) onOpenDetail()
+                        }
                     },
                 )
             }
@@ -490,6 +493,7 @@ private fun ProjectSessionPane(
                 onOpenSessions = { project ->
                     sessionsProjectID = project.id
                     model.selectProject(project.id)
+                    onOpenDetail()
                 },
             )
         }
@@ -903,7 +907,7 @@ private fun ThreadList(
     disabled: Boolean = false,
     onOpenDetail: () -> Unit,
 ) {
-    val contentDisabled = disabled
+    val contentDisabled = disabled || state.isBusy || state.isStartingNewSession
     val contentAlpha = if (contentDisabled) 0.42f else 1f
     val sections = model.sessionSections(search)
     Column(Modifier.fillMaxSize()) {
@@ -1024,12 +1028,14 @@ private fun ConversationPane(
                     CircularProgressIndicator()
                 }
             } else {
-                EmptyState(
-                    projectSessionEmptyTitle(state),
-                    projectSessionEmptyDetail(state),
-                    Icons.Default.Description,
-                    Modifier.weight(1f),
-                )
+                ChatTimeline(state, model, composerDrafts, Modifier.weight(1f)) {
+                    EmptyState(
+                        projectSessionEmptyTitle(state),
+                        projectSessionEmptyDetail(state),
+                        Icons.Default.Description,
+                        Modifier.fillMaxSize(),
+                    )
+                }
             }
         } else {
             EmptyState("Select a Session", "Choose a project or session to continue.", Icons.Default.Description, Modifier.weight(1f))
@@ -1079,12 +1085,17 @@ internal fun sessionEmptyDetail(state: MobidexUiState): String =
 
 internal fun projectSessionEmptyTitle(state: MobidexUiState): String =
     when {
+        state.isStartingNewSession -> "Starting New Session..."
         state.connectionState == ServerConnectionState.Connected -> "No Sessions Yet"
         else -> "Connect to Create a Session"
     }
 
 internal fun projectSessionEmptyDetail(state: MobidexUiState): String =
-    "Start a new session for this project."
+    if (state.isStartingNewSession) {
+        "Mobidex is preparing a fresh Codex thread."
+    } else {
+        "Start the first prompt for this project."
+    }
 
 @Composable
 private fun ConversationHeader(thread: CodexThread, state: MobidexUiState, model: AppViewModel) {
@@ -1218,6 +1229,7 @@ private fun ChatTimeline(
     model: AppViewModel,
     composerDrafts: MutableMap<String, AndroidComposerDraft>,
     modifier: Modifier = Modifier,
+    emptyContent: @Composable BoxScope.() -> Unit = {},
 ) {
     val composerKey = state.composerDraftKey()
     var composer by remember(composerKey) { mutableStateOf(composerKey?.let { composerDrafts[it]?.text }.orEmpty()) }
@@ -1288,6 +1300,9 @@ private fun ChatTimeline(
                 items(state.conversationSections, key = { it.id }) { section ->
                     ConversationSectionRow(section)
                 }
+            }
+            if (timelineItemCount == 0) {
+                emptyContent()
             }
             if (!isNearBottom && timelineItemCount > 0) {
                 FloatingActionButton(

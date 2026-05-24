@@ -72,9 +72,12 @@ class ProjectLabelsTest {
             isBusy = true,
         )
         val loading = busyConnected.copy(isRefreshingSessions = true)
+        val starting = busyConnected.copy(isStartingNewSession = true)
 
         assertEquals("No Sessions Yet", projectSessionEmptyTitle(busyConnected))
         assertEquals("No Sessions Yet", projectSessionEmptyTitle(loading))
+        assertEquals("Starting New Session...", projectSessionEmptyTitle(starting))
+        assertEquals("Mobidex is preparing a fresh Codex thread.", projectSessionEmptyDetail(starting))
     }
 
     @Test
@@ -102,6 +105,26 @@ class ProjectLabelsTest {
             selectedThreadID = thread.id,
             selectedThread = thread,
             connectionState = ServerConnectionState.Connected,
+        )
+
+        assertEquals(true, state.canCreateSession)
+    }
+
+    @Test
+    fun projectCanStartNewSessionBeforeConnection() {
+        val project = ProjectRecord(path = "/srv/app")
+        val server = ServerRecord(
+            displayName = "Devbox",
+            host = "example.com",
+            username = "ubuntu",
+            authMethod = ServerAuthMethod.Password,
+            projects = listOf(project),
+        )
+        val state = MobidexUiState(
+            servers = listOf(server),
+            selectedServerID = server.id,
+            selectedProjectID = project.id,
+            connectionState = ServerConnectionState.Disconnected,
         )
 
         assertEquals(true, state.canCreateSession)

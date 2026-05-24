@@ -65,12 +65,7 @@ struct ConversationView: View {
                     if model.isRefreshingSessions {
                         sessionRefreshView
                     } else {
-                        ContentUnavailableView(
-                            projectEmptyTitle,
-                            systemImage: "bubble.left.and.bubble.right",
-                            description: Text(projectEmptyDescription)
-                        )
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        projectEmptyView
                     }
                 }
             } else {
@@ -367,7 +362,21 @@ struct ConversationView: View {
         if model.isStartingNewSession {
             return "Mobidex is preparing a fresh Codex thread."
         }
-        return model.canSendMessage ? "Session details appear after a thread opens." : "Connect to load sessions for this project."
+        return model.canSendMessage ? "Start the first prompt for this project." : "Connect to load sessions for this project."
+    }
+
+    private var projectEmptyView: some View {
+        ContentUnavailableView(
+            projectEmptyTitle,
+            systemImage: "bubble.left.and.bubble.right",
+            description: Text(projectEmptyDescription)
+        )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if model.canSendMessage {
+                    composer
+                }
+            }
     }
 
     private var sessionRefreshView: some View {

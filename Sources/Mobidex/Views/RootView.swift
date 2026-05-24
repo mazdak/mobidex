@@ -267,6 +267,7 @@ struct ProjectSessionListView: View {
                             onOpenProject: { project in
                                 sessionsProjectID = project.id
                                 model.selectProject(project.id)
+                                promoteDetailIfCompact()
                                 isSessionRefreshRequested = true
                                 Task {
                                     await model.refreshThreadsIfNeeded()

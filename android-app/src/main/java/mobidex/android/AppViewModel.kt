@@ -95,6 +95,7 @@ data class MobidexUiState(
     val statusMessage: String? = null,
     val isBusy: Boolean = false,
     val isRefreshingSessions: Boolean = false,
+    val isStartingNewSession: Boolean = false,
     val selectedReasoningEffort: CodexReasoningEffortOption = CodexReasoningEffortOption.Medium,
     val selectedAccessMode: CodexAccessMode = CodexAccessMode.FullAccess,
     val hasOpenAIAPIKey: Boolean = false,
@@ -113,10 +114,10 @@ data class MobidexUiState(
         get() = selectedServer?.projects?.firstOrNull { it.id == selectedProjectID }
 
     val canSendMessage: Boolean
-        get() = connectionState == ServerConnectionState.Connected
+        get() = connectionState == ServerConnectionState.Connected && !isStartingNewSession
 
     val canCreateSession: Boolean
-        get() = connectionState == ServerConnectionState.Connected && selectedProject != null && !isBusy
+        get() = connectionState != ServerConnectionState.Connecting && selectedServer != null && selectedProject != null && !isBusy && !isStartingNewSession
 
     val activeTurnID: String?
         get() = selectedThread?.turns?.lastOrNull { it.status == "inProgress" }?.id
@@ -206,6 +207,7 @@ class AppViewModel(
     private var sessionRefreshDetailLoadGeneration = 0L
     private val sessionListInitialPageLimit = 1
     private var isSendingInput = false
+    private var isStartingSession = false
     private val queuedTurnInputsByThreadID = mutableMapOf<String, MutableList<QueuedTurnInput>>()
     private val threadListCache = mutableMapOf<ThreadScopeCacheKey, CachedThreadList>()
     private val threadDetailCache = mutableMapOf<ThreadDetailCacheKey, CachedThreadDetail>()
@@ -302,6 +304,10 @@ class AppViewModel(
     }
 
     fun selectProject(projectID: String?) {
+        if (isSessionMutationInFlight()) {
+            _state.update { it.copy(statusMessage = "Wait for the current session action to finish before switching projects.") }
+            return
+        }
         resetSessionRefreshTracking()
         suppressThreadAutoSelection = true
         _state.update { state ->
@@ -331,6 +337,10 @@ class AppViewModel(
     }
 
     fun selectAllSessionsAndRefresh() {
+        if (isSessionMutationInFlight()) {
+            _state.update { it.copy(statusMessage = "Wait for the current session action to finish before changing session scope.") }
+            return
+        }
         resetSessionRefreshTracking()
         suppressThreadAutoSelection = true
         _state.update { state ->
@@ -374,6 +384,10 @@ class AppViewModel(
 
     fun setShowsArchivedSessions(show: Boolean) {
         if (_state.value.showsArchivedSessions == show) return
+        if (isSessionMutationInFlight()) {
+            _state.update { it.copy(statusMessage = "Wait for the current session action to finish before changing session scope.") }
+            return
+        }
         resetSessionRefreshTracking()
         suppressThreadAutoSelection = true
         _state.update {
@@ -1031,6 +1045,10 @@ class AppViewModel(
     }
 
     fun openThread(thread: CodexThread) {
+        if (isSessionMutationInFlight()) {
+            _state.update { it.copy(statusMessage = "Wait for the current session action to finish before opening another session.") }
+            return
+        }
         viewModelScope.launch {
             suppressThreadAutoSelection = false
             sessionRefreshDetailLoadGeneration += 1
@@ -1059,39 +1077,114 @@ class AppViewModel(
         }
     }
 
-    fun startNewSession(location: NewSessionLocation = NewSessionLocation.CodexWorktree) {
+    fun startNewSession(location: NewSessionLocation = NewSessionLocation.CodexWorktree, onComplete: (Boolean) -> Unit = {}) {
+        if (isSessionMutationInFlight()) {
+            _state.update { it.copy(statusMessage = "A session action is already in progress.") }
+            onComplete(false)
+            return
+        }
+        val initialState = _state.value
+        if (initialState.selectedServer == null) {
+            _state.update { it.copy(statusMessage = "Select a server before starting a session.") }
+            onComplete(false)
+            return
+        }
+        if (initialState.selectedProject == null) {
+            _state.update { it.copy(statusMessage = "Select a project before starting a session.") }
+            onComplete(false)
+            return
+        }
+        isStartingSession = true
+        suppressThreadAutoSelection = true
+        _state.update {
+            it.copy(
+                isStartingNewSession = true,
+                selectedThreadID = null,
+                selectedThread = null,
+                conversationSections = emptyList(),
+                pendingApprovals = emptyList(),
+                diffSnapshot = GitDiffSnapshot.Empty,
+                tokenUsagePercent = null,
+            )
+        }
         viewModelScope.launch {
-            runBusy("Starting session") {
-                val state = _state.value
-                suppressThreadAutoSelection = false
-                val client = appServer ?: return@runBusy
-                val requestServerID = state.selectedServerID
-                val requestProjectID = state.selectedProjectID
-                val requestThreadID = state.selectedThreadID
-                val server = state.selectedServer ?: return@runBusy
-                val cwd = state.selectedProject?.path ?: return@runBusy
-                val sessionCwd = when (location) {
-                    NewSessionLocation.CodexWorktree -> sshService.createCodexWorktree(cwd, server, credentialStore.loadCredential(server.id))
-                    NewSessionLocation.ProjectDirectory -> cwd
-                }
-                val thread = client.startThread(sessionCwd)
-                hydrateConversationIfCurrent(
-                    thread,
-                    requestServerID,
-                    requestProjectID,
-                    requestThreadID,
-                    clearPerThreadState = true,
-                )
-                _state.update { current ->
-                    if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID || current.selectedThreadID != thread.id) {
-                        current
-                    } else {
-                        current.copy(threads = (listOf(thread) + current.threads).distinctBy { item -> item.id })
+            var createdThread = false
+            try {
+                runBusy("Starting session") {
+                    val state = _state.value
+                    val requestServerID = state.selectedServerID
+                    val requestProjectID = state.selectedProjectID
+                    val requestThreadID = state.selectedThreadID
+                    val server = state.selectedServer ?: error("Select a server before starting a session.")
+                    val cwd = state.selectedProject?.path ?: error("Select a project before starting a session.")
+                    var client = appServer
+                    if (client == null) {
+                        _state.update { it.copy(connectionState = ServerConnectionState.Connecting, statusMessage = "Connecting before starting session") }
+                        val connectedClient = try {
+                            val credential = credentialStore.loadCredential(server.id)
+                            requireSessionSelection(requestServerID, requestProjectID, requestThreadID)
+                            sshService.openAppServer(server, credential)
+                        } catch (error: Throwable) {
+                            if (error is CancellationException) throw error
+                            _state.update {
+                                it.copy(
+                                    connectionState = ServerConnectionState.Failed,
+                                    failureMessage = error.message,
+                                    statusMessage = error.message ?: "Connection failed before starting session.",
+                                )
+                            }
+                            throw error
+                        }
+                        if (_state.value.selectedServerID != server.id) {
+                            connectedClient.close()
+                            _state.update { it.copy(connectionState = ServerConnectionState.Disconnected) }
+                            error("The selected server changed before the session could start.")
+                        }
+                        appServer = connectedClient
+                        startEventLoop(connectedClient)
+                        _state.update { it.copy(connectionState = ServerConnectionState.Connected, failureMessage = null, statusMessage = "Server connected.") }
+                        client = connectedClient
                     }
+                    requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
+                    val sessionCwd = when (location) {
+                        NewSessionLocation.CodexWorktree -> {
+                            val credential = credentialStore.loadCredential(server.id)
+                            requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
+                            sshService.createCodexWorktree(cwd, server, credential)
+                        }
+                        NewSessionLocation.ProjectDirectory -> cwd
+                    }
+                    requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
+                    val thread = client.startThread(sessionCwd)
+                    val adopted = hydrateConversationIfCurrent(
+                        thread,
+                        requestServerID,
+                        requestProjectID,
+                        requestThreadID,
+                        clearPerThreadState = true,
+                        acceptedStartedThreadID = thread.id,
+                    )
+                    if (!adopted) return@runBusy
+                    createdThread = true
+                    suppressThreadAutoSelection = false
+                    _state.update { current ->
+                        if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID || current.selectedThreadID != thread.id) {
+                            current
+                        } else {
+                            current.copy(threads = (listOf(thread) + current.threads).distinctBy { item -> item.id })
+                        }
+                    }
+                    invalidateSessionCaches(requestServerID)
+                    cacheThreads(currentThreadScopeCacheKey(), _state.value.threads)
+                    refreshProjectsForCurrentScope(client, requestServerID)
                 }
-                invalidateSessionCaches(requestServerID)
-                cacheThreads(currentThreadScopeCacheKey(), _state.value.threads)
-                refreshProjectsForCurrentScope(client, requestServerID)
+            } finally {
+                isStartingSession = false
+                _state.update { it.copy(isStartingNewSession = false) }
+                if (_state.value.selectedThreadID == null) {
+                    suppressThreadAutoSelection = false
+                }
+                onComplete(createdThread)
             }
         }
     }
@@ -1123,9 +1216,14 @@ class AppViewModel(
                     var thread = requestState.selectedThread
                     var createdThread = false
                     if (thread == null) {
+                        suppressThreadAutoSelection = true
+                        requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
                         thread = client.startThread(requestState.selectedProject?.path)
                         createdThread = true
-                        hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID)
+                        if (!hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID, acceptedStartedThreadID = thread.id)) {
+                            return@runBusy
+                        }
+                        suppressThreadAutoSelection = false
                     }
                     if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                         return@runBusy
@@ -1187,6 +1285,9 @@ class AppViewModel(
                 }
             } finally {
                 isSendingInput = false
+                if (_state.value.selectedThreadID == null) {
+                    suppressThreadAutoSelection = false
+                }
             }
             onComplete(didSubmitInput)
         }
@@ -1942,10 +2043,13 @@ class AppViewModel(
         requestProjectID: String?,
         requestThreadID: String?,
         clearPerThreadState: Boolean = false,
-    ) {
+        acceptedStartedThreadID: String? = null,
+    ): Boolean {
         var didHydrate = false
         _state.update { state ->
-            if (state.selectedServerID != requestServerID || state.selectedProjectID != requestProjectID || state.selectedThreadID != requestThreadID) {
+            val selectionMatches = state.selectedThreadID == requestThreadID ||
+                (requestThreadID == null && acceptedStartedThreadID != null && state.selectedThreadID == acceptedStartedThreadID)
+            if (state.selectedServerID != requestServerID || state.selectedProjectID != requestProjectID || !selectionMatches) {
                 state
             } else {
                 didHydrate = true
@@ -1970,6 +2074,7 @@ class AppViewModel(
         if (didHydrate) {
             cacheThreadDetail(requestServerID, _state.value.selectedThread ?: thread)
         }
+        return didHydrate
     }
 
     private suspend fun startNextQueuedTurnIfReady(threadID: String) {
@@ -2014,6 +2119,35 @@ class AppViewModel(
             state.selectedProjectID == requestProjectID &&
             state.selectedThreadID == requestThreadID
     }
+
+    private fun requireSessionMutationScope(
+        client: CodexAppServerClient,
+        requestServerID: String?,
+        requestProjectID: String?,
+        requestThreadID: String?,
+    ) {
+        check(requestMatchesCurrentScope(client, requestServerID, requestProjectID, requestThreadID)) {
+            "The selected session scope changed before the action could finish."
+        }
+    }
+
+    private fun requireSessionSelection(
+        requestServerID: String?,
+        requestProjectID: String?,
+        requestThreadID: String?,
+    ) {
+        val state = _state.value
+        check(
+            state.selectedServerID == requestServerID &&
+                state.selectedProjectID == requestProjectID &&
+                state.selectedThreadID == requestThreadID
+        ) {
+            "The selected session scope changed before the action could finish."
+        }
+    }
+
+    private fun isSessionMutationInFlight(): Boolean =
+        isStartingSession || isSendingInput || _state.value.isStartingNewSession
 
     private fun eventTargetsSelectedThread(params: JsonElement?): Boolean {
         val selectedThreadID = _state.value.selectedThreadID ?: return false

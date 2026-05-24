@@ -1,3 +1,13 @@
+## Review Notes Validation
+
+- [x] Sync the detached worktree with `origin/master`.
+- [x] Locate the requested review artifact and record the path mismatch.
+- [x] Validate the latest potentially actionable review section against code and tests.
+- [x] Review the validation/fix chunk with a subagent.
+- [x] Run focused verification and record the outcome.
+- [x] Add Android New Session ViewModel race tests for disconnected start, blocked open during start, and blocked open during send.
+- [x] Fix review-found Android auto-connect failure recovery and add a regression test.
+
 ## New Session And SSH Incident
 
 - [x] Inventory every visible app page/surface and name the phantom page.

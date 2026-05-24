@@ -96,7 +96,14 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
         withClient(server, credential) { client ->
             val command = """
                 set -eu
-                root=${'$'}(git -C ${projectPath.shellQuoted()} rev-parse --show-toplevel)
+                log=${'$'}(mktemp "${'$'}{TMPDIR:-/tmp}/mobidex-worktree.XXXXXX")
+                cleanup() { rm -f "${'$'}log"; }
+                trap cleanup EXIT
+                if ! root=${'$'}(git -C ${projectPath.shellQuoted()} rev-parse --show-toplevel 2>"${'$'}log"); then
+                  printf 'git rev-parse failed for project path: ' >&2
+                  cat "${'$'}log" >&2
+                  exit 1
+                fi
                 name=${'$'}(basename "${'$'}root" | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*${'$'}//')
                 [ -n "${'$'}name" ] || name=repo
                 token=${'$'}(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' | cut -c1-4 || true)
@@ -104,7 +111,13 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
                 base="${'$'}HOME/.codex/worktrees/${'$'}token"
                 target="${'$'}base/${'$'}name"
                 mkdir -p "${'$'}base"
-                git -C "${'$'}root" worktree add --detach "${'$'}target" HEAD >/dev/null 2>&1
+                if ! git -C "${'$'}root" worktree add --detach "${'$'}target" HEAD >"${'$'}log" 2>&1; then
+                  printf 'git worktree add failed: ' >&2
+                  cat "${'$'}log" >&2
+                  rm -rf "${'$'}target"
+                  rmdir "${'$'}base" 2>/dev/null || true
+                  exit 1
+                fi
                 printf '%s\n' "${'$'}target"
             """.trimIndent()
             client.execString(command).trim().ifEmpty { error("Could not create Codex worktree.") }
