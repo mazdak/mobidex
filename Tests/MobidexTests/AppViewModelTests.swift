@@ -4687,6 +4687,7 @@ final class AppViewModelTests: XCTestCase {
         }}}
         """)
         let queuedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = queuedList.nextCursor
         transport.receive("""
         {"id":\(queuedList.id),"result":{"data":[
           {"id":"thread-active","preview":"Queued follow-up","cwd":"/srv/app","status":{"type":"active","activeFlags":[]},"updatedAt":1770000302,"createdAt":1770000000,"turns":[]}
@@ -4694,6 +4695,259 @@ final class AppViewModelTests: XCTestCase {
         """)
 
         try await waitForConversationSection(kind: .user, containing: "Queued follow-up", in: viewModel)
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testQueuedComposerTextStaysVisibleWhenStartedTurnOmitsUserItem() async throws {
+        let project = ProjectRecord(path: "/srv/app")
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = list.nextCursor
+        transport.receive("""
+        {"id":\(list.id),"result":{"data":[
+          {"id":"thread-active","preview":"Existing work","cwd":"/srv/app","status":{"type":"active","activeFlags":[]},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = read.nextCursor
+        transport.receive("""
+        {"id":\(read.id),"result":{"thread":{
+          "id":"thread-active",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"active","activeFlags":[]},
+          "updatedAt":1770000300,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-active",
+            "status":"inProgress",
+            "items":[
+              {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]}
+            ]
+          }]
+        }}}
+        """)
+        await connectTask.value
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
+
+        await viewModel.sendComposerText("Queued follow-up")
+        XCTAssertEqual(viewModel.queuedTurnInputCount, 1)
+
+        transport.receive("""
+        {"method":"turn/completed","params":{"threadId":"thread-active","turn":{
+          "id":"turn-active",
+          "status":"completed",
+          "items":[
+            {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]},
+            {"type":"agentMessage","id":"item-agent","text":"Done"}
+          ]
+        }}}
+        """)
+
+        let completionRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = completionRead.nextCursor
+        transport.receive("""
+        {"id":\(completionRead.id),"result":{"thread":{
+          "id":"thread-active",
+          "preview":"Existing work",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000301,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-active",
+            "status":"completed",
+            "items":[
+              {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]},
+              {"type":"agentMessage","id":"item-agent","text":"Done"}
+            ]
+          }]
+        }}}
+        """)
+        let completionList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = completionList.nextCursor
+        transport.receive("""
+        {"id":\(completionList.id),"result":{"data":[
+          {"id":"thread-active","preview":"Existing work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000301,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        let queuedTurn = try await waitForRequest(method: "turn/start", in: transport, after: cursor)
+        cursor = queuedTurn.nextCursor
+        transport.receive("""
+        {"id":\(queuedTurn.id),"result":{"turn":{
+          "id":"turn-queued",
+          "status":"inProgress",
+          "items":[]
+        }}}
+        """)
+        let queuedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive("""
+        {"id":\(queuedList.id),"result":{"data":[
+          {"id":"thread-active","preview":"Queued follow-up","cwd":"/srv/app","status":{"type":"active","activeFlags":[]},"updatedAt":1770000302,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        XCTAssertEqual(viewModel.queuedTurnInputCount, 0)
+        try await waitForConversationSection(kind: .user, containing: "Queued follow-up", in: viewModel)
+
+        transport.receive("""
+        {"method":"turn/started","params":{"threadId":"thread-active","turn":{
+          "id":"turn-queued",
+          "status":"inProgress",
+          "items":[]
+        }}}
+        """)
+        try await waitForConversationSection(kind: .user, containing: "Queued follow-up", in: viewModel)
+
+        transport.receive("""
+        {"method":"turn/completed","params":{"threadId":"thread-active","turn":{
+          "id":"turn-queued",
+          "status":"completed",
+          "items":[]
+        }}}
+        """)
+        let queuedCompletionRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = queuedCompletionRead.nextCursor
+        transport.receive("""
+        {"id":\(queuedCompletionRead.id),"result":{"thread":{
+          "id":"thread-active",
+          "preview":"Queued follow-up",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000303,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-active",
+            "status":"completed",
+            "items":[
+              {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]},
+              {"type":"agentMessage","id":"item-agent","text":"Done"}
+            ]
+          },{
+            "id":"turn-queued",
+            "status":"completed",
+            "items":[]
+          }]
+        }}}
+        """)
+        try await waitForConversationSection(kind: .user, containing: "Queued follow-up", in: viewModel)
+        let sparseCompletionList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = sparseCompletionList.nextCursor
+        transport.receive("""
+        {"id":\(sparseCompletionList.id),"result":{"data":[
+          {"id":"thread-active","preview":"Queued follow-up","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000303,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        transport.receive("""
+        {"method":"item/completed","params":{"threadId":"thread-active","item":{
+          "type":"userMessage",
+          "id":"item-queued-real",
+          "content":[{"type":"text","text":"Queued follow-up"}]
+        }}}
+        """)
+        try await waitUntil {
+            viewModel.selectedThread?.turns.last?.items.contains(where: { item in
+                if case .userMessage("item-queued-real", "Queued follow-up") = item {
+                    return true
+                }
+                return false
+            }) == true
+        }
+        try await waitForConversationSection(kind: .user, containing: "Queued follow-up", in: viewModel)
+        XCTAssertEqual(
+            viewModel.conversationSections.filter {
+                $0.kind == .user && ($0.body.contains("Queued follow-up") || $0.title.contains("Queued follow-up"))
+            }.count,
+            1
+        )
+        XCTAssertEqual(
+            viewModel.selectedThread?.turns.last?.items.compactMap { item -> String? in
+                if case .userMessage(let id, let text) = item, text == "Queued follow-up" {
+                    return id
+                }
+                return nil
+            },
+            ["item-queued-real"]
+        )
+
+        let itemList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = itemList.nextCursor
+        transport.receive("""
+        {"id":\(itemList.id),"result":{"data":[
+          {"id":"thread-active","preview":"Queued follow-up","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000304,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        transport.receive("""
+        {"method":"turn/completed","params":{"threadId":"thread-active","turn":{
+          "id":"turn-queued",
+          "status":"completed",
+          "items":[]
+        }}}
+        """)
+        let postRealCompletionRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
+        cursor = postRealCompletionRead.nextCursor
+        transport.receive("""
+        {"id":\(postRealCompletionRead.id),"result":{"thread":{
+          "id":"thread-active",
+          "preview":"Queued follow-up",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000305,
+          "createdAt":1770000000,
+          "turns":[{
+            "id":"turn-active",
+            "status":"completed",
+            "items":[
+              {"type":"userMessage","id":"item-user","content":[{"type":"text","text":"Start work"}]},
+              {"type":"agentMessage","id":"item-agent","text":"Done"}
+            ]
+          },{
+            "id":"turn-queued",
+            "status":"completed",
+            "items":[]
+          }]
+        }}}
+        """)
+        try await waitForConversationSection(kind: .user, containing: "Queued follow-up", in: viewModel)
+        XCTAssertEqual(
+            viewModel.conversationSections.filter {
+                $0.kind == .user && ($0.body.contains("Queued follow-up") || $0.title.contains("Queued follow-up"))
+            }.count,
+            1
+        )
+        XCTAssertEqual(
+            viewModel.selectedThread?.turns.last?.items.compactMap { item -> String? in
+                if case .userMessage(let id, let text) = item, text == "Queued follow-up" {
+                    return id
+                }
+                return nil
+            },
+            ["item-queued-real"]
+        )
         await viewModel.disconnect()
     }
 

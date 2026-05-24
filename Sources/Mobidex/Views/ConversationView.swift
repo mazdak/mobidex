@@ -62,12 +62,16 @@ struct ConversationView: View {
                     macOSPrivacyWarningBanner(warning: project.macOSPrivacyWarning)
                     projectHeader(project)
                     Divider()
-                    ContentUnavailableView(
-                        projectEmptyTitle,
-                        systemImage: "bubble.left.and.bubble.right",
-                        description: Text(projectEmptyDescription)
-                    )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if model.isRefreshingSessions {
+                        sessionRefreshView
+                    } else {
+                        ContentUnavailableView(
+                            projectEmptyTitle,
+                            systemImage: "bubble.left.and.bubble.right",
+                            description: Text(projectEmptyDescription)
+                        )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             } else {
                 ContentUnavailableView("Select a Session", systemImage: "bubble.left.and.bubble.right")
@@ -373,9 +377,6 @@ struct ConversationView: View {
         if model.isStartingNewSession {
             return "Starting New Session..."
         }
-        if model.isRefreshingSessions {
-            return "Loading Sessions..."
-        }
         return model.canSendMessage ? "No Sessions Yet" : "Connect to Create a Session"
     }
 
@@ -383,10 +384,12 @@ struct ConversationView: View {
         if model.isStartingNewSession {
             return "Mobidex is preparing a fresh Codex thread."
         }
-        if model.isRefreshingSessions {
-            return ""
-        }
         return model.canSendMessage ? "Start a new session for this project." : "Connect to start a session for this project."
+    }
+
+    private var sessionRefreshView: some View {
+        ProgressView()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var newSessionStartingView: some View {

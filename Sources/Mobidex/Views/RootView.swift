@@ -722,11 +722,20 @@ private struct RefreshServerButton: View {
         Button {
             Task { await refreshServer() }
         } label: {
-            Image(systemName: "arrow.clockwise")
+            if isRefreshingCurrentContent {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "arrow.clockwise")
+            }
         }
-        .disabled(disabled)
-        .accessibilityLabel(model.isAppServerConnected ? "Refresh" : "Connect")
+        .disabled(disabled || isRefreshingCurrentContent)
+        .accessibilityLabel(isRefreshingCurrentContent ? "Refreshing" : model.isAppServerConnected ? "Refresh" : "Connect")
         .accessibilityIdentifier("refreshServerButton")
+    }
+
+    private var isRefreshingCurrentContent: Bool {
+        showingProjectSessions ? model.isRefreshingSessions : model.isDiscoveringProjects
     }
 
     private func refreshServer() async {

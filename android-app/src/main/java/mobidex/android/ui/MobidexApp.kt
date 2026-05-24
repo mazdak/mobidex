@@ -389,6 +389,7 @@ private fun ProjectSessionPane(
     val server = state.selectedServer
     val sessionsProject = server?.projects?.firstOrNull { it.id == sessionsProjectID }
     val connectionMode = state.connectionState == ServerConnectionState.Connecting
+    val refreshInProgress = if (sessionsProject != null) state.isRefreshingSessions else state.isDiscoveringProjects
 
     Column(modifier) {
         PaneHeader(sessionsProject?.let { "${it.displayName} Sessions" } ?: server?.displayName ?: "Mobidex", Icons.Default.FolderOpen) {
@@ -410,9 +411,13 @@ private fun ProjectSessionPane(
                         model.refreshProjects()
                     }
                 },
-                enabled = server != null && state.connectionState == ServerConnectionState.Connected,
+                enabled = server != null && state.connectionState == ServerConnectionState.Connected && !refreshInProgress,
             ) {
-                Icon(Icons.Default.Refresh, contentDescription = "Refresh Projects")
+                if (refreshInProgress) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                }
             }
             if (sessionsProject == null) {
                 IconButton(onClick = onAddProject, enabled = server != null) {
@@ -1014,12 +1019,18 @@ private fun ConversationPane(
             }
         } else if (project != null) {
             ProjectHeader(project, state, model)
-            EmptyState(
-                projectSessionEmptyTitle(state),
-                projectSessionEmptyDetail(state),
-                Icons.Default.Description,
-                Modifier.weight(1f),
-            )
+            if (state.isRefreshingSessions) {
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            } else {
+                EmptyState(
+                    projectSessionEmptyTitle(state),
+                    projectSessionEmptyDetail(state),
+                    Icons.Default.Description,
+                    Modifier.weight(1f),
+                )
+            }
         } else {
             EmptyState("Select a Session", "Choose a project or session to continue.", Icons.Default.Description, Modifier.weight(1f))
         }
@@ -1068,13 +1079,12 @@ internal fun sessionEmptyDetail(state: MobidexUiState): String =
 
 internal fun projectSessionEmptyTitle(state: MobidexUiState): String =
     when {
-        state.isRefreshingSessions -> "Loading Sessions..."
         state.connectionState == ServerConnectionState.Connected -> "No Sessions Yet"
         else -> "Connect to Create a Session"
     }
 
 internal fun projectSessionEmptyDetail(state: MobidexUiState): String =
-    if (state.isRefreshingSessions) "" else "Start a new session for this project."
+    "Start a new session for this project."
 
 @Composable
 private fun ConversationHeader(thread: CodexThread, state: MobidexUiState, model: AppViewModel) {

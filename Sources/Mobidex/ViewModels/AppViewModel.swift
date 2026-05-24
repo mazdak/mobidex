@@ -1541,21 +1541,22 @@ final class AppViewModel: ObservableObject {
                     input: input,
                     options: currentTurnOptions(cwd: thread.cwd)
                 )
+                let displayTurn = Self.turnForDisplay(turn, input: input)
                 guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
                     return
                 }
                 didSubmitInput = true
-                thread.status = turn.status == "inProgress" ? .active(flags: []) : .idle
-                upsert(turn: turn, in: &thread)
+                thread.status = displayTurn.status == "inProgress" ? .active(flags: []) : .idle
+                upsert(turn: displayTurn, in: &thread)
                 selectedThread = thread
                 liveItems = Self.visibleLiveItems(from: thread)
                 rebuildConversationFromLiveItems()
                 refreshQueuedTurnInputCount()
-                if turn.status == "inProgress" {
+                if displayTurn.status == "inProgress" {
                     scheduleActiveTurnRefresh(threadID: thread.id, scope: scope)
                     shouldHydrateThreadsAfterSend = false
                 }
-                if turn.status != "inProgress" {
+                if displayTurn.status != "inProgress" {
                     beginSelectedThreadLoad(threadID: thread.id)
                     defer {
                         endSelectedThreadLoad(threadID: thread.id, scope: scope)
@@ -2669,8 +2670,9 @@ final class AppViewModel: ObservableObject {
 
     private func hydrateConversation(from thread: CodexThread, cacheDetail: Bool = true) {
         sessionRefreshDetailLoadGeneration &+= 1
-        selectedThread = thread
-        liveItems = Self.visibleLiveItems(from: thread)
+        let displayThread = threadPreservingExistingUserMessages(thread, existing: selectedThread)
+        selectedThread = displayThread
+        liveItems = Self.visibleLiveItems(from: displayThread)
         if !cacheDetail {
             suppressNextConversationDetailCache = true
         }
@@ -2707,14 +2709,15 @@ final class AppViewModel: ObservableObject {
 
     private func applyActivePoll(_ polledThread: CodexThread) {
         let currentThread = selectedThread
-        selectedThread = polledThread
-        if let index = threads.firstIndex(where: { $0.id == polledThread.id }) {
-            threads[index] = polledThread
+        let displayThread = threadPreservingExistingUserMessages(polledThread, existing: currentThread)
+        selectedThread = displayThread
+        if let index = threads.firstIndex(where: { $0.id == displayThread.id }) {
+            threads[index] = displayThread
         }
         liveItems = Self.mergedLiveItems(
             current: liveItems,
-            polled: polledThread.turns.flatMap(\.items),
-            dropCurrentItemIDs: Self.currentUserEchoItemIDs(currentThread: currentThread, polledThread: polledThread)
+            polled: displayThread.turns.flatMap(\.items),
+            dropCurrentItemIDs: Self.currentUserEchoItemIDs(currentThread: currentThread, polledThread: displayThread)
         )
         rebuildConversationFromLiveItems()
         refreshQueuedTurnInputCount()
@@ -2905,20 +2908,105 @@ final class AppViewModel: ObservableObject {
     }
 
     private func upsert(turn: CodexTurn, in thread: inout CodexThread) {
+        let nextTurn = turnPreservingLocalUserEcho(turn, in: thread)
         if let index = thread.turns.firstIndex(where: { $0.id == turn.id }) {
-            thread.turns[index] = turn
+            thread.turns[index] = nextTurn
         } else {
-            thread.turns.append(turn)
+            thread.turns.append(nextTurn)
         }
     }
 
     private func upsertLiveItem(_ item: CodexThreadItem) {
+        if case .userMessage(_, let text) = item {
+            let localEchoIndex = liveItems.firstIndex(where: { existing in
+               if case .userMessage(let id, let existingText) = existing {
+                   return id.hasPrefix("local-user-") && existingText == text
+               }
+               return false
+            })
+            if let localEchoIndex {
+                let localEchoID = liveItems[localEchoIndex].id
+                liveItems[localEchoIndex] = item
+                replaceSelectedThreadItem(id: localEchoID, with: item)
+                rebuildConversationFromLiveItems()
+                return
+            }
+            replaceSelectedThreadLocalUserEcho(text: text, with: item)
+        }
         if let index = liveItems.firstIndex(where: { $0.id == item.id }) {
             liveItems[index] = item
         } else {
             liveItems.append(item)
         }
         rebuildConversationFromLiveItems()
+    }
+
+    private func replaceSelectedThreadItem(id itemID: String, with item: CodexThreadItem) {
+        guard var thread = selectedThread else { return }
+        var didReplace = false
+        thread.turns = thread.turns.map { turn in
+            guard turn.items.contains(where: { $0.id == itemID }) else {
+                return turn
+            }
+            didReplace = true
+            var turn = turn
+            turn.items = turn.items.map { $0.id == itemID ? item : $0 }
+            return turn
+        }
+        if didReplace {
+            selectedThread = thread
+        }
+    }
+
+    private func replaceSelectedThreadLocalUserEcho(text: String, with item: CodexThreadItem) {
+        guard var thread = selectedThread else { return }
+        for turnIndex in thread.turns.indices.reversed() {
+            guard let itemIndex = thread.turns[turnIndex].items.firstIndex(where: { existing in
+                if case .userMessage(let id, let existingText) = existing {
+                    return id.hasPrefix("local-user-") && existingText == text
+                }
+                return false
+            }) else {
+                continue
+            }
+            thread.turns[turnIndex].items[itemIndex] = item
+            selectedThread = thread
+            return
+        }
+    }
+
+    private func turnPreservingLocalUserEcho(_ turn: CodexTurn, in thread: CodexThread) -> CodexTurn {
+        guard !turn.items.contains(where: Self.isUserMessage),
+              let existing = thread.turns.first(where: { $0.id == turn.id }),
+              let userMessage = existing.items.first(where: Self.isUserMessage)
+        else {
+            return turn
+        }
+        var turn = turn
+        turn.items.insert(userMessage, at: 0)
+        return turn
+    }
+
+    private func threadPreservingExistingUserMessages(_ thread: CodexThread, existing: CodexThread?) -> CodexThread {
+        guard let existing else { return thread }
+        var thread = thread
+        thread.turns = thread.turns.map { turn in
+            guard !turn.items.contains(where: Self.isUserMessage),
+                  let existingTurn = existing.turns.first(where: { $0.id == turn.id }),
+                  let userMessage = existingTurn.items.first(where: Self.isUserMessage)
+            else {
+                return turn
+            }
+            var turn = turn
+            turn.items.insert(userMessage, at: 0)
+            return turn
+        }
+        return thread
+    }
+
+    private static func isUserMessage(_ item: CodexThreadItem) -> Bool {
+        if case .userMessage = item { return true }
+        return false
     }
 
     private func applyTurnStarted(_ turn: CodexTurn) {
@@ -3035,6 +3123,7 @@ final class AppViewModel: ObservableObject {
                 input: queuedInput.input,
                 options: currentTurnOptions(cwd: selectedThread?.cwd ?? scope.cwd)
             )
+            let displayTurn = Self.turnForDisplay(turn, input: queuedInput.input)
             queuedTurnSent = true
             guard currentThreadLoadScope == scope, selectedThreadID == threadID else {
                 return
@@ -3050,13 +3139,13 @@ final class AppViewModel: ObservableObject {
                     updatedAt: .now,
                     createdAt: .now
                 )
-            thread.status = turn.status == "inProgress" ? .active(flags: []) : .idle
-            upsert(turn: turn, in: &thread)
+            thread.status = displayTurn.status == "inProgress" ? .active(flags: []) : .idle
+            upsert(turn: displayTurn, in: &thread)
             selectedThread = thread
             liveItems = Self.visibleLiveItems(from: thread)
             rebuildConversationFromLiveItems()
 
-            if turn.status == "inProgress" {
+            if displayTurn.status == "inProgress" {
                 scheduleActiveTurnRefresh(threadID: thread.id, scope: scope)
             } else {
                 beginSelectedThreadLoad(threadID: thread.id)
@@ -3079,6 +3168,41 @@ final class AppViewModel: ObservableObject {
                   queuedTurnInputsByThreadID[threadID]?.isEmpty == false {
             await startNextQueuedTurnIfReady(threadID: threadID)
         }
+    }
+
+    private static func turnForDisplay(_ turn: CodexTurn, input: [CodexInputItem]) -> CodexTurn {
+        guard !turn.items.contains(where: { item in
+            if case .userMessage = item { return true }
+            return false
+        }),
+              let text = displayText(for: input)
+        else {
+            return turn
+        }
+        var turn = turn
+        turn.items.insert(.userMessage(id: "local-user-\(turn.id)", text: text), at: 0)
+        return turn
+    }
+
+    private static func displayText(for input: [CodexInputItem]) -> String? {
+        let text = input.map { item in
+            switch item {
+            case .text(let text):
+                return text
+            case .imageURL(let url):
+                return "[image: \(url)]"
+            case .localImage(let path):
+                return "[localImage: \(URL(fileURLWithPath: path).lastPathComponent)]"
+            case .skill(let name, _):
+                return "[skill: \(name)]"
+            case .mention(let name, _):
+                return "[mention: \(name)]"
+            }
+        }
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
+        return text.nonEmpty
     }
 
     private func dequeueQueuedInput(threadID: String) -> QueuedTurnInput? {

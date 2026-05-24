@@ -74,7 +74,7 @@ class ProjectLabelsTest {
         val loading = busyConnected.copy(isRefreshingSessions = true)
 
         assertEquals("No Sessions Yet", projectSessionEmptyTitle(busyConnected))
-        assertEquals("Loading Sessions...", projectSessionEmptyTitle(loading))
+        assertEquals("No Sessions Yet", projectSessionEmptyTitle(loading))
     }
 
     @Test

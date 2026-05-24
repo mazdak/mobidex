@@ -1166,7 +1166,7 @@ class AppViewModel(
                             threadID = thread.id,
                             input = input,
                             options = turnOptions(_state.value.selectedReasoningEffort, _state.value.selectedAccessMode, thread.cwd),
-                        )
+                        ).forDisplay(input)
                         if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                             return@runBusy
                         }
@@ -1893,13 +1893,14 @@ class AppViewModel(
     private fun hydrateConversation(thread: CodexThread) {
         sessionRefreshDetailLoadGeneration += 1
         val serverID = _state.value.selectedServerID
-        cacheThreadDetail(serverID, thread)
+        val displayThread = thread.preserveExistingUserMessages(_state.value.selectedThread)
+        cacheThreadDetail(serverID, displayThread)
         _state.update {
             it.copy(
-                selectedThreadID = thread.id,
-                selectedThread = thread,
-                conversationSections = thread.conversationSections(),
-                queuedTurnInputs = queuedTurnInputsByThreadID[thread.id].orEmpty(),
+                selectedThreadID = displayThread.id,
+                selectedThread = displayThread,
+                conversationSections = displayThread.conversationSections(),
+                queuedTurnInputs = queuedTurnInputsByThreadID[displayThread.id].orEmpty(),
             )
         }
         cacheThreads(currentThreadScopeCacheKey(), _state.value.threads)
@@ -1940,10 +1941,11 @@ class AppViewModel(
             } else {
                 didHydrate = true
                 sessionRefreshDetailLoadGeneration += 1
+                val displayThread = thread.preserveExistingUserMessages(state.selectedThread)
                 var next = state.copy(
-                    selectedThreadID = thread.id,
-                    selectedThread = thread,
-                    conversationSections = thread.conversationSections(),
+                    selectedThreadID = displayThread.id,
+                    selectedThread = displayThread,
+                    conversationSections = displayThread.conversationSections(),
                 )
                 if (clearPerThreadState) {
                     next = next.copy(
@@ -1957,7 +1959,7 @@ class AppViewModel(
             }
         }
         if (didHydrate) {
-            cacheThreadDetail(requestServerID, thread)
+            cacheThreadDetail(requestServerID, _state.value.selectedThread ?: thread)
         }
     }
 
@@ -1973,7 +1975,7 @@ class AppViewModel(
                     threadID = thread.id,
                     input = queuedInput.input,
                     options = turnOptions(state.selectedReasoningEffort, state.selectedAccessMode, thread.cwd),
-                )
+                ).forDisplay(queuedInput.input)
                 queuedTurnInputsByThreadID[threadID]?.removeFirstOrNull()
                 if (queuedTurnInputsByThreadID[threadID]?.isEmpty() == true) {
                     queuedTurnInputsByThreadID.remove(threadID)
@@ -2312,10 +2314,70 @@ private val List<ProjectRecord>.firstSavedProjectID: String?
     get() = firstOrNull { it.isSavedProject }?.id ?: firstOrNull()?.id
 
 private fun List<CodexTurn>.upsert(turn: CodexTurn): List<CodexTurn> =
-    if (any { it.id == turn.id }) map { if (it.id == turn.id) turn else it } else this + turn
+    if (any { it.id == turn.id }) {
+        map { existing -> if (existing.id == turn.id) turn.preserveLocalUserEcho(existing) else existing }
+    } else {
+        this + turn
+    }
+
+private fun CodexTurn.preserveLocalUserEcho(existing: CodexTurn): CodexTurn {
+    if (items.any { it is CodexThreadItem.UserMessage }) return this
+    val userMessage = existing.items.firstOrNull {
+        it is CodexThreadItem.UserMessage
+    } ?: return this
+    return copy(items = listOf(userMessage) + items)
+}
+
+private fun CodexTurn.forDisplay(input: List<CodexInputItem>): CodexTurn {
+    if (items.any { it is CodexThreadItem.UserMessage }) return this
+    val text = input.displayText() ?: return this
+    return copy(items = listOf(CodexThreadItem.UserMessage(id = "local-user-$id", text = text)) + items)
+}
+
+private fun List<CodexInputItem>.displayText(): String? =
+    mapNotNull { item ->
+        when (item) {
+            is CodexInputItem.Text -> item.text
+            is CodexInputItem.ImageUrl -> "[image: ${item.url}]"
+            is CodexInputItem.LocalImage -> "[localImage: ${File(item.path).name}]"
+            is CodexInputItem.Skill -> "[skill: ${item.name}]"
+            is CodexInputItem.Mention -> "[mention: ${item.name}]"
+        }.trim().ifEmpty { null }
+    }.joinToString("\n").ifEmpty { null }
+
+private fun CodexThread.preserveExistingUserMessages(existing: CodexThread?): CodexThread {
+    existing ?: return this
+    return copy(
+        turns = turns.map { turn ->
+            if (turn.items.any { it is CodexThreadItem.UserMessage }) {
+                turn
+            } else {
+                val userMessage = existing.turns.firstOrNull { it.id == turn.id }
+                    ?.items
+                    ?.firstOrNull { it is CodexThreadItem.UserMessage }
+                if (userMessage == null) turn else turn.copy(items = listOf(userMessage) + turn.items)
+            }
+        }
+    )
+}
 
 private fun List<CodexThreadItem>.upsert(item: CodexThreadItem): List<CodexThreadItem> =
-    if (any { it.id == item.id }) map { if (it.id == item.id) item else it } else this + item
+    if (item is CodexThreadItem.UserMessage) {
+        val localEchoIndex = indexOfFirst {
+            it is CodexThreadItem.UserMessage && it.id.startsWith("local-user-") && it.text == item.text
+        }
+        if (localEchoIndex >= 0) {
+            mapIndexed { index, existing -> if (index == localEchoIndex) item else existing }
+        } else if (any { it.id == item.id }) {
+            map { if (it.id == item.id) item else it }
+        } else {
+            this + item
+        }
+    } else if (any { it.id == item.id }) {
+        map { if (it.id == item.id) item else it }
+    } else {
+        this + item
+    }
 
 private fun CodexThread.mapItems(transform: (CodexThreadItem) -> CodexThreadItem): CodexThread =
     copy(turns = turns.map { turn -> turn.copy(items = turn.items.map(transform)) })
