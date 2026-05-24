@@ -15,6 +15,7 @@
 - [x] Review the `.zprofile` default/migration change with a subagent.
 - [x] Re-run shared, Android, Xcode, simulator, and SSH smoke validation for `.zprofile` migration.
 - [x] Run focused unit tests, shared/Android checks, xcodebuild tests, and simulator launch/screenshot validation.
+- [x] Publish TestFlight build `1.0 (30)` to internal testers and submit it for external beta review.
 - [x] Record final critical learnings and remaining risks.
 
 ## Swipe Right Steer Now
