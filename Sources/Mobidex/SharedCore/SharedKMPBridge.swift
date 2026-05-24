@@ -65,8 +65,8 @@ enum SharedKMPBridge {
         MobidexShared.RemoteServerLaunchDefaults.shared.codexPath
     }
 
-    static var defaultTargetShellRCFile: String {
-        MobidexShared.RemoteServerLaunchDefaults.shared.targetShellRCFile
+    static var defaultExecutionPath: String {
+        MobidexShared.RemoteServerLaunchDefaults.shared.executionPath
     }
 
     static var defaultSessionListCacheTTL: TimeInterval {
@@ -77,25 +77,25 @@ enum SharedKMPBridge {
         TimeInterval(MobidexShared.CodexSessionCachePolicy.shared.DEFAULT_THREAD_DETAIL_TTL_SECONDS)
     }
 
-    static func normalizedRemoteLaunchConfig(codexPath: String?, targetShellRCFile: String?) -> (codexPath: String, targetShellRCFile: String) {
+    static func normalizedRemoteLaunchConfig(codexPath: String?, executionPath: String?) -> (codexPath: String, executionPath: String) {
         let config = MobidexShared.RemoteServerLaunchDefaults.shared.normalize(
             codexPath: codexPath,
-            targetShellRCFile: targetShellRCFile
+            executionPath: executionPath
         )
-        return (codexPath: config.codexPath, targetShellRCFile: config.targetShellRCFile)
+        return (codexPath: config.codexPath, executionPath: config.executionPath)
     }
 
-    static func appServerCommand(codexPath: String, targetShellRCFile: String) -> String {
+    static func appServerCommand(codexPath: String, executionPath: String) -> String {
         MobidexShared.RemoteCodexAppServerCommand.shared.stdioCommand(
             codexPath: codexPath,
-            targetShellRCFile: targetShellRCFile
+            executionPath: executionPath
         )
     }
 
-    static func appServerProxyCommand(codexPath: String, targetShellRCFile: String) -> String {
+    static func appServerProxyCommand(codexPath: String, executionPath: String) -> String {
         MobidexShared.RemoteCodexAppServerCommand.shared.proxyCommand(
             codexPath: codexPath,
-            targetShellRCFile: targetShellRCFile
+            executionPath: executionPath
         )
     }
 
@@ -103,8 +103,8 @@ enum SharedKMPBridge {
         MobidexShared.RemoteCodexDiscovery.shared.shellCommand
     }
 
-    static func remoteCodexDiscoveryShellCommand(targetShellRCFile: String) -> String {
-        MobidexShared.RemoteCodexDiscovery.shared.shellCommand(targetShellRCFile: targetShellRCFile)
+    static func remoteCodexDiscoveryShellCommand(executionPath: String) -> String {
+        MobidexShared.RemoteCodexDiscovery.shared.shellCommand(executionPath: executionPath)
     }
 
     static var remoteCodexDiscoveryPythonSource: String {
@@ -121,6 +121,10 @@ enum SharedKMPBridge {
 
     static func remoteDirectoryCreateShellCommand(parentPath: String, folderName: String) -> String {
         MobidexShared.RemoteDirectoryBrowser.shared.createDirectoryShellCommand(parentPath: parentPath, folderName: folderName)
+    }
+
+    static func remoteDirectoryEnsureShellCommand(path: String) -> String {
+        MobidexShared.RemoteDirectoryBrowser.shared.ensureDirectoryShellCommand(path: path)
     }
 
     static func decodeRemoteDirectoryListing(from output: String) throws -> RemoteDirectoryListing {

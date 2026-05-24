@@ -424,6 +424,14 @@ class AppViewModel(
         }
     }
 
+    suspend fun createRemoteProjectDirectory(path: String): RemoteDirectoryListing {
+        val state = _state.value
+        val server = state.selectedServer ?: error("Select a server before creating folders.")
+        return withRemoteDirectoryBrowseTimeout {
+            sshService.ensureDirectory(path, server, credentialStore.loadCredential(server.id))
+        }
+    }
+
     fun loadCredential(serverID: String, onLoaded: (SSHCredential) -> Unit) {
         viewModelScope.launch { onLoaded(credentialStore.loadCredential(serverID)) }
     }
@@ -2298,10 +2306,10 @@ private fun MobidexUiState.clearingSessionScope(): MobidexUiState =
 
 internal fun List<ServerRecord>.clearingAppServerProjectState(): List<ServerRecord> =
     map { server ->
-        val launchConfig = RemoteServerLaunchDefaults.normalize(server.codexPath, server.targetShellRCFile)
+        val launchConfig = RemoteServerLaunchDefaults.normalize(server.codexPath, server.executionPath)
         server.copy(
             codexPath = launchConfig.codexPath,
-            targetShellRCFile = launchConfig.targetShellRCFile,
+            executionPath = launchConfig.executionPath,
             projects = server.projects.map { project ->
                 project.copy(
                     activeChatCount = 0,

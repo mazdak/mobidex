@@ -4,32 +4,26 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import mobidex.shared.RemoteServerLaunchDefaults
 
 class ServerModelsTest {
     @Test
     fun serverRecordNormalizationUsesSharedLaunchDefaults() {
-        for ((shellRCFile, expectedShellRCFile) in listOf(
-            "\$HOME/.zshrc" to "\$HOME/.zprofile",
-            "\${HOME}/.zshrc" to "\${HOME}/.zprofile",
-            "~/.zshrc" to "~/.zprofile",
-            "/Users/mazdak/.zshrc" to "/Users/mazdak/.zprofile",
-            "/home/user/.bashrc" to "/home/user/.bashrc",
-        )) {
-            val server = ServerRecord(
-                displayName = "  ",
-                host = " build.example.com ",
-                username = " mazdak ",
-                codexPath = " ",
-                targetShellRCFile = shellRCFile,
-                authMethod = ServerAuthMethod.Password,
-            ).normalized
+        val server = ServerRecord(
+            displayName = "  ",
+            host = " build.example.com ",
+            username = " mazdak ",
+            codexPath = " ",
+            executionPath = " \$HOME/bin:/usr/bin:\$PATH ",
+            authMethod = ServerAuthMethod.Password,
+        ).normalized
 
-            assertEquals("build.example.com", server.displayName)
-            assertEquals("build.example.com", server.host)
-            assertEquals("mazdak", server.username)
-            assertEquals("codex", server.codexPath)
-            assertEquals(expectedShellRCFile, server.targetShellRCFile)
-        }
+        assertEquals("build.example.com", server.displayName)
+        assertEquals("build.example.com", server.host)
+        assertEquals("mazdak", server.username)
+        assertEquals("codex", server.codexPath)
+        assertEquals("\$HOME/bin:/usr/bin:\$PATH", server.executionPath)
+        assertEquals(RemoteServerLaunchDefaults.executionPath, server.copy(executionPath = "").normalized.executionPath)
     }
 
     @Test

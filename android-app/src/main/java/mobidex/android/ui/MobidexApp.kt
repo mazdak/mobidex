@@ -2340,7 +2340,7 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
     var port by remember(original?.id) { mutableStateOf((original?.port ?: 22).toString()) }
     var username by remember(original?.id) { mutableStateOf(original?.username ?: "") }
     var codexPath by remember(original?.id) { mutableStateOf(original?.codexPath ?: RemoteServerLaunchDefaults.codexPath) }
-    var shellRc by remember(original?.id) { mutableStateOf(original?.targetShellRCFile ?: RemoteServerLaunchDefaults.targetShellRCFile) }
+    var executionPath by remember(original?.id) { mutableStateOf(original?.executionPath ?: RemoteServerLaunchDefaults.executionPath) }
     var authMethod by remember(original?.id) { mutableStateOf(original?.authMethod ?: ServerAuthMethod.Password) }
     var password by remember(original?.id) { mutableStateOf("") }
     var privateKey by remember(original?.id) { mutableStateOf("") }
@@ -2366,7 +2366,7 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
                 OutlinedTextField(host, { host = it }, label = { Text("Host") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(port, { port = it.filter(Char::isDigit) }, label = { Text("Port") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(username, { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(shellRc, { shellRc = it }, label = { Text("Target Shell Startup File") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(executionPath, { executionPath = it }, label = { Text("Execution Path") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(codexPath, { codexPath = it }, label = { Text("Full Path to Codex") }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = authMethod == ServerAuthMethod.Password, onClick = { authMethod = ServerAuthMethod.Password })
@@ -2421,7 +2421,7 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
                     port = port.toIntOrNull() ?: 22,
                     username = username,
                     codexPath = codexPath,
-                    targetShellRCFile = shellRc,
+                    executionPath = executionPath,
                     authMethod = authMethod,
                     projects = original?.projects.orEmpty(),
                     createdAtEpochSeconds = original?.createdAtEpochSeconds ?: java.time.Instant.now().epochSecond,
@@ -2444,16 +2444,47 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
 
 @Composable
 private fun ProjectAddDialog(model: AppViewModel, onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+    val scope = rememberCoroutineScope()
     val state by model.state.collectAsState()
     var path by remember { mutableStateOf("") }
     var discoverySearch by remember { mutableStateOf("") }
     var showingBrowser by remember { mutableStateOf(false) }
+    var pendingCreatePath by remember { mutableStateOf<String?>(null) }
+    var isValidating by remember { mutableStateOf(false) }
+    var validationMessage by remember { mutableStateOf<String?>(null) }
     val discoveredProjects = state.selectedServer?.projects.orEmpty()
         .filter { it.discovered && !it.isAdded }
         .filter {
             val query = discoverySearch.trim()
             query.isEmpty() || it.displayName.contains(query, ignoreCase = true) || it.path.contains(query, ignoreCase = true)
         }
+
+    fun addAfterRemoteCheck(rawPath: String) {
+        val trimmed = rawPath.trim()
+        validationMessage = null
+        if (trimmed.isEmpty()) {
+            validationMessage = "Enter a remote project path."
+            return
+        }
+        scope.launch {
+            isValidating = true
+            runCatching { model.listRemoteDirectories(trimmed) }
+                .onSuccess {
+                    onAdd(trimmed)
+                    onDismiss()
+                }
+                .onFailure { error ->
+                    val message = error.message ?: "Could not check remote folder."
+                    if (message.contains("no such file", ignoreCase = true) || message.contains("no such directory", ignoreCase = true)) {
+                        pendingCreatePath = trimmed
+                    } else {
+                        validationMessage = message
+                    }
+                }
+            isValidating = false
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Project") },
@@ -2498,18 +2529,44 @@ private fun ProjectAddDialog(model: AppViewModel, onDismiss: () -> Unit, onAdd: 
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    onAdd(project.path)
-                                    onDismiss()
+                                    addAfterRemoteCheck(project.path)
                                 },
                         )
                         HorizontalDivider()
                     }
                 }
+                validationMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
-        confirmButton = { Button(onClick = { onAdd(path) }) { Text("Add") } },
+        confirmButton = { Button(onClick = { addAfterRemoteCheck(path) }, enabled = !isValidating) { Text("Add") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+    pendingCreatePath?.let { createPath ->
+        AlertDialog(
+            onDismissRequest = { pendingCreatePath = null },
+            title = { Text("Create Remote Folder?") },
+            text = { Text("The remote folder does not exist. Create it before adding this project?") },
+            confirmButton = {
+                Button(onClick = {
+                    scope.launch {
+                        pendingCreatePath = null
+                        isValidating = true
+                        runCatching { model.createRemoteProjectDirectory(createPath) }
+                            .onSuccess {
+                                path = createPath
+                                onAdd(createPath)
+                                onDismiss()
+                            }
+                            .onFailure { error ->
+                                validationMessage = error.message ?: "Could not create remote folder."
+                            }
+                        isValidating = false
+                    }
+                }) { Text("Create") }
+            },
+            dismissButton = { TextButton(onClick = { pendingCreatePath = null }) { Text("Cancel") } },
+        )
+    }
     if (showingBrowser) {
         RemoteDirectoryBrowserDialog(
             model = model,

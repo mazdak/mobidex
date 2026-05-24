@@ -9,12 +9,12 @@ import mobidex.android.model.ServerRecord
 
 class AppViewModelStateMigrationTest {
     @Test
-    fun loadedServerStateMigratesZshRcAndClearsOpenSessionCounts() {
+    fun loadedServerStateNormalizesExecutionPathAndClearsOpenSessionCounts() {
         val server = ServerRecord(
             displayName = "Mac Home",
             host = "192.168.1.239",
             username = "mazdak",
-            targetShellRCFile = "~/.zshrc",
+            executionPath = " ~/bin:/usr/bin:\$PATH ",
             authMethod = ServerAuthMethod.Password,
             projects = listOf(
                 ProjectRecord(
@@ -27,7 +27,7 @@ class AppViewModelStateMigrationTest {
 
         val migrated = listOf(server).clearingAppServerProjectState().single()
 
-        assertEquals("~/.zprofile", migrated.targetShellRCFile)
+        assertEquals("~/bin:/usr/bin:\$PATH", migrated.executionPath)
         assertEquals("codex", migrated.codexPath)
         assertEquals(0, migrated.projects.single().activeChatCount)
         assertNull(migrated.projects.single().lastActiveChatAtEpochSeconds)

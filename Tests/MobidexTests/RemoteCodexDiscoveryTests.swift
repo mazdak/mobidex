@@ -4,7 +4,7 @@ import XCTest
 final class RemoteCodexDiscoveryTests: XCTestCase {
     func testShellCommandWrapsPythonDiscoveryScript() {
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.hasPrefix("export PATH="))
-        XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zprofile'"))
+        XCTAssertFalse(RemoteCodexDiscovery.shellCommand.contains("mobidex_shell_rc"))
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("python3 - <<'PY'\n"))
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.hasSuffix("\nPY\nmobidex_status=$?;exit $mobidex_status"))
         XCTAssertTrue((RemoteCodexDiscovery.shellCommand + ";exit\n").contains("\nPY\nmobidex_status=$?;exit $mobidex_status;exit\n"))
@@ -19,11 +19,10 @@ final class RemoteCodexDiscoveryTests: XCTestCase {
     }
 
     func testShellCommandUsesConfiguredLaunchEnvironment() {
-        let command = RemoteCodexDiscovery.shellCommand(targetShellRCFile: "~/custom rc")
+        let command = RemoteCodexDiscovery.shellCommand(executionPath: "~/bin:/usr/bin:$PATH")
 
         XCTAssertTrue(command.hasPrefix("export PATH="), command)
-        XCTAssertTrue(command.contains("mobidex_shell_rc=\"${HOME}\"/'custom rc';"), command)
-        XCTAssertTrue(command.contains(". \"$mobidex_shell_rc\" 1>&2 || true"), command)
+        XCTAssertTrue(command.contains("export PATH=\"${HOME}\"/'bin':'/usr/bin':\"$PATH\""), command)
         XCTAssertTrue(command.contains("export PATH="), command)
         XCTAssertTrue(command.contains("python3 - <<'PY'\n"), command)
     }

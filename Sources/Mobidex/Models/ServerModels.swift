@@ -21,7 +21,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     var port: Int
     var username: String
     var codexPath: String
-    var targetShellRCFile: String
+    var executionPath: String
     var authMethod: ServerAuthMethod
     var projects: [ProjectRecord]
     var createdAt: Date
@@ -34,7 +34,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         case port
         case username
         case codexPath
-        case targetShellRCFile
+        case executionPath
         case authMethod
         case projects
         case createdAt
@@ -48,7 +48,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         port: Int = 22,
         username: String,
         codexPath: String = SharedKMPBridge.defaultCodexPath,
-        targetShellRCFile: String = SharedKMPBridge.defaultTargetShellRCFile,
+        executionPath: String = SharedKMPBridge.defaultExecutionPath,
         authMethod: ServerAuthMethod,
         projects: [ProjectRecord] = [],
         createdAt: Date = .now,
@@ -61,10 +61,10 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         self.username = username
         let launchConfig = SharedKMPBridge.normalizedRemoteLaunchConfig(
             codexPath: codexPath,
-            targetShellRCFile: targetShellRCFile
+            executionPath: executionPath
         )
         self.codexPath = launchConfig.codexPath
-        self.targetShellRCFile = launchConfig.targetShellRCFile
+        self.executionPath = launchConfig.executionPath
         self.authMethod = authMethod
         self.projects = projects
         self.createdAt = createdAt
@@ -80,10 +80,10 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         username = try container.decode(String.self, forKey: .username)
         let launchConfig = SharedKMPBridge.normalizedRemoteLaunchConfig(
             codexPath: try container.decodeIfPresent(String.self, forKey: .codexPath),
-            targetShellRCFile: try container.decodeIfPresent(String.self, forKey: .targetShellRCFile)
+            executionPath: try container.decodeIfPresent(String.self, forKey: .executionPath)
         )
         codexPath = launchConfig.codexPath
-        targetShellRCFile = launchConfig.targetShellRCFile
+        executionPath = launchConfig.executionPath
         authMethod = try container.decode(ServerAuthMethod.self, forKey: .authMethod)
         projects = try container.decodeIfPresent([ProjectRecord].self, forKey: .projects) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -95,11 +95,11 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     }
 
     var appServerCommand: String {
-        SharedKMPBridge.appServerCommand(codexPath: codexPath, targetShellRCFile: targetShellRCFile)
+        SharedKMPBridge.appServerCommand(codexPath: codexPath, executionPath: executionPath)
     }
 
     var appServerProxyCommand: String {
-        SharedKMPBridge.appServerProxyCommand(codexPath: codexPath, targetShellRCFile: targetShellRCFile)
+        SharedKMPBridge.appServerProxyCommand(codexPath: codexPath, executionPath: executionPath)
     }
 }
 

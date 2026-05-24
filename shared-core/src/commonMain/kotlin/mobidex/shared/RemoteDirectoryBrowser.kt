@@ -73,6 +73,24 @@ PY
         """.trimIndent()
     }
 
+    fun ensureDirectoryShellCommand(path: String): String {
+        val encodedPath = JsonValueCodec.encode(jsonString(path))
+        return """
+python3 - <<'PY'
+import json
+import os
+
+requested_path = $encodedPath
+try:
+    created_path = os.path.realpath(os.path.expanduser(requested_path))
+    os.makedirs(created_path, exist_ok=True)
+    print(json.dumps({"path": created_path, "entries": []}))
+except Exception as error:
+    print(json.dumps({"path": requested_path, "entries": [], "error": str(error)}))
+PY
+        """.trimIndent()
+    }
+
     @Throws(RemoteDirectoryBrowserException::class)
     fun decodeListing(output: String): RemoteDirectoryListing {
         try {

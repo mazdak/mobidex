@@ -22,7 +22,7 @@ enum MobidexLaunchSmoke {
                 port: config.port,
                 username: config.username,
                 codexPath: config.codexPath,
-                targetShellRCFile: config.targetShellRCFile,
+                executionPath: config.executionPath,
                 authMethod: config.authMethod,
                 projects: [ProjectRecord(path: config.cwd)]
             )
@@ -249,7 +249,7 @@ private struct SmokeConfig {
     var port: Int
     var username: String
     var codexPath: String
-    var targetShellRCFile: String
+    var executionPath: String
     var authMethod: ServerAuthMethod
     var mode: String
     var cwd: String
@@ -312,10 +312,10 @@ private struct SmokeConfig {
         self.username = username
         let launchConfig = SharedKMPBridge.normalizedRemoteLaunchConfig(
             codexPath: environment["MOBIDEX_SMOKE_CODEX_PATH"],
-            targetShellRCFile: environment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"]
+            executionPath: environment["MOBIDEX_SMOKE_EXECUTION_PATH"]
         )
         self.codexPath = launchConfig.codexPath
-        self.targetShellRCFile = launchConfig.targetShellRCFile
+        self.executionPath = launchConfig.executionPath
         self.authMethod = parsedAuthMethod
         self.mode = parsedMode
         self.cwd = cwd

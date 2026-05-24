@@ -6,6 +6,8 @@ struct ProjectAddView: View {
     @State private var path = ""
     @State private var discoverySearchText = ""
     @State private var validationMessage: String?
+    @State private var pendingCreatePath: String?
+    @State private var isValidatingPath = false
     @State private var showingBrowser = false
 
     var body: some View {
@@ -16,7 +18,7 @@ struct ProjectAddView: View {
                         TextField("~/project", text: $path)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                            .onSubmit(add)
+                            .onSubmit { Task { await add() } }
                         Button {
                             showingBrowser = true
                         } label: {
@@ -58,7 +60,7 @@ struct ProjectAddView: View {
                         ForEach(discoveredProjects) { project in
                             Button {
                                 path = project.path
-                                add()
+                                Task { await add() }
                             } label: {
                                 ProjectRow(project: project)
                             }
@@ -82,12 +84,23 @@ struct ProjectAddView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
-                        add()
+                        Task { await add() }
                     }
+                    .disabled(isValidatingPath)
                 }
             }
             .onChange(of: path) { _, _ in
                 validationMessage = nil
+            }
+            .alert("Create Remote Folder?", isPresented: createFolderAlertBinding) {
+                Button("Cancel", role: .cancel) {
+                    pendingCreatePath = nil
+                }
+                Button("Create") {
+                    Task { await createPendingFolderAndAdd() }
+                }
+            } message: {
+                Text("The remote folder does not exist. Create it before adding this project?")
             }
             .sheet(isPresented: $showingBrowser) {
                 RemoteDirectoryBrowserView(
@@ -100,11 +113,55 @@ struct ProjectAddView: View {
         }
     }
 
-    private func add() {
-        if model.addProject(path: path) {
+    private var createFolderAlertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingCreatePath != nil },
+            set: { if !$0 { pendingCreatePath = nil } }
+        )
+    }
+
+    @MainActor
+    private func add(skipRemoteCheck: Bool = false) async {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            validationMessage = "Enter a remote project path."
+            return
+        }
+        if !skipRemoteCheck {
+            isValidatingPath = true
+            defer { isValidatingPath = false }
+            do {
+                _ = try await model.listRemoteDirectories(path: trimmed)
+            } catch {
+                let message = error.localizedDescription
+                if message.localizedCaseInsensitiveContains("no such file") ||
+                    message.localizedCaseInsensitiveContains("no such directory") {
+                    pendingCreatePath = trimmed
+                } else {
+                    validationMessage = message
+                }
+                return
+            }
+        }
+        if model.addProject(path: trimmed) {
             dismiss()
         } else {
             validationMessage = model.statusMessage ?? "Mobidex could not save this project."
+        }
+    }
+
+    @MainActor
+    private func createPendingFolderAndAdd() async {
+        guard let path = pendingCreatePath else { return }
+        pendingCreatePath = nil
+        isValidatingPath = true
+        defer { isValidatingPath = false }
+        do {
+            _ = try await model.createRemoteProjectDirectory(path: path)
+            self.path = path
+            await add(skipRemoteCheck: true)
+        } catch {
+            validationMessage = error.localizedDescription
         }
     }
 

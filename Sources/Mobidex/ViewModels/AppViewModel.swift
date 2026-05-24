@@ -634,10 +634,10 @@ final class AppViewModel: ObservableObject {
         }
         let launchConfig = SharedKMPBridge.normalizedRemoteLaunchConfig(
             codexPath: next.codexPath,
-            targetShellRCFile: next.targetShellRCFile
+            executionPath: next.executionPath
         )
         next.codexPath = launchConfig.codexPath
-        next.targetShellRCFile = launchConfig.targetShellRCFile
+        next.executionPath = launchConfig.executionPath
         next.updatedAt = .now
 
         do {
@@ -827,6 +827,16 @@ final class AppViewModel: ObservableObject {
                 server: selectedServer,
                 credential: credential
             )
+        }
+    }
+
+    func createRemoteProjectDirectory(path: String) async throws -> RemoteDirectoryListing {
+        guard let selectedServer else {
+            throw SSHServiceError.remoteDirectoryBrowseFailed("Select a server before creating folders.")
+        }
+        let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
+        return try await withTimeout(seconds: 20) {
+            try await self.sshService.ensureDirectory(path: path, server: selectedServer, credential: credential)
         }
     }
 

@@ -2,69 +2,55 @@ package mobidex.shared
 
 data class RemoteServerLaunchConfig(
     val codexPath: String = RemoteServerLaunchDefaults.codexPath,
-    val targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile,
+    val executionPath: String = RemoteServerLaunchDefaults.executionPath,
 )
 
 object RemoteServerLaunchDefaults {
     const val codexPath: String = "codex"
-    const val targetShellRCFile: String = "\$HOME/.zprofile"
+    const val executionPath: String = "\$HOME/.bun/bin:\$HOME/.cargo/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
 
-    fun normalize(codexPath: String?, targetShellRCFile: String?): RemoteServerLaunchConfig =
+    fun normalize(codexPath: String?, executionPath: String?): RemoteServerLaunchConfig =
         RemoteServerLaunchConfig(
             codexPath = codexPath?.trim().orEmpty().ifEmpty { this.codexPath },
-            targetShellRCFile = normalizeTargetShellRCFile(targetShellRCFile),
+            executionPath = executionPath?.trim().orEmpty().ifEmpty { this.executionPath },
         )
-
-    private fun normalizeTargetShellRCFile(targetShellRCFile: String?): String {
-        val trimmed = targetShellRCFile?.trim().orEmpty().ifEmpty { this.targetShellRCFile }
-        return trimmed.replaceZshRcWithZprofile()
-    }
-
-    private fun String.replaceZshRcWithZprofile(): String {
-        val pathForMatch = trimEnd('/', '\\')
-        return if (pathForMatch.replace('\\', '/').substringAfterLast('/') == ".zshrc") {
-            pathForMatch.dropLast(".zshrc".length) + ".zprofile"
-        } else {
-            this
-        }
-    }
 }
 
 object RemoteCodexAppServerCommand {
-    fun environmentBootstrapCommand(targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile): String =
+    fun environmentBootstrapCommand(executionPath: String = RemoteServerLaunchDefaults.executionPath): String =
         shellEnvironmentBootstrapCommand(
             RemoteServerLaunchDefaults.normalize(
                 codexPath = null,
-                targetShellRCFile = targetShellRCFile,
-            ).targetShellRCFile
+                executionPath = executionPath,
+            ).executionPath
         )
 
-    fun stdioCommand(codexPath: String = RemoteServerLaunchDefaults.codexPath, targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile): String {
-        val config = RemoteServerLaunchDefaults.normalize(codexPath, targetShellRCFile)
+    fun stdioCommand(codexPath: String = RemoteServerLaunchDefaults.codexPath, executionPath: String = RemoteServerLaunchDefaults.executionPath): String {
+        val config = RemoteServerLaunchDefaults.normalize(codexPath, executionPath)
         return if (config.codexPath == RemoteServerLaunchDefaults.codexPath) {
             listOf(
-                shellEnvironmentBootstrapCommand(config.targetShellRCFile),
+                shellEnvironmentBootstrapCommand(config.executionPath),
                 defaultStdioCommand(),
             ).joinToString("; ")
         } else {
             listOf(
-                shellEnvironmentBootstrapCommand(config.targetShellRCFile),
+                shellEnvironmentBootstrapCommand(config.executionPath),
                 "${config.codexPath.shellQuotedExecutablePath()} app-server --listen stdio://",
             ).joinToString("; ")
         }
     }
 
-    fun proxyCommand(codexPath: String = RemoteServerLaunchDefaults.codexPath, targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile): String {
-        val config = RemoteServerLaunchDefaults.normalize(codexPath, targetShellRCFile)
+    fun proxyCommand(codexPath: String = RemoteServerLaunchDefaults.codexPath, executionPath: String = RemoteServerLaunchDefaults.executionPath): String {
+        val config = RemoteServerLaunchDefaults.normalize(codexPath, executionPath)
         return if (config.codexPath == RemoteServerLaunchDefaults.codexPath) {
             listOf(
-                shellEnvironmentBootstrapCommand(config.targetShellRCFile),
+                shellEnvironmentBootstrapCommand(config.executionPath),
                 codexResolutionCommand(),
                 appServerProxyScript(codexExecutable = "\"\$codex_bin\""),
             ).joinToString("; ")
         } else {
             listOf(
-                shellEnvironmentBootstrapCommand(config.targetShellRCFile),
+                shellEnvironmentBootstrapCommand(config.executionPath),
                 "codex_bin=${config.codexPath.shellQuotedExecutablePath()}",
                 appServerProxyScript(codexExecutable = "\"\$codex_bin\""),
             ).joinToString("; ")
@@ -76,8 +62,7 @@ object RemoteCodexAppServerCommand {
         return listOf(
             "if command -v codex >/dev/null 2>&1; then exec codex app-server --listen stdio://; fi",
             "for candidate in $candidateList; do if [ -x \"\$candidate\" ]; then exec \"\$candidate\" app-server --listen stdio://; fi; done",
-            "for shell in zsh bash; do if command -v \"\$shell\" >/dev/null 2>&1; then resolved=\"\$(\"\$shell\" -lc 'command -v codex' 2>/dev/null || true)\"; if [ -n \"\$resolved\" ] && [ -x \"\$resolved\" ]; then exec \"\$resolved\" app-server --listen stdio://; fi; fi; done",
-            "echo 'codex executable not found. Set Codex Binary Path to the full remote codex executable, for example ~/.bun/bin/codex.' >&2",
+            "echo 'codex executable not found. Set Execution Path or Codex Binary Path to the remote codex executable location.' >&2",
             "exit 127",
         ).joinToString("; ")
     }
@@ -88,8 +73,7 @@ object RemoteCodexAppServerCommand {
             "codex_bin=\"\"",
             "if command -v codex >/dev/null 2>&1; then codex_bin=\"\$(command -v codex)\"; fi",
             "if [ -z \"\$codex_bin\" ]; then for candidate in $candidateList; do if [ -x \"\$candidate\" ]; then codex_bin=\"\$candidate\"; break; fi; done; fi",
-            "if [ -z \"\$codex_bin\" ]; then for shell in zsh bash; do if command -v \"\$shell\" >/dev/null 2>&1; then resolved=\"\$(\"\$shell\" -lc 'command -v codex' 2>/dev/null || true)\"; if [ -n \"\$resolved\" ] && [ -x \"\$resolved\" ]; then codex_bin=\"\$resolved\"; break; fi; fi; done; fi",
-            "if [ -z \"\$codex_bin\" ]; then echo 'codex executable not found. Set Codex Binary Path to the full remote codex executable, for example ~/.bun/bin/codex.' >&2; exit 127; fi",
+            "if [ -z \"\$codex_bin\" ]; then echo 'codex executable not found. Set Execution Path or Codex Binary Path to the remote codex executable location.' >&2; exit 127; fi",
         ).joinToString("; ")
     }
 
@@ -105,17 +89,8 @@ object RemoteCodexAppServerCommand {
             "exec $codexExecutable app-server proxy",
         ).joinToString("; ")
 
-    private fun shellEnvironmentBootstrapCommand(targetShellRCFile: String): String =
-        listOf(
-            "export PATH=\"\$HOME/.bun/bin:\$HOME/.cargo/bin:\$HOME/.local/bin:\$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$PATH\"",
-            targetShellRCBootstrapCommand(targetShellRCFile),
-        ).joinToString("; ")
-
-    private fun targetShellRCBootstrapCommand(targetShellRCFile: String): String {
-        val rcFile = targetShellRCFile.trim()
-        if (rcFile.isEmpty()) return "true"
-        return "mobidex_shell_rc=${rcFile.shellQuotedRemotePath()}; if [ -f \"\$mobidex_shell_rc\" ]; then . \"\$mobidex_shell_rc\" 1>&2 || true; fi"
-    }
+    private fun shellEnvironmentBootstrapCommand(executionPath: String): String =
+        "export PATH=${executionPath.shellQuotedPathList()}"
 
     private val codexCandidates = listOf(
         "\$HOME/.bun/bin/codex",
@@ -137,11 +112,14 @@ private fun String.shellQuotedExecutablePath(): String =
         else -> shellQuoted()
     }
 
-private fun String.shellQuotedRemotePath(): String =
-    when {
-        this == "\$HOME" || this == "\${HOME}" || this == "~" -> "\"\${HOME}\""
-        startsWith("\$HOME/") -> "\"\${HOME}\"/${drop(6).shellQuoted()}"
-        startsWith("\${HOME}/") -> "\"\${HOME}\"/${drop(8).shellQuoted()}"
-        startsWith("~/") -> "\"\${HOME}\"/${drop(2).shellQuoted()}"
-        else -> shellQuoted()
+private fun String.shellQuotedPathList(): String =
+    split(':').joinToString(":") { segment ->
+        when {
+            segment == "\$PATH" || segment == "\${PATH}" -> "\"\$PATH\""
+            segment == "\$HOME" || segment == "\${HOME}" || segment == "~" -> "\"\${HOME}\""
+            segment.startsWith("\$HOME/") -> "\"\${HOME}\"/${segment.drop(6).shellQuoted()}"
+            segment.startsWith("\${HOME}/") -> "\"\${HOME}\"/${segment.drop(8).shellQuoted()}"
+            segment.startsWith("~/") -> "\"\${HOME}\"/${segment.drop(2).shellQuoted()}"
+            else -> segment.shellQuoted()
+        }
     }

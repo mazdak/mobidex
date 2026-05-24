@@ -49,6 +49,7 @@ interface MobidexSshService {
     suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject>
     suspend fun listDirectories(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
     suspend fun createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
+    suspend fun ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing
     suspend fun createCodexWorktree(projectPath: String, server: ServerRecord, credential: SSHCredential): String
     suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String>
     suspend fun openAppServer(server: ServerRecord, credential: SSHCredential): CodexAppServerClient
@@ -72,7 +73,7 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
     override suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject> =
         withClient(server, credential) { client ->
             RemoteCodexDiscovery.decodeProjects(
-                client.execString(RemoteCodexDiscovery.shellCommand(targetShellRCFile = server.targetShellRCFile))
+                client.execString(RemoteCodexDiscovery.shellCommand(executionPath = server.executionPath))
             )
         }
 
@@ -84,6 +85,11 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
     override suspend fun createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =
         withClient(server, credential) { client ->
             RemoteDirectoryBrowser.decodeListing(client.execString(RemoteDirectoryBrowser.createDirectoryShellCommand(parentPath, folderName)))
+        }
+
+    override suspend fun ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =
+        withClient(server, credential) { client ->
+            RemoteDirectoryBrowser.decodeListing(client.execString(RemoteDirectoryBrowser.ensureDirectoryShellCommand(path)))
         }
 
     override suspend fun createCodexWorktree(projectPath: String, server: ServerRecord, credential: SSHCredential): String =

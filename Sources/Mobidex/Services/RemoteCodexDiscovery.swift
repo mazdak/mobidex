@@ -5,8 +5,8 @@ enum RemoteCodexDiscovery {
         SharedKMPBridge.remoteCodexDiscoveryShellCommand
     }
 
-    static func shellCommand(targetShellRCFile: String) -> String {
-        SharedKMPBridge.remoteCodexDiscoveryShellCommand(targetShellRCFile: targetShellRCFile)
+    static func shellCommand(executionPath: String) -> String {
+        SharedKMPBridge.remoteCodexDiscoveryShellCommand(executionPath: executionPath)
     }
 
     static var pythonSource: String {

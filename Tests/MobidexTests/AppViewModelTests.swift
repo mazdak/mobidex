@@ -5843,6 +5843,10 @@ private final class BlockingOpenSSHService: SSHService, @unchecked Sendable {
         RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
     }
 
+    func ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: path, entries: [])
+    }
+
     func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {
         "\(projectPath)-worktree"
     }
@@ -5992,6 +5996,10 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
     }
 
+    func ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: path, entries: [])
+    }
+
     var stagedLocalPaths: [String] {
         lock.withLock { stagedLocalPathBatches.flatMap { $0 } }
     }
@@ -6100,6 +6108,10 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
 
     func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
         RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
+    }
+
+    func ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: path, entries: [])
     }
 
     func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {

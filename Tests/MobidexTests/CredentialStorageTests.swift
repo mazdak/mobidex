@@ -83,21 +83,21 @@ final class CredentialStorageTests: XCTestCase {
             host: "host",
             username: "user",
             codexPath: "/home/user/bin/codex'special",
-            targetShellRCFile: "/home/user/.config/zsh/env file",
+            executionPath: "$HOME/bin:/custom/bin:$PATH",
             authMethod: .password
         )
 
         XCTAssertEqual(
             server.appServerCommand,
-            "export PATH=\"$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; mobidex_shell_rc='/home/user/.config/zsh/env file'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2 || true; fi; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://"
+            "export PATH=\"${HOME}\"/'bin':'/custom/bin':\"$PATH\"; '/home/user/bin/codex'\"'\"'special' app-server --listen stdio://"
         )
     }
 
-    func testServerRecordDefaultsAndDecodesTargetShellRCFile() throws {
+    func testServerRecordDefaultsAndDecodesExecutionPath() throws {
         let server = ServerRecord(displayName: "Server", host: "host", username: "user", authMethod: .password)
-        XCTAssertEqual(server.targetShellRCFile, "$HOME/.zprofile")
+        XCTAssertEqual(server.executionPath, SharedKMPBridge.defaultExecutionPath)
         XCTAssertTrue(server.appServerProxyCommand.hasPrefix("export PATH="))
-        XCTAssertTrue(server.appServerProxyCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zprofile'"))
+        XCTAssertFalse(server.appServerProxyCommand.contains("mobidex_shell_rc"))
 
         let legacyPayload = Data("""
         {
@@ -115,9 +115,9 @@ final class CredentialStorageTests: XCTestCase {
         }
         """.utf8)
         let decoded = try JSONDecoder().decode(ServerRecord.self, from: legacyPayload)
-        XCTAssertEqual(decoded.targetShellRCFile, "$HOME/.zprofile")
+        XCTAssertEqual(decoded.executionPath, SharedKMPBridge.defaultExecutionPath)
 
-        let legacyDefaultPayload = Data("""
+        let executionPathPayload = Data("""
         {
           "id": "00000000-0000-0000-0000-000000000001",
           "displayName": "Legacy",
@@ -125,42 +125,16 @@ final class CredentialStorageTests: XCTestCase {
           "port": 22,
           "username": "user",
           "codexPath": "codex",
-          "targetShellRCFile": "$HOME/.zshrc",
+          "executionPath": "$HOME/bin:/usr/bin:$PATH",
           "authMethod": "password",
           "projects": [],
           "createdAt": 1770000000,
           "updatedAt": 1770000000
         }
         """.utf8)
-        let decodedLegacyDefault = try JSONDecoder().decode(ServerRecord.self, from: legacyDefaultPayload)
-        XCTAssertEqual(decodedLegacyDefault.targetShellRCFile, "$HOME/.zprofile")
-
-        for (shellRCFile, expectedShellRCFile) in [
-            ("${HOME}/.zshrc", "${HOME}/.zprofile"),
-            ("~/.zshrc", "~/.zprofile"),
-            ("/Users/mazdak/.zshrc", "/Users/mazdak/.zprofile"),
-            ("/home/user/.bashrc", "/home/user/.bashrc")
-        ] {
-            let payload = Data("""
-            {
-              "id": "00000000-0000-0000-0000-000000000001",
-              "displayName": "Legacy",
-              "host": "host",
-              "port": 22,
-              "username": "user",
-              "codexPath": "codex",
-              "targetShellRCFile": "\(shellRCFile)",
-              "authMethod": "password",
-              "projects": [],
-              "createdAt": 1770000000,
-              "updatedAt": 1770000000
-            }
-            """.utf8)
-            let decodedShellRC = try JSONDecoder().decode(ServerRecord.self, from: payload)
-            XCTAssertEqual(decodedShellRC.targetShellRCFile, expectedShellRCFile, shellRCFile)
-            XCTAssertTrue(decodedShellRC.appServerProxyCommand.hasPrefix("export PATH="), shellRCFile)
-            XCTAssertTrue(decodedShellRC.appServerProxyCommand.contains("mobidex_shell_rc"), shellRCFile)
-        }
+        let decodedExecutionPath = try JSONDecoder().decode(ServerRecord.self, from: executionPathPayload)
+        XCTAssertEqual(decodedExecutionPath.executionPath, "$HOME/bin:/usr/bin:$PATH")
+        XCTAssertTrue(decodedExecutionPath.appServerProxyCommand.contains("export PATH=\"${HOME}\"/'bin':'/usr/bin':\"$PATH\""))
     }
 
     func testServerRecordDefaultAppServerCommandResolvesCodexExecutable() {
@@ -173,12 +147,12 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertTrue(server.appServerCommand.contains("command -v codex"))
         XCTAssertTrue(server.appServerCommand.hasPrefix("export PATH="))
-        XCTAssertTrue(server.appServerCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zprofile'"))
+        XCTAssertFalse(server.appServerCommand.contains("mobidex_shell_rc"))
         XCTAssertTrue(server.appServerCommand.contains("$HOME/.bun/bin/codex"))
         XCTAssertTrue(server.appServerCommand.contains("/opt/homebrew/opt/node@22/bin"))
-        XCTAssertTrue(server.appServerCommand.contains("zsh bash"))
+        XCTAssertFalse(server.appServerCommand.contains("zsh bash"))
         XCTAssertTrue(server.appServerCommand.contains("app-server --listen stdio://"))
-        XCTAssertTrue(server.appServerCommand.contains("Set Codex Binary Path"))
+        XCTAssertTrue(server.appServerCommand.contains("Set Execution Path or Codex Binary Path"))
     }
 
     func testServerRecordDefaultProxyCommandUsesOfficialControlSocket() {
@@ -191,7 +165,7 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertTrue(server.appServerProxyCommand.contains("command -v codex"))
         XCTAssertTrue(server.appServerProxyCommand.hasPrefix("export PATH="))
-        XCTAssertTrue(server.appServerProxyCommand.contains("mobidex_shell_rc=\"${HOME}\"/'.zprofile'"))
+        XCTAssertFalse(server.appServerProxyCommand.contains("mobidex_shell_rc"))
         XCTAssertTrue(server.appServerProxyCommand.contains("app-server proxy --help"))
         XCTAssertTrue(server.appServerProxyCommand.contains("default_socket=\"${CODEX_HOME:-$HOME/.codex}/app-server-control/app-server-control.sock\""))
         XCTAssertTrue(server.appServerProxyCommand.contains("app-server-control/app-server-control.sock"))
@@ -215,7 +189,7 @@ final class CredentialStorageTests: XCTestCase {
 
         XCTAssertEqual(
             server.appServerCommand,
-            "export PATH=\"$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.npm-global/bin:/opt/homebrew/opt/node@22/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH\"; mobidex_shell_rc=\"${HOME}\"/'.zprofile'; if [ -f \"$mobidex_shell_rc\" ]; then . \"$mobidex_shell_rc\" 1>&2 || true; fi; \"${HOME}\"/'.bun/bin/codex' app-server --listen stdio://"
+            "export PATH=\"${HOME}\"/'.bun/bin':\"${HOME}\"/'.cargo/bin':\"${HOME}\"/'.local/bin':\"${HOME}\"/'.npm-global/bin':'/opt/homebrew/opt/node@22/bin':'/opt/homebrew/bin':'/usr/local/bin':'/usr/bin':'/bin':\"$PATH\"; \"${HOME}\"/'.bun/bin/codex' app-server --listen stdio://"
         )
     }
 
@@ -327,6 +301,9 @@ private struct CredentialStorageStubSSHService: SSHService {
     }
     func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
         RemoteDirectoryListing(path: "\(parentPath)/\(folderName)", entries: [])
+    }
+    func ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        RemoteDirectoryListing(path: path, entries: [])
     }
     func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {
         "\(projectPath)-worktree"

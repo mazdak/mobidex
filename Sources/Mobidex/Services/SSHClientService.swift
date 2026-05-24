@@ -115,12 +115,12 @@ struct SSHDiagnosticReport: Equatable {
         case "remote command":
             return SSHDiagnosticDoctorNote(
                 title: "Failed at remote command.",
-                detail: "SSH connected and authenticated, but the remote readiness command did not complete. Check the user's shell startup files, PATH, permissions, and whether the SSH session can run non-interactive commands."
+                detail: "SSH connected and authenticated, but the remote readiness command did not complete. Check the configured Execution Path, permissions, and whether the SSH session can run non-interactive commands."
             )
         case "app-server":
             return SSHDiagnosticDoctorNote(
                 title: "Failed at app-server startup.",
-                detail: "SSH works, but Codex app-server did not initialize. Check the configured Codex path, shell startup file, and whether `codex app-server --listen unix://` and `codex app-server proxy` run successfully in the same account."
+                detail: "SSH works, but Codex app-server did not initialize. Check the configured Execution Path or Codex path, and whether `codex app-server --listen unix://` and `codex app-server proxy` run successfully in the same account."
             )
         default:
             return nil
@@ -174,6 +174,7 @@ protocol SSHService: Sendable {
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject]
     func listDirectories(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
     func createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
+    func ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing
     func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String]
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient
@@ -349,7 +350,7 @@ final class CitadelSSHService: TerminalSSHService {
     func discoverProjects(server: ServerRecord, credential: SSHCredential) async throws -> [RemoteProject] {
         try await withClient(server: server, credential: credential) { client in
             let output = try await client.executeCommand(
-                RemoteCodexDiscovery.shellCommand(targetShellRCFile: server.targetShellRCFile),
+                RemoteCodexDiscovery.shellCommand(executionPath: server.executionPath),
                 maxResponseSize: 2_000_000,
                 mergeStreams: false,
                 inShell: true
@@ -374,6 +375,18 @@ final class CitadelSSHService: TerminalSSHService {
         try await withClient(server: server, credential: credential) { client in
             let output = try await client.executeCommand(
                 SharedKMPBridge.remoteDirectoryCreateShellCommand(parentPath: parentPath, folderName: folderName),
+                maxResponseSize: 1_000_000,
+                mergeStreams: false,
+                inShell: true
+            )
+            return try SharedKMPBridge.decodeRemoteDirectoryListing(from: String(buffer: output))
+        }
+    }
+
+    func ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential) async throws -> RemoteDirectoryListing {
+        try await withClient(server: server, credential: credential) { client in
+            let output = try await client.executeCommand(
+                SharedKMPBridge.remoteDirectoryEnsureShellCommand(path: path),
                 maxResponseSize: 1_000_000,
                 mergeStreams: false,
                 inShell: true

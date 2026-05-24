@@ -111,8 +111,8 @@ final class MobidexUITests: XCTestCase {
         if let expectedText = environment["MOBIDEX_UI_SMOKE_EXPECTED_TEXT"] {
             launchEnvironment["MOBIDEX_SMOKE_EXPECTED_TEXT"] = expectedText
         }
-        if let targetShellRCFile = environment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"] {
-            launchEnvironment["MOBIDEX_SMOKE_TARGET_SHELL_RC_FILE"] = targetShellRCFile
+        if let executionPath = environment["MOBIDEX_SMOKE_EXECUTION_PATH"] {
+            launchEnvironment["MOBIDEX_SMOKE_EXECUTION_PATH"] = executionPath
         }
         if let serverID = environment["MOBIDEX_SMOKE_SERVER_ID"] {
             launchEnvironment["MOBIDEX_SMOKE_SERVER_ID"] = serverID

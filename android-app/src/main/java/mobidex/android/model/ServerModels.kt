@@ -20,7 +20,7 @@ data class ServerRecord(
     val port: Int = 22,
     val username: String,
     val codexPath: String = RemoteServerLaunchDefaults.codexPath,
-    val targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile,
+    val executionPath: String = RemoteServerLaunchDefaults.executionPath,
     val authMethod: ServerAuthMethod,
     val projects: List<ProjectRecord> = emptyList(),
     val createdAtEpochSeconds: Long = Instant.now().epochSecond,
@@ -31,13 +31,13 @@ data class ServerRecord(
 
     val normalized: ServerRecord
         get() {
-            val launchConfig = RemoteServerLaunchDefaults.normalize(codexPath, targetShellRCFile)
+            val launchConfig = RemoteServerLaunchDefaults.normalize(codexPath, executionPath)
             return copy(
                 displayName = displayName.trim().ifEmpty { host.trim() },
                 host = host.trim(),
                 username = username.trim(),
                 codexPath = launchConfig.codexPath,
-                targetShellRCFile = launchConfig.targetShellRCFile,
+                executionPath = launchConfig.executionPath,
                 updatedAtEpochSeconds = Instant.now().epochSecond,
             )
         }
@@ -45,7 +45,7 @@ data class ServerRecord(
     val appServerProxyCommand: String
         get() = RemoteCodexAppServerCommand.proxyCommand(
             codexPath = codexPath,
-            targetShellRCFile = targetShellRCFile,
+            executionPath = executionPath,
         )
 }
 

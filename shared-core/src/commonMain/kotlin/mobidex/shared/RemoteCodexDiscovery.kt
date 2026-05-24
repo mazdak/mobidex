@@ -250,9 +250,9 @@ print(json.dumps(result[:MAX_PROJECTS]))
     val shellCommand: String
         get() = shellCommand()
 
-    fun shellCommand(targetShellRCFile: String = RemoteServerLaunchDefaults.targetShellRCFile): String =
+    fun shellCommand(executionPath: String = RemoteServerLaunchDefaults.executionPath): String =
         listOf(
-            RemoteCodexAppServerCommand.environmentBootstrapCommand(targetShellRCFile),
+            RemoteCodexAppServerCommand.environmentBootstrapCommand(executionPath),
             "python3 - <<'PY'\n$pythonSource\nPY\nmobidex_status=\$?;exit \$mobidex_status",
         ).joinToString("; ")
 

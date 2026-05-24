@@ -17,6 +17,10 @@
 - [x] Run focused unit tests, shared/Android checks, xcodebuild tests, and simulator launch/screenshot validation.
 - [x] Publish TestFlight build `1.0 (30)` to internal testers and submit it for external beta review.
 - [x] Record final critical learnings and remaining risks.
+- [x] Replace remote shell startup-file sourcing with explicit SSH execution PATH.
+- [x] Validate manual project paths before saving and ask before creating missing folders.
+- [x] Review the SSH execution PATH and project path validation changes with a subagent.
+- [x] Run shared, Android, Xcode, simulator, and SSH smoke validation.
 
 ## Swipe Right Steer Now
 

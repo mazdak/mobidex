@@ -10,7 +10,7 @@ struct ServerEditorView: View {
     @State private var port: Int
     @State private var username: String
     @State private var codexPath: String
-    @State private var targetShellRCFile: String
+    @State private var executionPath: String
     @State private var authMethod: ServerAuthMethod
     @State private var password: String
     @State private var privateKey: String
@@ -29,7 +29,7 @@ struct ServerEditorView: View {
         _port = State(initialValue: server?.port ?? 22)
         _username = State(initialValue: server?.username ?? "")
         _codexPath = State(initialValue: server?.codexPath ?? SharedKMPBridge.defaultCodexPath)
-        _targetShellRCFile = State(initialValue: server?.targetShellRCFile ?? SharedKMPBridge.defaultTargetShellRCFile)
+        _executionPath = State(initialValue: server?.executionPath ?? SharedKMPBridge.defaultExecutionPath)
         _authMethod = State(initialValue: server?.authMethod ?? .password)
         _password = State(initialValue: "")
         _privateKey = State(initialValue: "")
@@ -55,14 +55,14 @@ struct ServerEditorView: View {
                 }
 
                 Section {
-                    TextField("Target Shell Startup File", text: $targetShellRCFile, prompt: Text("$HOME/.zprofile"))
+                    TextField("Execution Path", text: $executionPath, prompt: Text(SharedKMPBridge.defaultExecutionPath))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .accessibilityIdentifier("targetShellRCFileField")
+                        .accessibilityIdentifier("executionPathField")
                 } header: {
-                    Text("Shell Environment")
+                    Text("Command Environment")
                 } footer: {
-                    Text("Defaults to $HOME/.zprofile. Existing .zshrc paths are migrated to the matching .zprofile path.")
+                    Text("Mobidex injects this PATH for SSH commands. Shell startup files are not sourced.")
                 }
 
                 Section {
@@ -211,7 +211,7 @@ struct ServerEditorView: View {
             port: port,
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
             codexPath: codexPath,
-            targetShellRCFile: targetShellRCFile,
+            executionPath: executionPath,
             authMethod: authMethod,
             projects: original?.projects ?? [],
             createdAt: original?.createdAt ?? .now,
