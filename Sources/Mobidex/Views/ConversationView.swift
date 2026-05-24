@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 
 struct ConversationView: View {
     @EnvironmentObject private var model: AppViewModel
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var composerText = ""
     @State private var composerEditGeneration = 0
     @State private var photoAttachmentGeneration = 0
@@ -80,6 +81,13 @@ struct ConversationView: View {
         }
         .navigationTitle(model.selectedThread?.title ?? model.selectedProject?.displayName ?? "Conversation")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if horizontalSizeClass == .compact, model.selectedThread != nil, model.selectedProject != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    conversationNewSessionButton
+                }
+            }
+        }
             .onAppear {
                 loadComposerDraft(for: composerDraftKey)
             }
@@ -133,6 +141,31 @@ struct ConversationView: View {
             .onDisappear {
                 updateRecordingIdleTimer(isRecording: false)
             }
+    }
+
+    private var conversationNewSessionButton: some View {
+        Menu {
+            Button {
+                Task { await model.startNewSession(location: .codexWorktree) }
+            } label: {
+                Label("Start in New Worktree", systemImage: "arrow.triangle.branch")
+            }
+            Button {
+                Task { await model.startNewSession(location: .projectDirectory) }
+            } label: {
+                Label("Start in Project Directory", systemImage: "folder")
+            }
+        } label: {
+            if model.isStartingNewSession {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "plus.bubble")
+            }
+        }
+        .disabled(!model.canChooseNewSessionLocation || model.isStartingNewSession)
+        .accessibilityLabel(model.isStartingNewSession ? "Starting New Session" : "New Session")
+        .accessibilityIdentifier("projectNewSessionButton")
     }
 
     @ViewBuilder
@@ -360,7 +393,10 @@ struct ConversationView: View {
 
     private var projectEmptyDescription: String {
         if model.isStartingNewSession {
-            return "Mobidex is preparing a fresh Codex thread."
+            return model.statusMessage ?? "Mobidex is preparing a fresh Codex thread."
+        }
+        if let statusMessage = model.statusMessage, !statusMessage.isEmpty {
+            return statusMessage
         }
         return model.canSendMessage ? "Start the first prompt for this project." : "Connect to load sessions for this project."
     }

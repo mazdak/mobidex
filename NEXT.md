@@ -10,6 +10,9 @@
 
 ## New Session And SSH Incident
 
+- [x] Make iOS New Session show an immediate visible starting state and phase text.
+- [x] Add iOS deadlines for connect/worktree/thread-start so New Session cannot spin forever.
+- [x] Add regression tests for iOS New Session timeout/visibility behavior.
 - [x] Inventory every visible app page/surface and name the phantom page.
 - [x] Fix iOS New Session navigation so it starts/selects a session before showing detail.
 - [x] Review the New Session/navigation change with a subagent.
@@ -31,6 +34,9 @@
 - [x] Validate manual project paths before saving and ask before creating missing folders.
 - [x] Review the SSH execution PATH and project path validation changes with a subagent.
 - [x] Run shared, Android, Xcode, simulator, and SSH smoke validation.
+- [x] Add `.env.test` real-host E2E harness for connection, new session, join, and visible UI New Session paths.
+- [x] Validate real Mac SSH connection, project-directory New Session, join existing session, and New Worktree visible UI smoke.
+- [x] Review the latest iOS E2E/TestFlight readiness changes with a subagent and apply release-blocking fixes.
 
 ## Swipe Right Steer Now
 

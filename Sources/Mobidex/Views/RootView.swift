@@ -305,6 +305,7 @@ struct ProjectSessionListView: View {
                             sessionSearchText = ""
                         },
                         canCreateSession: model.canChooseNewSessionLocation,
+                        isStartingSession: model.isStartingNewSession,
                         onStartInNewWorktree: {
                             Task { await startNewSessionAndPromote(location: .codexWorktree) }
                         },
@@ -680,6 +681,7 @@ private struct SelectedServerToolbar: ToolbarContent {
     let disabled: Bool
     let onBackToProjects: () -> Void
     let canCreateSession: Bool
+    let isStartingSession: Bool
     let onStartInNewWorktree: () -> Void
     let onStartInProjectDirectory: () -> Void
     @Binding var showingProjectAdd: Bool
@@ -704,6 +706,7 @@ private struct SelectedServerToolbar: ToolbarContent {
             } else {
                 NewSessionButton(
                     canCreateSession: canCreateSession,
+                    isStartingSession: isStartingSession,
                     onStartInNewWorktree: onStartInNewWorktree,
                     onStartInProjectDirectory: onStartInProjectDirectory
                 )
@@ -797,6 +800,7 @@ private struct ProjectSessionScopeRow: View {
 
 private struct NewSessionButton: View {
     let canCreateSession: Bool
+    let isStartingSession: Bool
     let onStartInNewWorktree: () -> Void
     let onStartInProjectDirectory: () -> Void
 
@@ -813,10 +817,15 @@ private struct NewSessionButton: View {
                 Label("Start in Project Directory", systemImage: "folder")
             }
         } label: {
-            Image(systemName: "plus.bubble")
+            if isStartingSession {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "plus.bubble")
+            }
         }
-        .disabled(!canCreateSession)
-        .accessibilityLabel("New Session")
+        .disabled(!canCreateSession || isStartingSession)
+        .accessibilityLabel(isStartingSession ? "Starting New Session" : "New Session")
         .accessibilityIdentifier("projectNewSessionButton")
     }
 }

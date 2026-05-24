@@ -166,6 +166,7 @@ private enum AppViewModelError: LocalizedError {
     case missingProject
     case newSessionBlocked
     case newSessionConnectionFailed(String)
+    case operationTimedOut(String)
 
     var errorDescription: String? {
         switch self {
@@ -176,6 +177,8 @@ private enum AppViewModelError: LocalizedError {
         case .newSessionBlocked:
             "Finish the current session action before starting a new session."
         case .newSessionConnectionFailed(let message):
+            message
+        case .operationTimedOut(let message):
             message
         }
     }
@@ -317,6 +320,7 @@ final class AppViewModel: ObservableObject {
     private let sessionListCacheTTL: TimeInterval
     private let threadDetailCacheTTL: TimeInterval
     private let maxThreadDetailCacheEntries: Int
+    private let sessionStartOperationTimeoutSeconds: Double
     private let sessionListInitialPageLimit = 1
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
@@ -352,6 +356,7 @@ final class AppViewModel: ObservableObject {
         sessionListCacheTTL: TimeInterval = SharedKMPBridge.defaultSessionListCacheTTL,
         threadDetailCacheTTL: TimeInterval = SharedKMPBridge.defaultThreadDetailCacheTTL,
         maxThreadDetailCacheEntries: Int = 8,
+        sessionStartOperationTimeoutSeconds: Double = 30,
         loadServersOnInit: Bool = true
     ) {
         self.repository = repository
@@ -364,6 +369,7 @@ final class AppViewModel: ObservableObject {
         self.sessionListCacheTTL = sessionListCacheTTL
         self.threadDetailCacheTTL = threadDetailCacheTTL
         self.maxThreadDetailCacheEntries = max(1, maxThreadDetailCacheEntries)
+        self.sessionStartOperationTimeoutSeconds = sessionStartOperationTimeoutSeconds
         if loadServersOnInit {
             loadServers()
             refreshOpenAIAPIKeyState()
@@ -1172,13 +1178,18 @@ final class AppViewModel: ObservableObject {
         invalidateSessionRefreshes()
         resetSessionState(clearThreads: false)
         await runOperation(.startingSession, status: "Starting session") {
+            let timeoutSeconds = timeoutSecondsLabel(sessionStartOperationTimeoutSeconds)
             if appServer == nil {
                 statusMessage = "Connecting before starting session"
                 if isConnectingAppServer {
-                    await waitForAppServerConnectionAttempt()
+                    try await waitForNewSessionConnectionStep(timeoutSeconds: timeoutSeconds) {
+                        await self.waitForAppServerConnectionAttempt()
+                    }
                 }
                 if appServer == nil {
-                    await connectSelectedServer(syncActiveChatCounts: false, preservingVisibleState: true)
+                    try await waitForNewSessionConnectionStep(timeoutSeconds: timeoutSeconds) {
+                        await self.connectSelectedServer(syncActiveChatCounts: false, preservingVisibleState: true)
+                    }
                 }
             }
             guard let appServer else {
@@ -1201,7 +1212,12 @@ final class AppViewModel: ObservableObject {
                       currentThreadLoadScope == scope else {
                     throw AppViewModelError.selectionChanged
                 }
-                sessionCwd = try await sshService.createCodexWorktree(from: cwd, server: selectedServer, credential: credential)
+                sessionCwd = try await withTimeout(
+                    seconds: sessionStartOperationTimeoutSeconds,
+                    timeoutMessage: "Creating the worktree timed out after \(timeoutSeconds) seconds."
+                ) {
+                    try await self.sshService.createCodexWorktree(from: cwd, server: selectedServer, credential: credential)
+                }
             case .projectDirectory:
                 sessionCwd = cwd
             }
@@ -1211,7 +1227,12 @@ final class AppViewModel: ObservableObject {
                 throw AppViewModelError.selectionChanged
             }
             statusMessage = "Creating session"
-            let thread = try await appServer.startThread(cwd: sessionCwd)
+            let thread = try await withTimeout(
+                seconds: sessionStartOperationTimeoutSeconds,
+                timeoutMessage: "Creating the session timed out after \(timeoutSeconds) seconds."
+            ) {
+                try await appServer.startThread(cwd: sessionCwd)
+            }
             guard currentThreadLoadScope == scope else {
                 return
             }
@@ -1236,6 +1257,26 @@ final class AppViewModel: ObservableObject {
             suppressThreadAutoSelection = false
         }
         return createdThreadID
+    }
+
+    private func waitForNewSessionConnectionStep(
+        timeoutSeconds: Int,
+        operation: @escaping @Sendable () async throws -> Void
+    ) async throws {
+        do {
+            try await withTimeout(
+                seconds: sessionStartOperationTimeoutSeconds,
+                timeoutMessage: "Connecting before starting the session timed out after \(timeoutSeconds) seconds.",
+                operation: operation
+            )
+        } catch AppViewModelError.operationTimedOut(let message) {
+            connectionGeneration &+= 1
+            isConnectingAppServer = false
+            if appServer == nil {
+                connectionState = .failed(message)
+            }
+            throw AppViewModelError.operationTimedOut(message)
+        }
     }
 
     private func waitForAppServerConnectionAttempt() async {
@@ -3630,20 +3671,77 @@ final class AppViewModel: ObservableObject {
 
 private func withTimeout<T: Sendable>(
     seconds: Double,
+    timeoutMessage: String = "",
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask {
-            try await operation()
+    try await withCheckedThrowingContinuation { continuation in
+        let state = TimeoutContinuation(continuation)
+        let operationTask = Task {
+            do {
+                state.resume(with: .success(try await operation()))
+            } catch {
+                state.resume(with: .failure(error))
+            }
         }
-        group.addTask {
-            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            throw SSHServiceError.remoteDirectoryBrowseFailed("Remote folder browsing timed out after \(Int(seconds)) seconds.")
+        let timeoutTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            } catch {
+                return
+            }
+            let message = timeoutMessage.isEmpty
+                ? "Remote folder browsing timed out after \(Int(seconds)) seconds."
+                : timeoutMessage
+            state.resume(with: .failure(AppViewModelError.operationTimedOut(message)))
         }
-        guard let result = try await group.next() else {
-            throw SSHServiceError.remoteDirectoryBrowseFailed("Remote folder browsing did not return a result.")
+        state.onResume {
+            operationTask.cancel()
+            timeoutTask.cancel()
         }
-        group.cancelAll()
-        return result
+    }
+}
+
+private func timeoutSecondsLabel(_ seconds: Double) -> Int {
+    max(1, Int(ceil(seconds)))
+}
+
+private final class TimeoutContinuation<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Error>?
+    private var cancellation: (() -> Void)?
+
+    init(_ continuation: CheckedContinuation<T, Error>) {
+        self.continuation = continuation
+    }
+
+    func onResume(_ cancellation: @escaping () -> Void) {
+        var shouldCancel = false
+        lock.withLock {
+            if continuation == nil {
+                shouldCancel = true
+            } else {
+                self.cancellation = cancellation
+            }
+        }
+        if shouldCancel {
+            cancellation()
+        }
+    }
+
+    func resume(with result: Result<T, Error>) {
+        let pair: (CheckedContinuation<T, Error>, (() -> Void)?)? = lock.withLock {
+            guard let continuation else {
+                return nil
+            }
+            self.continuation = nil
+            let cancellation = self.cancellation
+            self.cancellation = nil
+            return (continuation, cancellation)
+        }
+        guard let pair else {
+            return
+        }
+        pair.1?()
+        pair.0.resume(with: result)
     }
 }

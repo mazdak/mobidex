@@ -14,6 +14,7 @@ enum CodexAppServerClientError: LocalizedError, Sendable {
     case transportClosed(String)
     case messageDecodeFailed(String)
     case responseDecodeFailed(method: String, details: String)
+    case requestTimedOut(method: String, seconds: Int)
 
     var errorDescription: String? {
         switch self {
@@ -29,6 +30,8 @@ enum CodexAppServerClientError: LocalizedError, Sendable {
             "Could not decode an app-server message: \(details)"
         case .responseDecodeFailed(let method, let details):
             "Could not decode the app-server `\(method)` response: \(details)"
+        case .requestTimedOut(let method, let seconds):
+            "The app-server did not answer `\(method)` within \(seconds) seconds."
         }
     }
 }
@@ -75,13 +78,18 @@ actor CodexAppServerClient {
     private let rpcCore = SharedKMPBridge.makeRPCClientCore()
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let requestTimeoutNanoseconds: UInt64
+    private let requestTimeoutSeconds: Int
     private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
+    private var pendingTimeouts: [Int: Task<Void, Never>] = [:]
     private let eventContinuation: AsyncStream<CodexAppServerEvent>.Continuation
     private var readTask: Task<Void, Never>?
     private var isClosed = false
 
-    init(transport: CodexLineTransport) {
+    init(transport: CodexLineTransport, requestTimeoutSeconds: Double = 30) {
         self.transport = transport
+        self.requestTimeoutNanoseconds = UInt64(requestTimeoutSeconds * 1_000_000_000)
+        self.requestTimeoutSeconds = max(1, Int(ceil(requestTimeoutSeconds)))
         let stream = AsyncStream<CodexAppServerEvent>.makeStream()
         events = stream.stream
         eventContinuation = stream.continuation
@@ -308,16 +316,30 @@ actor CodexAppServerClient {
         try ensureOpenAndStartReadLoop()
         let request = SharedKMPBridge.nextRequestLine(core: rpcCore, method: method, params: params)
 
-        return try await withCheckedThrowingContinuation { continuation in
-            pending[request.id] = continuation
-            Task {
-                do {
-                    try await transport.sendLine(request.line)
-                } catch {
-                    let clientError = clientFacingError(error)
-                    self.resolve(id: request.id, result: .failure(clientError))
-                    await self.disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pending[request.id] = continuation
+                pendingTimeouts[request.id] = Task { [requestID = request.id, method, timeout = requestTimeoutNanoseconds] in
+                    do {
+                        try await Task.sleep(nanoseconds: timeout)
+                    } catch {
+                        return
+                    }
+                    self.timeoutRequest(id: requestID, method: method)
                 }
+                Task {
+                    do {
+                        try await transport.sendLine(request.line)
+                    } catch {
+                        let clientError = clientFacingError(error)
+                        self.resolve(id: request.id, result: .failure(clientError))
+                        await self.disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
+                    }
+                }
+            }
+        } onCancel: {
+            Task {
+                await self.cancelRequest(id: request.id)
             }
         }
     }
@@ -401,12 +423,34 @@ actor CodexAppServerClient {
         guard let continuation = pending.removeValue(forKey: id) else {
             return
         }
+        pendingTimeouts.removeValue(forKey: id)?.cancel()
         continuation.resume(with: result)
+    }
+
+    private func timeoutRequest(id: Int, method: String) {
+        resolve(
+            id: id,
+            result: .failure(
+                CodexAppServerClientError.requestTimedOut(
+                    method: method,
+                    seconds: requestTimeoutSeconds
+                )
+            )
+        )
+    }
+
+    private func cancelRequest(id: Int) {
+        resolve(id: id, result: .failure(CancellationError()))
     }
 
     private func failPending(_ error: Error) {
         let continuations = pending.values
         pending.removeAll()
+        let timeouts = pendingTimeouts.values
+        pendingTimeouts.removeAll()
+        for timeout in timeouts {
+            timeout.cancel()
+        }
         for continuation in continuations {
             continuation.resume(throwing: error)
         }

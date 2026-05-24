@@ -74,6 +74,59 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testRequestTimesOutWhenAppServerDoesNotAnswer() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport, requestTimeoutSeconds: 0.05)
+        let task = Task { try await client.startThread(cwd: "/srv/app") }
+
+        _ = try await waitForSentLine(in: transport)
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected the in-flight request to time out.")
+        } catch let error as CodexAppServerClientError {
+            XCTAssertEqual(error.localizedDescription, "The app-server did not answer `thread/start` within 1 seconds.")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        await client.close()
+    }
+
+    func testRequestCancellationRemovesPendingRequestBeforeLateResponse() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport, requestTimeoutSeconds: 30)
+        let task = Task { try await client.startThread(cwd: "/srv/app") }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation to fail the in-flight request.")
+        } catch is CancellationError {
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        transport.receive("""
+        {"id":\(id),"result":{"thread":{
+          "id":"late-thread",
+          "preview":"Late thread",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000400,
+          "createdAt":1770000400,
+          "turns":[]
+        }}}
+        """)
+
+        await client.close()
+    }
+
     func testStartTurnEncodesReasoningAndSandboxOptions() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport)

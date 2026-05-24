@@ -707,6 +707,10 @@ try:
         active_turn_id = steer_turn["id"]
         active_turn_thread_id = steer_thread_id
         approval = wait_server_request(timeout=5, required=False)
+        if approval is None and server_requests:
+            approval = server_requests.pop(0)
+        if approval is not None:
+            approve_server_request(approval)
         request(
             "turn/steer",
             {
@@ -716,10 +720,6 @@ try:
             },
             timeout=45,
         )
-        if approval is None and server_requests:
-            approval = server_requests.pop(0)
-        if approval is not None:
-            approve_server_request(approval)
         time.sleep(1)
         request(
             "turn/interrupt",

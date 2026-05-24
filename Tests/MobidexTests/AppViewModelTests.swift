@@ -1664,6 +1664,8 @@ final class AppViewModelTests: XCTestCase {
         let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
         let params = try requestParams(for: startThread, in: transport)
         XCTAssertEqual(params["cwd"] as? String, "/srv/app-worktree")
+        XCTAssertTrue(viewModel.isStartingNewSession)
+        XCTAssertEqual(viewModel.statusMessage, "Creating session")
         transport.receive("""
         {"id":\(startThread.id),"result":{"thread":{
           "id":"thread-new",
@@ -1684,6 +1686,148 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
         XCTAssertTrue(viewModel.pendingApprovals.isEmpty)
         XCTAssertEqual(viewModel.statusMessage, "New session created in a worktree.")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testStartNewSessionReportsAppServerTimeoutInsteadOfHanging() async throws {
+        let project = ProjectRecord(path: "/srv/app", isAdded: true)
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let sshService = ScriptedSSHService(
+            appServer: CodexAppServerClient(transport: transport, requestTimeoutSeconds: 0.05)
+        )
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: sshService
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive(#"{"id":\#(list.id),"result":{"data":[],"nextCursor":null}}"#)
+        await connectTask.value
+
+        cursor = transport.sentLinesSnapshot.count
+        let newSessionTask = Task { await viewModel.startNewSession(location: .projectDirectory) }
+        _ = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
+        XCTAssertTrue(viewModel.isStartingNewSession)
+        XCTAssertEqual(viewModel.statusMessage, "Creating session")
+
+        let createdThreadID = await newSessionTask.value
+        XCTAssertNil(createdThreadID)
+        XCTAssertFalse(viewModel.isStartingNewSession)
+        XCTAssertEqual(viewModel.statusMessage, "The app-server did not answer `thread/start` within 1 seconds.")
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testStartNewSessionWorktreeTimeoutReturnsWhenSSHCommandDoesNotCooperate() async throws {
+        let project = ProjectRecord(path: "/srv/app", isAdded: true)
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let worktreeGate = AsyncGate()
+        let sshService = ScriptedSSHService(
+            appServer: CodexAppServerClient(transport: transport, requestTimeoutSeconds: 0.05),
+            worktreeGate: worktreeGate
+        )
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: sshService,
+            sessionStartOperationTimeoutSeconds: 0.05
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive(#"{"id":\#(list.id),"result":{"data":[],"nextCursor":null}}"#)
+        await connectTask.value
+
+        let delayedRelease = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            await worktreeGate.open()
+        }
+        let startedAt = Date()
+        let createdThreadID = await viewModel.startNewSession(location: .codexWorktree)
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        XCTAssertNil(createdThreadID)
+        XCTAssertLessThan(elapsed, 0.3)
+        XCTAssertFalse(viewModel.isStartingNewSession)
+        XCTAssertEqual(viewModel.statusMessage, "Creating the worktree timed out after 1 seconds.")
+        XCTAssertFalse(transport.sentLinesSnapshot.contains { methodName($0) == "thread/start" })
+        delayedRelease.cancel()
+        await worktreeGate.open()
+        await viewModel.disconnect()
+    }
+
+    @MainActor
+    func testStartNewSessionConnectionTimeoutInvalidatesLateConnect() async throws {
+        let project = ProjectRecord(path: "/srv/app", isAdded: true)
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let sshService = BlockingOpenSSHService(
+            appServer: CodexAppServerClient(transport: transport, requestTimeoutSeconds: 0.05)
+        )
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: sshService,
+            sessionStartOperationTimeoutSeconds: 0.05
+        )
+        XCTAssertTrue(viewModel.selectServer(server.id))
+        viewModel.selectProject(project.id)
+
+        let startedAt = Date()
+        let createdThreadID = await viewModel.startNewSession(location: .projectDirectory)
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        XCTAssertNil(createdThreadID)
+        XCTAssertLessThan(elapsed, 0.3)
+        XCTAssertFalse(viewModel.isStartingNewSession)
+        XCTAssertFalse(viewModel.isAppServerConnected)
+        XCTAssertEqual(viewModel.connectionState, .failed("Connecting before starting the session timed out after 1 seconds."))
+        XCTAssertEqual(viewModel.statusMessage, "Connecting before starting the session timed out after 1 seconds.")
+
+        sshService.releaseOpen()
+        try await Task.sleep(nanoseconds: 120_000_000)
+        XCTAssertFalse(viewModel.isAppServerConnected)
+        XCTAssertEqual(viewModel.statusMessage, "Connecting before starting the session timed out after 1 seconds.")
         await viewModel.disconnect()
     }
 
@@ -5899,6 +6043,7 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
     private let testConnectionError: Error?
     private let stageDelayNanoseconds: UInt64
     private let stageGate: AsyncGate?
+    private let worktreeGate: AsyncGate?
     private let lock = NSLock()
     private var appServerOpenResults: [AppServerOpenResult]
     private var discoveredProjectBatches: [[RemoteProject]]
@@ -5910,13 +6055,15 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         testConnectionError: Error? = nil,
         discoveredProjectBatches: [[RemoteProject]] = [[]],
         stageDelayNanoseconds: UInt64 = 0,
-        stageGate: AsyncGate? = nil
+        stageGate: AsyncGate? = nil,
+        worktreeGate: AsyncGate? = nil
     ) {
         self.appServerOpenResults = [.client(appServer)]
         self.testConnectionError = testConnectionError
         self.discoveredProjectBatches = discoveredProjectBatches
         self.stageDelayNanoseconds = stageDelayNanoseconds
         self.stageGate = stageGate
+        self.worktreeGate = worktreeGate
     }
 
     init(
@@ -5924,13 +6071,15 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         testConnectionError: Error? = nil,
         discoveredProjectBatches: [[RemoteProject]] = [[]],
         stageDelayNanoseconds: UInt64 = 0,
-        stageGate: AsyncGate? = nil
+        stageGate: AsyncGate? = nil,
+        worktreeGate: AsyncGate? = nil
     ) {
         self.appServerOpenResults = appServers.map(AppServerOpenResult.client)
         self.testConnectionError = testConnectionError
         self.discoveredProjectBatches = discoveredProjectBatches
         self.stageDelayNanoseconds = stageDelayNanoseconds
         self.stageGate = stageGate
+        self.worktreeGate = worktreeGate
     }
 
     init(
@@ -5938,7 +6087,8 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         testConnectionError: Error? = nil,
         discoveredProjectBatches: [[RemoteProject]] = [[]],
         stageDelayNanoseconds: UInt64 = 0,
-        stageGate: AsyncGate? = nil
+        stageGate: AsyncGate? = nil,
+        worktreeGate: AsyncGate? = nil
     ) {
         self.appServerOpenResults = appServerOpenResults.map { result in
             switch result {
@@ -5952,6 +6102,7 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
         self.discoveredProjectBatches = discoveredProjectBatches
         self.stageDelayNanoseconds = stageDelayNanoseconds
         self.stageGate = stageGate
+        self.worktreeGate = worktreeGate
     }
 
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws {
@@ -6022,7 +6173,10 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
     }
 
     func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String {
-        "\(projectPath)-worktree"
+        if let worktreeGate {
+            await worktreeGate.wait()
+        }
+        return "\(projectPath)-worktree"
     }
 
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {

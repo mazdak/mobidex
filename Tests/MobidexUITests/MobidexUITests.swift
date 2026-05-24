@@ -64,6 +64,57 @@ final class MobidexUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(of: stopButton, timeout: timeout), "Stop turn button remained visible after interrupt.")
     }
 
+    func testRealHostNewSessionFromVisibleUI() throws {
+        guard ProcessInfo.processInfo.environment["MOBIDEX_UI_REAL_HOST_SMOKE"] == "1" else {
+            throw XCTSkip("Real-host UI smoke was not requested.")
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment = try smokeLaunchEnvironment()
+        app.launch()
+
+        let serverRow = app.descendants(matching: .any)["serverRow"]
+        if serverRow.waitForExistence(timeout: 5) {
+            serverRow.tap()
+        }
+
+        let projectRow = app.buttons["projectRow"].firstMatch
+        XCTAssertTrue(projectRow.waitForExistence(timeout: timeout), "Seeded project row did not appear.")
+        projectRow.tap()
+
+        let refreshServerButton = app.buttons["refreshServerButton"]
+        if refreshServerButton.waitForExistence(timeout: 5) {
+            refreshServerButton.tap()
+        }
+
+        let newSessionButton = app.buttons["projectNewSessionButton"]
+        if !newSessionButton.waitForExistence(timeout: 5) {
+            let backToSessionsButton = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Sessions")).firstMatch
+            if backToSessionsButton.waitForExistence(timeout: 5) {
+                backToSessionsButton.tap()
+            }
+        }
+        guard newSessionButton.waitForExistence(timeout: 15) else {
+            XCTFail("New Session button did not appear.\n\n\(app.debugDescription)")
+            return
+        }
+        XCTAssertTrue(waitForEnabled(newSessionButton, timeout: timeout), "New Session button did not become enabled.")
+        newSessionButton.tap()
+
+        let location = ProcessInfo.processInfo.environment["MOBIDEX_UI_NEW_SESSION_LOCATION"] ?? "project-directory"
+        let optionTitle = location == "worktree" ? "Start in New Worktree" : "Start in Project Directory"
+        let locationButton = app.buttons[optionTitle]
+        XCTAssertTrue(locationButton.waitForExistence(timeout: timeout), "\(optionTitle) option did not appear.")
+        locationButton.tap()
+
+        let startingLabel = app.descendants(matching: .any)["Starting New Session"]
+        _ = startingLabel.waitForExistence(timeout: 3)
+
+        let composer = app.descendants(matching: .any)["messageComposer"]
+        XCTAssertTrue(composer.waitForExistence(timeout: timeout), "Composer did not appear after creating a new session.")
+        XCTAssertFalse(app.staticTexts["No Sessions Yet"].exists, "No Sessions Yet remained visible after creating a new session.")
+    }
+
     private func smokeLaunchEnvironment() throws -> [String: String] {
         let environment = ProcessInfo.processInfo.environment
         let requiredKeys = [
@@ -72,12 +123,18 @@ final class MobidexUITests: XCTestCase {
             "MOBIDEX_SMOKE_CWD",
             "MOBIDEX_SMOKE_HOST",
             "MOBIDEX_SMOKE_MODE",
-            "MOBIDEX_SMOKE_PASSWORD",
             "MOBIDEX_SMOKE_PORT",
             "MOBIDEX_SMOKE_USER",
         ]
         for key in requiredKeys where environment[key, default: ""].isEmpty {
             throw XCTSkip("Missing required UI smoke environment value: \(key)")
+        }
+        let auth = environment["MOBIDEX_SMOKE_AUTH"]!
+        if auth == "password", environment["MOBIDEX_SMOKE_PASSWORD", default: ""].isEmpty {
+            throw XCTSkip("Missing required UI smoke environment value: MOBIDEX_SMOKE_PASSWORD")
+        }
+        if auth != "password", environment["MOBIDEX_SMOKE_PRIVATE_KEY_BASE64", default: ""].isEmpty {
+            throw XCTSkip("Missing required UI smoke environment value: MOBIDEX_SMOKE_PRIVATE_KEY_BASE64")
         }
 
         var launchEnvironment = [
@@ -88,11 +145,25 @@ final class MobidexUITests: XCTestCase {
             "MOBIDEX_SMOKE_CWD": environment["MOBIDEX_SMOKE_CWD"]!,
             "MOBIDEX_SMOKE_HOST": environment["MOBIDEX_SMOKE_HOST"]!,
             "MOBIDEX_SMOKE_MODE": environment["MOBIDEX_SMOKE_MODE"]!,
-            "MOBIDEX_SMOKE_PASSWORD": environment["MOBIDEX_SMOKE_PASSWORD"]!,
             "MOBIDEX_SMOKE_PORT": environment["MOBIDEX_SMOKE_PORT"]!,
             "MOBIDEX_SMOKE_USER": environment["MOBIDEX_SMOKE_USER"]!,
             "MOBIDEX_SMOKE_TIMEOUT": environment["MOBIDEX_UI_SMOKE_TIMEOUT"] ?? "90",
         ]
+        if let password = environment["MOBIDEX_SMOKE_PASSWORD"] {
+            launchEnvironment["MOBIDEX_SMOKE_PASSWORD"] = password
+        }
+        if let privateKey = environment["MOBIDEX_SMOKE_PRIVATE_KEY_BASE64"] {
+            launchEnvironment["MOBIDEX_SMOKE_PRIVATE_KEY_BASE64"] = privateKey
+        }
+        if let passphrase = environment["MOBIDEX_SMOKE_PRIVATE_KEY_PASSPHRASE"] {
+            launchEnvironment["MOBIDEX_SMOKE_PRIVATE_KEY_PASSPHRASE"] = passphrase
+        }
+        if let displayName = environment["MOBIDEX_SMOKE_DISPLAY_NAME"] {
+            launchEnvironment["MOBIDEX_SMOKE_DISPLAY_NAME"] = displayName
+        }
+        if let newSessionLocation = environment["MOBIDEX_SMOKE_NEW_SESSION_LOCATION"] {
+            launchEnvironment["MOBIDEX_SMOKE_NEW_SESSION_LOCATION"] = newSessionLocation
+        }
         if let prompt = environment["MOBIDEX_UI_SMOKE_PROMPT"] {
             launchEnvironment["MOBIDEX_SMOKE_PROMPT"] = prompt
         }

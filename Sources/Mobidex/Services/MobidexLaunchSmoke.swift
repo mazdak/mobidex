@@ -77,6 +77,71 @@ enum MobidexLaunchSmoke {
                 throw SmokeError.failed(model.connectionState.label)
             }
 
+            if config.mode == "new-session" {
+                currentStage = "starting-new-session"
+                try writeResult(.running(stage: "starting-new-session", message: nil))
+                guard await model.startNewSession(location: config.newSessionLocation) != nil else {
+                    throw SmokeError.failed(model.statusMessage ?? "Starting a new session failed.")
+                }
+                guard model.selectedThread != nil else {
+                    throw SmokeError.failed("New session did not select a thread.")
+                }
+
+                var expectedTextFound = false
+                if let prompt = config.prompt {
+                    currentStage = "sending-new-session-turn"
+                    try writeResult(.running(stage: "sending-new-session-turn", message: nil))
+                    await model.sendComposerText(prompt)
+                    currentStage = "waiting-for-new-session-text"
+                    try writeResult(.running(stage: "waiting-for-new-session-text", message: nil))
+                    expectedTextFound = await waitForExpectedText(config.expectedText, model: model, timeout: config.timeout)
+                    guard expectedTextFound else {
+                        throw SmokeError.failed("Timed out waiting for expected assistant text.")
+                    }
+                }
+
+                try writeResult(.success(
+                    message: "In-app SSH new-session smoke succeeded.",
+                    mode: config.mode,
+                    authMethod: config.authMethod.rawValue,
+                    sessionCount: model.threads.count,
+                    conversationSectionCount: model.conversationSections.count,
+                    assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
+                    expectedTextFound: expectedTextFound,
+                    selectedThreadLoaded: model.selectedThread != nil
+                ))
+                return
+            }
+
+            if config.mode == "join" {
+                currentStage = "loading-sessions"
+                try writeResult(.running(stage: "loading-sessions", message: nil))
+                await model.refreshThreadsIfNeeded()
+                guard let thread = model.threads.first else {
+                    throw SmokeError.failed("No existing sessions were returned for \(config.cwd).")
+                }
+                currentStage = "opening-session"
+                try writeResult(.running(stage: "opening-session", message: nil))
+                await model.openThread(thread)
+                let threadLoaded = await waitForCondition(timeout: config.timeout) {
+                    model.selectedThread?.id == thread.id
+                }
+                guard threadLoaded else {
+                    throw SmokeError.failed("Timed out waiting for existing session to open.")
+                }
+                try writeResult(.success(
+                    message: "In-app SSH join smoke succeeded.",
+                    mode: config.mode,
+                    authMethod: config.authMethod.rawValue,
+                    sessionCount: model.threads.count,
+                    conversationSectionCount: model.conversationSections.count,
+                    assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
+                    expectedTextFound: false,
+                    selectedThreadLoaded: true
+                ))
+                return
+            }
+
             if config.mode == "control" {
                 currentStage = "starting-control-turn"
                 try writeResult(.running(stage: "starting-control-turn", message: nil))
@@ -259,6 +324,7 @@ private struct SmokeConfig {
     var prompt: String?
     var steerText: String
     var expectedText: String?
+    var newSessionLocation: NewSessionLocation
     var timeout: TimeInterval
 
     init(environment: [String: String]) throws {
@@ -302,8 +368,17 @@ private struct SmokeConfig {
         }
 
         let parsedMode = environment["MOBIDEX_SMOKE_MODE"]?.nonEmpty ?? (parsedAuthMethod == .password ? "connection" : "turn")
-        guard parsedMode == "turn" || parsedMode == "connection" || parsedMode == "control" || parsedMode == "approval" || parsedMode == "seed" else {
-            throw SmokeError.failed("Unsupported MOBIDEX_SMOKE_MODE. Use turn, connection, control, approval, or seed.")
+        guard parsedMode == "turn" || parsedMode == "connection" || parsedMode == "control" || parsedMode == "approval" || parsedMode == "seed" || parsedMode == "new-session" || parsedMode == "join" else {
+            throw SmokeError.failed("Unsupported MOBIDEX_SMOKE_MODE. Use turn, connection, control, approval, seed, new-session, or join.")
+        }
+        let parsedNewSessionLocation: NewSessionLocation
+        switch environment["MOBIDEX_SMOKE_NEW_SESSION_LOCATION"]?.nonEmpty ?? "project-directory" {
+        case "project-directory", "projectDirectory":
+            parsedNewSessionLocation = .projectDirectory
+        case "worktree", "codex-worktree", "codexWorktree":
+            parsedNewSessionLocation = .codexWorktree
+        default:
+            throw SmokeError.failed("Unsupported MOBIDEX_SMOKE_NEW_SESSION_LOCATION. Use project-directory or worktree.")
         }
         self.serverID = environment["MOBIDEX_SMOKE_SERVER_ID"].flatMap(UUID.init(uuidString:)) ?? MobidexLaunchSmoke.defaultServerID
         self.displayName = environment["MOBIDEX_SMOKE_DISPLAY_NAME"]?.nonEmpty ?? "Smoke SSH"
@@ -325,6 +400,7 @@ private struct SmokeConfig {
         self.prompt = environment["MOBIDEX_SMOKE_PROMPT"]?.nonEmpty
         self.steerText = environment["MOBIDEX_SMOKE_STEER_TEXT"]?.nonEmpty ?? "Steer control smoke"
         self.expectedText = environment["MOBIDEX_SMOKE_EXPECTED_TEXT"]?.nonEmpty
+        self.newSessionLocation = parsedNewSessionLocation
         self.timeout = environment["MOBIDEX_SMOKE_TIMEOUT"].flatMap(TimeInterval.init) ?? 120
     }
 }
