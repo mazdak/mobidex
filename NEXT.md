@@ -2,9 +2,9 @@
 
 - [x] Confirm `master` is current.
 - [x] Run focused release validation.
-- [ ] Push the release commit to `origin/master`.
-- [ ] Upload TestFlight build and assign internal testers.
-- [ ] Submit the build to external TestFlight review.
+- [x] Push the release commit to `origin/master`.
+- [x] Upload TestFlight build and assign internal testers.
+- [x] Submit the build to external TestFlight review.
 
 ## Review Notes Validation
 
@@ -46,6 +46,7 @@
 - [x] Validate real Mac SSH connection, project-directory New Session, join existing session, and New Worktree visible UI smoke.
 - [x] Review the latest iOS E2E/TestFlight readiness changes with a subagent and apply release-blocking fixes.
 - [x] Publish TestFlight build `1.0 (32)` to internal testers and submit it for external beta review.
+- [x] Publish TestFlight build `1.0 (33)` to internal testers and submit it for external beta review.
 
 ## Swipe Right Steer Now
 

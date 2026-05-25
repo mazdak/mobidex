@@ -18,7 +18,8 @@ Critical learnings:
 - `master` was current with `origin/master` before release work; release candidate changes were uncommitted on top of build 32.
 - Validation passed for the release candidate: `git diff --check`, `Scripts/verify-ios-distribution-config.sh`, shared-core debug unit tests, XcodeBuildMCP simulator tests (`168 passed, 0 failed, 4 skipped`), real-host remote directory browse smoke, and real-host add discovered project smoke.
 - The add-discovered smoke failed once with Xcode exit 65 only when run concurrently with another live-host smoke; rerunning it alone passed.
-- `origin/master` and the current `HEAD` both resolve to `b7bfcc1ce6c374b15cf4b46a6c685e7881d881d4`; the worktree is already up to date.
+- TestFlight build `1.0 (33)` from commit `f36ac9d` uploaded successfully, was added to Internal Testers, and was submitted to External Testers for beta app review as build ID `701180f3-808a-4a1b-8b8e-58b4dd322e9a`.
+- `master` is now pushed through release commit `f36ac9d`.
 - The requested `REVIEW.md` is not present in this worktree. The available matching artifact is `REVIEW_NOTES.md`.
 - `REVIEW_NOTES.md` reads as a historical review log: every listed finding has adjacent fix/verification notes, and the latest completion-audit section ends with no blocking findings.
 - Focused validation found two still-real reachability gaps in the latest completion-audit area: iOS compact project taps did not promote to detail, and Android selected-project/no-thread detail did not expose the composer.
