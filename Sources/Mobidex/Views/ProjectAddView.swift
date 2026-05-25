@@ -25,6 +25,7 @@ struct ProjectAddView: View {
                             Image(systemName: "folder")
                         }
                         .accessibilityLabel("Browse Remote Folders")
+                        .accessibilityIdentifier("browseRemoteFoldersButton")
                     }
                 }
 
@@ -59,12 +60,12 @@ struct ProjectAddView: View {
                     } else {
                         ForEach(discoveredProjects) { project in
                             Button {
-                                path = project.path
-                                Task { await add() }
+                                Task { await add(path: project.path, skipRemoteCheck: true) }
                             } label: {
                                 ProjectRow(project: project)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("discoveredProjectRow")
                         }
                     }
                 }
@@ -87,6 +88,7 @@ struct ProjectAddView: View {
                         Task { await add() }
                     }
                     .disabled(isValidatingPath)
+                    .accessibilityIdentifier("confirmAddProjectButton")
                 }
             }
             .onChange(of: path) { _, _ in
@@ -122,11 +124,17 @@ struct ProjectAddView: View {
 
     @MainActor
     private func add(skipRemoteCheck: Bool = false) async {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        await add(path: path, skipRemoteCheck: skipRemoteCheck)
+    }
+
+    @MainActor
+    private func add(path requestedPath: String, skipRemoteCheck: Bool = false) async {
+        let trimmed = requestedPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             validationMessage = "Enter a remote project path."
             return
         }
+        path = trimmed
         if !skipRemoteCheck {
             isValidatingPath = true
             defer { isValidatingPath = false }
@@ -244,6 +252,7 @@ private struct RemoteDirectoryBrowserView: View {
                                 Label(entry.name, systemImage: "folder")
                                     .lineLimit(1)
                             }
+                            .accessibilityIdentifier("remoteFolderRow")
                         }
                     }
                 }
@@ -262,6 +271,7 @@ private struct RemoteDirectoryBrowserView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Choose") { onSelect(currentPath) }
                         .disabled(isLoading)
+                        .accessibilityIdentifier("chooseRemoteFolderButton")
                 }
             }
             .task {

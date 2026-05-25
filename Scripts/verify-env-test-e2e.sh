@@ -13,7 +13,7 @@ fi
 
 usage() {
   cat >&2 <<'EOF'
-Usage: Scripts/verify-env-test-e2e.sh [connection|new-session|join|visible-new-session]
+Usage: Scripts/verify-env-test-e2e.sh [connection|new-session|join|browse-directories|add-discovered-project|visible-new-session|visible-add-discovered-project|visible-remote-browser]
 
 Reads repo .env.test first, then ~/.codex/mobidex/.env.test.
 Set MOBIDEX_TEST_ENV=/path/to/file to use another file.
@@ -56,7 +56,7 @@ optional_export() {
 }
 
 case "$MODE" in
-  connection | new-session | join | visible-new-session)
+  connection | new-session | join | browse-directories | add-discovered-project | visible-new-session | visible-add-discovered-project | visible-remote-browser)
     ;;
   *)
     echo "Unsupported E2E mode: $MODE" >&2
@@ -124,10 +124,37 @@ case "$MODE" in
     export MOBIDEX_SMOKE_MODE=join
     exec "$ROOT_DIR/Scripts/verify-live-host-smoke.sh"
     ;;
+  browse-directories)
+    export MOBIDEX_SMOKE_MODE=browse-directories
+    export MOBIDEX_SMOKE_BROWSE_PATH="${MOBIDEX_E2E_BROWSE_PATH:-~}"
+    exec "$ROOT_DIR/Scripts/verify-live-host-smoke.sh"
+    ;;
+  add-discovered-project)
+    export MOBIDEX_SMOKE_MODE=add-discovered-project
+    export MOBIDEX_SMOKE_SEED_PROJECT_STATE=discovered
+    exec "$ROOT_DIR/Scripts/verify-live-host-smoke.sh"
+    ;;
   visible-new-session)
     export MOBIDEX_SMOKE_MODE=seed
     export MOBIDEX_UI_REAL_HOST_SMOKE=1
     export MOBIDEX_UI_NEW_SESSION_LOCATION="${MOBIDEX_E2E_NEW_SESSION_LOCATION:-project-directory}"
+    export MOBIDEX_UI_SMOKE_TIMEOUT="${MOBIDEX_E2E_TIMEOUT:-180}"
+    exec "$ROOT_DIR/Scripts/verify-live-host-ui-smoke.sh"
+    ;;
+  visible-add-discovered-project)
+    export MOBIDEX_SMOKE_MODE=seed
+    export MOBIDEX_UI_ADD_DISCOVERED_PROJECT_SMOKE=1
+    export MOBIDEX_SMOKE_SEED_PROJECT_STATE=discovered
+    export MOBIDEX_UI_TEST_IDENTIFIER="MobidexUITests/testRealHostAddDiscoveredProjectFromVisibleUI"
+    export MOBIDEX_UI_SMOKE_TIMEOUT="${MOBIDEX_E2E_TIMEOUT:-180}"
+    exec "$ROOT_DIR/Scripts/verify-live-host-ui-smoke.sh"
+    ;;
+  visible-remote-browser)
+    export MOBIDEX_SMOKE_MODE=seed
+    export MOBIDEX_UI_REMOTE_BROWSER_SMOKE=1
+    export MOBIDEX_SMOKE_SEED_PROJECT_STATE=discovered
+    export MOBIDEX_UI_BROWSE_PATH="${MOBIDEX_E2E_BROWSE_PATH:-}"
+    export MOBIDEX_UI_TEST_IDENTIFIER="MobidexUITests/testRealHostRemoteFolderBrowserFromVisibleUI"
     export MOBIDEX_UI_SMOKE_TIMEOUT="${MOBIDEX_E2E_TIMEOUT:-180}"
     exec "$ROOT_DIR/Scripts/verify-live-host-ui-smoke.sh"
     ;;

@@ -10,6 +10,7 @@ final class MobidexUITests: XCTestCase {
     func testSeededControlFlowThroughVisibleUI() throws {
         let app = XCUIApplication()
         app.launchEnvironment = try smokeLaunchEnvironment()
+        app.terminate()
         app.launch()
 
         let refreshServerButton = app.buttons["refreshServerButton"]
@@ -71,6 +72,7 @@ final class MobidexUITests: XCTestCase {
 
         let app = XCUIApplication()
         app.launchEnvironment = try smokeLaunchEnvironment()
+        app.terminate()
         app.launch()
 
         let serverRow = app.descendants(matching: .any)["serverRow"]
@@ -115,7 +117,78 @@ final class MobidexUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["No Sessions Yet"].exists, "No Sessions Yet remained visible after creating a new session.")
     }
 
-    private func smokeLaunchEnvironment() throws -> [String: String] {
+    func testRealHostAddDiscoveredProjectFromVisibleUI() throws {
+        guard ProcessInfo.processInfo.environment["MOBIDEX_UI_ADD_DISCOVERED_PROJECT_SMOKE"] == "1" else {
+            throw XCTSkip("Real-host add-discovered-project UI smoke was not requested.")
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment = try smokeLaunchEnvironment(extra: [
+            "MOBIDEX_SMOKE_MODE": "seed",
+            "MOBIDEX_SMOKE_SEED_PROJECT_STATE": "discovered",
+        ])
+        app.terminate()
+        app.launch()
+
+        openSeededServerIfNeeded(app)
+
+        let addProjectButton = app.buttons["addProjectButton"]
+        XCTAssertTrue(addProjectButton.waitForExistence(timeout: timeout), "Add Project button did not appear.")
+        addProjectButton.tap()
+
+        let discoveredRow = app.buttons["discoveredProjectRow"].firstMatch
+        XCTAssertTrue(discoveredRow.waitForExistence(timeout: timeout), "Discovered project row did not appear.")
+        discoveredRow.tap()
+
+        let projectRow = app.buttons["projectRow"].firstMatch
+        XCTAssertTrue(projectRow.waitForExistence(timeout: timeout), "Added project row did not appear after tapping discovered project.")
+    }
+
+    func testRealHostRemoteFolderBrowserFromVisibleUI() throws {
+        guard ProcessInfo.processInfo.environment["MOBIDEX_UI_REMOTE_BROWSER_SMOKE"] == "1" else {
+            throw XCTSkip("Real-host remote-browser UI smoke was not requested.")
+        }
+
+        let app = XCUIApplication()
+        app.launchEnvironment = try smokeLaunchEnvironment(extra: [
+            "MOBIDEX_SMOKE_MODE": "seed",
+            "MOBIDEX_SMOKE_SEED_PROJECT_STATE": "discovered",
+        ])
+        app.terminate()
+        app.launch()
+
+        openSeededServerIfNeeded(app)
+
+        let addProjectButton = app.buttons["addProjectButton"]
+        XCTAssertTrue(addProjectButton.waitForExistence(timeout: timeout), "Add Project button did not appear.")
+        addProjectButton.tap()
+
+        if let browsePath = ProcessInfo.processInfo.environment["MOBIDEX_UI_BROWSE_PATH"], !browsePath.isEmpty {
+            let pathField = app.textFields["~/project"]
+            XCTAssertTrue(pathField.waitForExistence(timeout: timeout), "Remote path field did not appear.")
+            pathField.tap()
+            pathField.typeText(browsePath)
+        }
+
+        let browseButton = app.buttons["browseRemoteFoldersButton"]
+        XCTAssertTrue(browseButton.waitForExistence(timeout: timeout), "Browse Remote Folders button did not appear.")
+        browseButton.tap()
+
+        let browseTitle = app.navigationBars["Browse"]
+        XCTAssertTrue(browseTitle.waitForExistence(timeout: timeout), "Remote folder browser did not appear.\n\n\(app.debugDescription)")
+
+        let folderRow = app.buttons["remoteFolderRow"].firstMatch
+        XCTAssertTrue(folderRow.waitForExistence(timeout: timeout), "Remote folder rows did not appear.\n\n\(app.debugDescription)")
+        folderRow.tap()
+
+        let chooseButton = app.buttons["chooseRemoteFolderButton"]
+        XCTAssertTrue(chooseButton.waitForExistence(timeout: timeout), "Choose button did not appear in remote folder browser.")
+        chooseButton.tap()
+
+        XCTAssertTrue(browseButton.waitForExistence(timeout: timeout), "Remote folder browser did not dismiss back to Add Project.")
+    }
+
+    private func smokeLaunchEnvironment(extra: [String: String] = [:]) throws -> [String: String] {
         let environment = ProcessInfo.processInfo.environment
         let requiredKeys = [
             "MOBIDEX_SMOKE_AUTH",
@@ -179,7 +252,27 @@ final class MobidexUITests: XCTestCase {
         if let serverID = environment["MOBIDEX_SMOKE_SERVER_ID"] {
             launchEnvironment["MOBIDEX_SMOKE_SERVER_ID"] = serverID
         }
+        if let seedProjectState = environment["MOBIDEX_SMOKE_SEED_PROJECT_STATE"] {
+            launchEnvironment["MOBIDEX_SMOKE_SEED_PROJECT_STATE"] = seedProjectState
+        }
+        if let browsePath = environment["MOBIDEX_UI_BROWSE_PATH"] {
+            launchEnvironment["MOBIDEX_UI_BROWSE_PATH"] = browsePath
+        }
+        for (key, value) in extra {
+            launchEnvironment[key] = value
+        }
         return launchEnvironment
+    }
+
+    private func openSeededServerIfNeeded(_ app: XCUIApplication) {
+        let addProjectButton = app.buttons["addProjectButton"]
+        if addProjectButton.waitForExistence(timeout: 5) {
+            return
+        }
+        let serverRow = app.descendants(matching: .any)["serverRow"]
+        if serverRow.waitForExistence(timeout: timeout) {
+            serverRow.tap()
+        }
     }
 
     private func smokeText(_ key: String, defaultValue: String) -> String {

@@ -774,6 +774,7 @@ private struct AddProjectButton: View {
         }
         .disabled(disabled)
         .accessibilityLabel("Add Project")
+        .accessibilityIdentifier("addProjectButton")
     }
 }
 

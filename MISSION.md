@@ -1,20 +1,23 @@
-Mission: Validate the review findings in the available review artifact and fix any confirmed Mobidex defects.
+Mission: Ship the latest project-add, remote-browser, SSH directory, E2E harness, and recording-indicator fixes to TestFlight internal and external testers.
 
 Done criteria:
-- Sync the worktree with the latest `origin/master`.
-- Locate and parse the requested review file or the nearest matching review artifact.
-- Classify review claims as confirmed, not reproducible, or already addressed.
-- Fix confirmed defects only, with focused regression coverage when code changes are needed.
-- Run a subagent review after each coherent chunk of review/fix work.
-- Run focused verification for the validated scope.
+- Confirm `master` is based on the latest `origin/master`.
+- Commit the release-candidate fixes with a conventional commit.
+- Run focused/shared/iOS validation required for the release candidate.
+- Push the release commit to `origin/master`.
+- Upload a fresh TestFlight build and add it to internal testing.
+- Submit the same build to the external TestFlight group for beta review.
 
 Guardrails:
-- Respect the current detached worktree and do not rewrite unrelated state.
+- Build from up-to-date `master`, per repo release policy.
 - Prefer hard, simple fixes over compatibility shims or dead paths.
-- Keep iOS and Android behavior aligned when the same state/model issue exists in both clients.
-- Do not invent findings from historical review-log entries that already include fixes and verification.
+- Do not revert unrelated local changes.
+- Do not ship if the release tooling or high-signal validation fails.
 
 Critical learnings:
+- `master` was current with `origin/master` before release work; release candidate changes were uncommitted on top of build 32.
+- Validation passed for the release candidate: `git diff --check`, `Scripts/verify-ios-distribution-config.sh`, shared-core debug unit tests, XcodeBuildMCP simulator tests (`168 passed, 0 failed, 4 skipped`), real-host remote directory browse smoke, and real-host add discovered project smoke.
+- The add-discovered smoke failed once with Xcode exit 65 only when run concurrently with another live-host smoke; rerunning it alone passed.
 - `origin/master` and the current `HEAD` both resolve to `b7bfcc1ce6c374b15cf4b46a6c685e7881d881d4`; the worktree is already up to date.
 - The requested `REVIEW.md` is not present in this worktree. The available matching artifact is `REVIEW_NOTES.md`.
 - `REVIEW_NOTES.md` reads as a historical review log: every listed finding has adjacent fix/verification notes, and the latest completion-audit section ends with no blocking findings.

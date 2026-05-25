@@ -1,3 +1,11 @@
+## TestFlight Build 33
+
+- [x] Confirm `master` is current.
+- [x] Run focused release validation.
+- [ ] Push the release commit to `origin/master`.
+- [ ] Upload TestFlight build and assign internal testers.
+- [ ] Submit the build to external TestFlight review.
+
 ## Review Notes Validation
 
 - [x] Sync the detached worktree with `origin/master`.
@@ -48,6 +56,14 @@
 ## Parked
 
 - [ ] Split Ad Hoc signing from Release App Store signing if the Ad Hoc workflow is still needed.
+
+## Project Add And Browser Smoke
+
+- [x] Fix discovered-project add from the Add Project sheet.
+- [x] Add live-host UI smoke for adding a discovered project.
+- [x] Add live-host UI smoke for remote folder browsing.
+- [x] Add visible recording activity while audio capture is active.
+- [x] Review and run focused/full iOS validation.
 
 ## Project Detail Loading Placeholder
 

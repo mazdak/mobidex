@@ -24,7 +24,7 @@ enum MobidexLaunchSmoke {
                 codexPath: config.codexPath,
                 executionPath: config.executionPath,
                 authMethod: config.authMethod,
-                projects: [ProjectRecord(path: config.cwd)]
+                projects: [config.seedProject]
             )
             let saved = await model.saveServer(
                 server,
@@ -66,6 +66,30 @@ enum MobidexLaunchSmoke {
                     conversationSectionCount: model.conversationSections.count,
                     assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
                     expectedTextFound: false
+                ))
+                return
+            }
+
+            if config.mode == "add-discovered-project" {
+                currentStage = "adding-discovered-project"
+                try writeResult(.running(stage: "adding-discovered-project", message: nil))
+                guard model.addProject(path: config.cwd) else {
+                    throw SmokeError.failed(model.statusMessage ?? "Adding discovered project failed.")
+                }
+                guard model.selectedProject?.path == config.cwd,
+                      model.selectedProject?.isAddedToProjectList == true
+                else {
+                    throw SmokeError.failed("Discovered project was not selected as an added project.")
+                }
+                try writeResult(.success(
+                    message: "In-app add discovered project smoke succeeded.",
+                    mode: config.mode,
+                    authMethod: config.authMethod.rawValue,
+                    sessionCount: model.selectedServer?.projects.filter(\.isAddedToProjectList).count ?? 0,
+                    conversationSectionCount: 0,
+                    assistantSectionCount: 0,
+                    expectedTextFound: false,
+                    selectedThreadLoaded: false
                 ))
                 return
             }
@@ -138,6 +162,26 @@ enum MobidexLaunchSmoke {
                     assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
                     expectedTextFound: false,
                     selectedThreadLoaded: true
+                ))
+                return
+            }
+
+            if config.mode == "browse-directories" {
+                currentStage = "browsing-directories"
+                try writeResult(.running(stage: "browsing-directories", message: nil))
+                let listing = try await model.listRemoteDirectories(path: config.browsePath)
+                guard !listing.entries.isEmpty else {
+                    throw SmokeError.failed("Remote folder browser returned no folders for \(listing.path).")
+                }
+                try writeResult(.success(
+                    message: "In-app SSH remote folder browse smoke succeeded.",
+                    mode: config.mode,
+                    authMethod: config.authMethod.rawValue,
+                    sessionCount: listing.entries.count,
+                    conversationSectionCount: 0,
+                    assistantSectionCount: 0,
+                    expectedTextFound: false,
+                    selectedThreadLoaded: false
                 ))
                 return
             }
@@ -325,6 +369,8 @@ private struct SmokeConfig {
     var steerText: String
     var expectedText: String?
     var newSessionLocation: NewSessionLocation
+    var seedProject: ProjectRecord
+    var browsePath: String
     var timeout: TimeInterval
 
     init(environment: [String: String]) throws {
@@ -368,8 +414,8 @@ private struct SmokeConfig {
         }
 
         let parsedMode = environment["MOBIDEX_SMOKE_MODE"]?.nonEmpty ?? (parsedAuthMethod == .password ? "connection" : "turn")
-        guard parsedMode == "turn" || parsedMode == "connection" || parsedMode == "control" || parsedMode == "approval" || parsedMode == "seed" || parsedMode == "new-session" || parsedMode == "join" else {
-            throw SmokeError.failed("Unsupported MOBIDEX_SMOKE_MODE. Use turn, connection, control, approval, seed, new-session, or join.")
+        guard parsedMode == "turn" || parsedMode == "connection" || parsedMode == "control" || parsedMode == "approval" || parsedMode == "seed" || parsedMode == "new-session" || parsedMode == "join" || parsedMode == "browse-directories" || parsedMode == "add-discovered-project" else {
+            throw SmokeError.failed("Unsupported MOBIDEX_SMOKE_MODE. Use turn, connection, control, approval, seed, new-session, join, browse-directories, or add-discovered-project.")
         }
         let parsedNewSessionLocation: NewSessionLocation
         switch environment["MOBIDEX_SMOKE_NEW_SESSION_LOCATION"]?.nonEmpty ?? "project-directory" {
@@ -401,6 +447,15 @@ private struct SmokeConfig {
         self.steerText = environment["MOBIDEX_SMOKE_STEER_TEXT"]?.nonEmpty ?? "Steer control smoke"
         self.expectedText = environment["MOBIDEX_SMOKE_EXPECTED_TEXT"]?.nonEmpty
         self.newSessionLocation = parsedNewSessionLocation
+        self.browsePath = environment["MOBIDEX_SMOKE_BROWSE_PATH"]?.nonEmpty ?? "~"
+        switch environment["MOBIDEX_SMOKE_SEED_PROJECT_STATE"]?.nonEmpty ?? "added" {
+        case "added":
+            self.seedProject = ProjectRecord(path: cwd, isAdded: true)
+        case "discovered":
+            self.seedProject = ProjectRecord(path: cwd, discovered: true, discoveredSessionCount: 1, isAdded: false)
+        default:
+            throw SmokeError.failed("Unsupported MOBIDEX_SMOKE_SEED_PROJECT_STATE. Use added or discovered.")
+        }
         self.timeout = environment["MOBIDEX_SMOKE_TIMEOUT"].flatMap(TimeInterval.init) ?? 120
     }
 }

@@ -634,6 +634,8 @@ struct ConversationView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.primary)
 
+            RecordingActivityBars()
+
             Spacer(minLength: 8)
 
             Button {
@@ -1028,6 +1030,28 @@ struct ConversationView: View {
         guard didDisableIdleTimerForRecording else { return }
         UIApplication.shared.isIdleTimerDisabled = idleTimerWasDisabledBeforeRecording
         didDisableIdleTimerForRecording = false
+    }
+}
+
+private struct RecordingActivityBars: View {
+    private let bars: [CGFloat] = [0.38, 0.78, 0.52, 0.92, 0.46]
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            let time = timeline.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(bars.indices, id: \.self) { index in
+                    let phase = time * 5 + Double(index) * 0.85
+                    let scale = bars[index] + CGFloat((sin(phase) + 1) * 0.22)
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(Color.red.opacity(0.85))
+                        .frame(width: 4, height: 22)
+                        .scaleEffect(x: 1, y: min(scale, 1), anchor: .center)
+                }
+            }
+            .frame(width: 34, height: 24)
+        }
+        .accessibilityHidden(true)
     }
 }
 

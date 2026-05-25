@@ -44,6 +44,7 @@ try:
 except Exception as error:
     print(json.dumps({"path": requested_path, "entries": [], "error": str(error)}))
 PY
+mobidex_status=${'$'}?;exit ${'$'}mobidex_status
         """.trimIndent()
     }
 
@@ -70,6 +71,7 @@ try:
 except Exception as error:
     print(json.dumps({"path": parent_path, "entries": [], "error": str(error)}))
 PY
+mobidex_status=${'$'}?;exit ${'$'}mobidex_status
         """.trimIndent()
     }
 
@@ -88,13 +90,14 @@ try:
 except Exception as error:
     print(json.dumps({"path": requested_path, "entries": [], "error": str(error)}))
 PY
+mobidex_status=${'$'}?;exit ${'$'}mobidex_status
         """.trimIndent()
     }
 
     @Throws(RemoteDirectoryBrowserException::class)
     fun decodeListing(output: String): RemoteDirectoryListing {
         try {
-            val wire = directoryJson.decodeFromString<RemoteDirectoryListingWire>(output.trim())
+            val wire = directoryJson.decodeFromString<RemoteDirectoryListingWire>(extractListingJson(output))
             val error = wire.error
             if (!error.isNullOrBlank()) {
                 throw RemoteDirectoryBrowserException(error)
@@ -110,6 +113,16 @@ PY
 
     private val directoryJson = Json {
         ignoreUnknownKeys = true
+    }
+
+    private fun extractListingJson(output: String): String {
+        val trimmed = output.trim()
+        val start = trimmed.indexOf('{')
+        val end = trimmed.lastIndexOf('}')
+        if (start < 0 || end < start) {
+            return trimmed
+        }
+        return trimmed.substring(start, end + 1)
     }
 
     private fun decodePreview(value: String, limit: Int = 320): String {

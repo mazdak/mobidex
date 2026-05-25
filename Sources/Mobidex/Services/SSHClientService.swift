@@ -364,7 +364,7 @@ final class CitadelSSHService: TerminalSSHService {
             let output = try await client.executeCommand(
                 SharedKMPBridge.remoteDirectoryBrowserShellCommand(path: path),
                 maxResponseSize: 1_000_000,
-                mergeStreams: false,
+                mergeStreams: true,
                 inShell: true
             )
             return try SharedKMPBridge.decodeRemoteDirectoryListing(from: String(buffer: output))
@@ -376,7 +376,7 @@ final class CitadelSSHService: TerminalSSHService {
             let output = try await client.executeCommand(
                 SharedKMPBridge.remoteDirectoryCreateShellCommand(parentPath: parentPath, folderName: folderName),
                 maxResponseSize: 1_000_000,
-                mergeStreams: false,
+                mergeStreams: true,
                 inShell: true
             )
             return try SharedKMPBridge.decodeRemoteDirectoryListing(from: String(buffer: output))
@@ -388,7 +388,7 @@ final class CitadelSSHService: TerminalSSHService {
             let output = try await client.executeCommand(
                 SharedKMPBridge.remoteDirectoryEnsureShellCommand(path: path),
                 maxResponseSize: 1_000_000,
-                mergeStreams: false,
+                mergeStreams: true,
                 inShell: true
             )
             return try SharedKMPBridge.decodeRemoteDirectoryListing(from: String(buffer: output))

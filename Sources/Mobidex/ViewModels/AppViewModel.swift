@@ -321,6 +321,7 @@ final class AppViewModel: ObservableObject {
     private let threadDetailCacheTTL: TimeInterval
     private let maxThreadDetailCacheEntries: Int
     private let sessionStartOperationTimeoutSeconds: Double
+    private let remoteDirectoryOperationTimeoutSeconds: Double = 60
     private let sessionListInitialPageLimit = 1
     private let jsonEncoder = JSONEncoder()
     private let jsonDecoder = JSONDecoder()
@@ -816,7 +817,7 @@ final class AppViewModel: ObservableObject {
             throw SSHServiceError.remoteDirectoryBrowseFailed("Select a server before browsing folders.")
         }
         let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
-        return try await withTimeout(seconds: 20) {
+        return try await withTimeout(seconds: remoteDirectoryOperationTimeoutSeconds) {
             try await self.sshService.listDirectories(path: path, server: selectedServer, credential: credential)
         }
     }
@@ -826,7 +827,7 @@ final class AppViewModel: ObservableObject {
             throw SSHServiceError.remoteDirectoryBrowseFailed("Select a server before creating folders.")
         }
         let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
-        return try await withTimeout(seconds: 20) {
+        return try await withTimeout(seconds: remoteDirectoryOperationTimeoutSeconds) {
             try await self.sshService.createDirectory(
                 parentPath: parentPath,
                 folderName: folderName,
@@ -841,7 +842,7 @@ final class AppViewModel: ObservableObject {
             throw SSHServiceError.remoteDirectoryBrowseFailed("Select a server before creating folders.")
         }
         let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
-        return try await withTimeout(seconds: 20) {
+        return try await withTimeout(seconds: remoteDirectoryOperationTimeoutSeconds) {
             try await self.sshService.ensureDirectory(path: path, server: selectedServer, credential: credential)
         }
     }

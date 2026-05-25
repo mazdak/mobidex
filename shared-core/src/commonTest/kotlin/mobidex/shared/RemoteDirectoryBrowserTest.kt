@@ -13,6 +13,7 @@ class RemoteDirectoryBrowserTest {
         assertTrue(command.contains("requested_path = \"/tmp/Project \\\"A\\\"\""), command)
         assertTrue(command.contains("os.scandir(current_path)"), command)
         assertTrue(command.contains("entry.is_dir(follow_symlinks=True)"), command)
+        assertTrue(command.contains("mobidex_status=${'$'}?;exit ${'$'}mobidex_status"), command)
     }
 
     @Test
@@ -25,6 +26,25 @@ class RemoteDirectoryBrowserTest {
             RemoteDirectoryListing(
                 path = "/",
                 entries = listOf(RemoteDirectoryEntry(name = "Users", path = "/Users")),
+            ),
+            listing,
+        )
+    }
+
+    @Test
+    fun decodeListingToleratesMergedShellNoiseAroundJson() {
+        val listing = RemoteDirectoryBrowser.decodeListing(
+            """
+            /Users/mazdak/.zprofile:44: command not found: starship
+            {"path":"/Users","entries":[{"name":"mazdak","path":"/Users/mazdak"}]}
+            shell warning after command
+            """.trimIndent()
+        )
+
+        assertEquals(
+            RemoteDirectoryListing(
+                path = "/Users",
+                entries = listOf(RemoteDirectoryEntry(name = "mazdak", path = "/Users/mazdak")),
             ),
             listing,
         )

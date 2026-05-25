@@ -12,6 +12,7 @@ LOG_PATH="${LOG_PATH:-/tmp/mobidex-live-host-ui-smoke.log}"
 SCREENSHOT_PATH="${MOBIDEX_UI_SMOKE_SCREENSHOT_PATH:-/tmp/mobidex-live-host-ui-smoke.png}"
 TIMEOUT_SECONDS="${MOBIDEX_UI_SMOKE_TIMEOUT:-180}"
 TEST_TIMEOUT_SECONDS="${MOBIDEX_UI_TEST_TIMEOUT_SECONDS:-$((TIMEOUT_SECONDS + 120))}"
+TEST_IDENTIFIER="${MOBIDEX_UI_TEST_IDENTIFIER:-MobidexUITests/testRealHostNewSessionFromVisibleUI}"
 WORK_DIR="$(mktemp -d)"
 XCTESTRUN_PATH="${MOBIDEX_UI_XCTESTRUN_PATH:-"$WORK_DIR/MobidexLiveHostUI.xctestrun"}"
 
@@ -131,7 +132,7 @@ plist="/usr/libexec/PlistBuddy"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:UserAttachmentLifetime string deleteOnSuccess" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:SkipTestIdentifiers array" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:OnlyTestIdentifiers array" "$XCTESTRUN_PATH"
-"$plist" -c "Add :TestConfigurations:0:TestTargets:0:OnlyTestIdentifiers:0 string MobidexUITests/testRealHostNewSessionFromVisibleUI" "$XCTESTRUN_PATH"
+"$plist" -c "Add :TestConfigurations:0:TestTargets:0:OnlyTestIdentifiers:0 string $TEST_IDENTIFIER" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:TestingEnvironmentVariables dict" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:TestingEnvironmentVariables:__XCODE_BUILT_PRODUCTS_DIR_PATHS string $PRODUCT_DIR" "$XCTESTRUN_PATH"
 "$plist" -c "Add :TestConfigurations:0:TestTargets:0:TestingEnvironmentVariables:__XPC_DYLD_FRAMEWORK_PATH string $PRODUCT_DIR" "$XCTESTRUN_PATH"
@@ -163,11 +164,15 @@ for key in \
   MOBIDEX_SMOKE_PRIVATE_KEY_PASSPHRASE \
   MOBIDEX_SMOKE_PROMPT \
   MOBIDEX_SMOKE_SERVER_ID \
+  MOBIDEX_SMOKE_SEED_PROJECT_STATE \
   MOBIDEX_SMOKE_STEER_TEXT \
   MOBIDEX_SMOKE_EXECUTION_PATH \
   MOBIDEX_SMOKE_TIMEOUT \
   MOBIDEX_SMOKE_USER \
+  MOBIDEX_UI_ADD_DISCOVERED_PROJECT_SMOKE \
+  MOBIDEX_UI_BROWSE_PATH \
   MOBIDEX_UI_NEW_SESSION_LOCATION \
+  MOBIDEX_UI_REMOTE_BROWSER_SMOKE \
   MOBIDEX_UI_REAL_HOST_SMOKE \
   MOBIDEX_UI_SMOKE_EXPECTED_TEXT \
   MOBIDEX_UI_SMOKE_PROMPT \
@@ -179,6 +184,7 @@ done
 xcrun simctl boot "$DEVICE_ID" >/dev/null 2>&1 || true
 xcrun simctl bootstatus "$DEVICE_ID" -b >/dev/null
 xcrun simctl terminate "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+xcrun simctl uninstall "$DEVICE_ID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 
 set +e
 perl -e 'alarm shift; exec @ARGV' "$TEST_TIMEOUT_SECONDS" \
