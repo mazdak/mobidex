@@ -218,6 +218,7 @@ private class FakeCredentialStore : CredentialStore {
     override suspend fun deleteCredential(serverID: String) = Unit
     override suspend fun loadOpenAIAPIKey(): String? = null
     override suspend fun saveOpenAIAPIKey(key: String?) = Unit
+    // XAI methods removed; ACP uses same auth model as Codex (SSH is sufficient).
 }
 
 private class FakeHostKeyStore : HostKeyStore {
@@ -247,6 +248,8 @@ private class FakeSshService(
         openFailure?.let { throw it }
         return CodexAppServerClient(transport)
     }
+    override suspend fun openRawExec(server: ServerRecord, credential: SSHCredential, command: String): CodexLineTransport =
+        error("Raw exec / ACP path is not used by these tests.")
     override suspend fun openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential): RemoteTerminalSession =
         error("Terminal is not used by these tests.")
 }

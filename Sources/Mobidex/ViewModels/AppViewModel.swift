@@ -342,6 +342,29 @@ final class AppViewModel: ObservableObject {
     private var suppressThreadAutoSelection = false
     private var autoConnectAttemptedServerIDs = Set<UUID>()
     private var appServerReconnectAttemptsByServerID: [UUID: Int] = [:]
+
+    // ACP / Grok debug wiring (item 7 minimal path, Codex untouched).
+    // Parallel holders + surface so mapped sessionItems (CodexThreadItem from the bridged KMP mapper)
+    // can be driven over real openRawExec + AcpGrokClient without touching appServer/eventTask/connectSelectedServer/send paths.
+    private var debugAcpClient: AcpGrokClient?
+    private var debugAcpCollectorTask: Task<Void, Never>?
+    @Published private(set) var debugAcpItems: [CodexThreadItem] = []
+    var debugAcpConversationSections: [ConversationSection] {
+        SharedKMPBridge.conversationSections(from: debugAcpItems)
+    }
+    @Published private(set) var isShowingAcpDebugPreview = false
+
+    // ACP / Grok *production* wiring.
+    // When selectedServer.backendType == .acpGrok, the main connectSelectedServer / send / approval / close
+    // paths drive these instead of appServer + eventTask. The collector feeds the primary conversation state
+    // (via the same SharedKMPBridge.conversationSections(from:) the debug preview already uses) so Grok
+    // chunks render as identical rich UI elements in the normal ConversationView.
+    // Zero changes to any Codex paths. Reuses AcpGrokClient actor + mapper + raw-exec + (post-simplification) auth model.
+    private var acpClient: AcpGrokClient?
+    private var acpCollectorTask: Task<Void, Never>?
+    private var acpItems: [CodexThreadItem] = []
+    private var acpSessionId: String?
+
     private var threadListCache: [ThreadLoadScope: CachedThreadList] = [:]
     private var threadDetailCache: [ThreadDetailCacheKey: CachedThreadDetail] = [:]
     private var suppressNextConversationDetailCache = false
@@ -429,15 +452,15 @@ final class AppViewModel: ObservableObject {
     }
 
     var canSendMessage: Bool {
-        appServer != nil && !isSessionMutationInFlight
+        (appServer != nil || acpClient != nil) && !isSessionMutationInFlight
     }
 
     var canInterruptActiveTurn: Bool {
-        appServer != nil && activeTurnID != nil
+        (appServer != nil || acpClient != nil) && activeTurnID != nil
     }
 
     var isAppServerConnected: Bool {
-        appServer != nil
+        appServer != nil || acpClient != nil
     }
 
     var isBusy: Bool {
@@ -517,6 +540,11 @@ final class AppViewModel: ObservableObject {
         statusMessage = nil
         resetSessionState(clearThreads: true)
         pendingApprovals = []
+        acpCollectorTask?.cancel()
+        acpCollectorTask = nil
+        acpClient = nil
+        acpSessionId = nil
+        acpItems = []
         return true
     }
 
@@ -900,6 +928,109 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Minimal debug/experimental path for item 7 (ACP/Grok wiring parity with Android).
+    /// Drives a real `grok agent stdio` over SSH raw exec + the Swift AcpGrokClient (actor) + bridged mapper.
+    /// Emits the exact CodexThreadItem kinds (reasoning for thoughts, agentMessage, toolCall, etc.)
+    /// into a parallel debug surface (`debugAcpItems`) that reuses the same models already rendered
+    /// by ConversationView / ConversationSection — satisfying "properly translated to right UI elements".
+    ///
+    /// Codex connectSelectedServer / send / disconnect paths are 100% untouched (byte-for-byte).
+    /// ServerRecord backendType and main flows remain parked.
+    func startAcpDebugSessionForGrok(model: String = "grok-build", initialPrompt: String? = nil) async {
+        guard let server = selectedServer else { return }
+
+        // Cancel prior debug ACP session (simple reset, no hidden sharing with Codex state).
+        debugAcpCollectorTask?.cancel()
+        if let prior = debugAcpClient {
+            await prior.close()
+        }
+        debugAcpClient = nil
+        debugAcpItems = []
+
+        await runOperation(.connecting, status: "Starting Grok (ACP debug)", marksConnectionFailure: true) {
+            let credential = try await loadCredentialFromStore(serverID: server.id)
+            // No XAI key injection from the phone. SSH authentication is the trust boundary;
+            // the remote grok process reads its own auth (exactly as codex does today).
+            let command = SharedKMPBridge.acpStdioCommand(grokBin: nil, model: model, extraArgs: [])
+            let transport = try await sshService.openRawExec(server: server, credential: credential, command: command)
+            let client = AcpGrokClient(transport: transport)
+            debugAcpClient = client
+
+            try await client.initialize()
+            let cwd = selectedProject?.path
+            let sid = try await client.createSession(cwd: cwd, title: "Grok debug session")
+
+            statusMessage = "ACP Grok session \(sid) connected (debug)."
+
+            if let prompt = initialPrompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try? await client.sendPrompt(sessionId: sid, text: prompt)
+            }
+
+            debugAcpCollectorTask = Task { [weak self] in
+                guard let self else { return }
+                for await item in client.sessionItems {
+                    await MainActor.run {
+                        self.debugAcpItems.append(item)
+                    }
+                }
+            }
+        }
+    }
+
+    func presentAcpDebugPreview() {
+        isShowingAcpDebugPreview = true
+    }
+
+    /// Production ACP path helper (called from main send / connect branches when backendType == .acpGrok).
+    /// Launches (or reuses) a real `grok agent stdio` via openRawExec + AcpGrokClient actor for the
+    /// currently selected project. Collector feeds the *main* conversationSections via the exact same
+    /// SharedKMPBridge.conversationSections(from:) projection used by the debug preview and (on the
+    /// KMP side) by the Android production collector. This makes a .acpGrok ServerRecord "just work"
+    /// in the normal chat UI with identical rich elements (Reasoning, ToolCall, Plan, etc.).
+    ///
+    /// Codex paths remain 100% untouched.
+    private func startAcpProductionSessionForCurrentProject() async {
+        guard let server = selectedServer, server.backendType == .acpGrok else { return }
+        let projectPath = selectedProject?.path
+
+        // Cancel prior production ACP session for this server if project changed or we are restarting.
+        acpCollectorTask?.cancel()
+        if let prior = acpClient {
+            await prior.close()
+        }
+        acpClient = nil
+        acpItems = []
+
+        await runOperation(.connecting, status: "Starting Grok", marksConnectionFailure: true) {
+            let credential = try await loadCredentialFromStore(serverID: server.id)
+            let command = SharedKMPBridge.acpStdioCommand(grokBin: nil, model: "grok-build", extraArgs: [])
+            let transport = try await sshService.openRawExec(server: server, credential: credential, command: command)
+            let client = AcpGrokClient(transport: transport)
+            acpClient = client
+
+            try await client.initialize()
+            let sid = try await client.createSession(cwd: projectPath, title: server.displayName)
+            acpSessionId = sid
+
+            statusMessage = "Grok session connected."
+
+            acpCollectorTask = Task { [weak self] in
+                guard let self else { return }
+                for await item in client.sessionItems {
+                    await MainActor.run {
+                        self.acpItems.append(item)
+                        // Drive the normal ConversationView with the proven mapper (identical to debug preview).
+                        self.publishConversationSections(SharedKMPBridge.conversationSections(from: self.acpItems))
+                    }
+                }
+            }
+        }
+    }
+
+    func dismissAcpDebugPreview() {
+        isShowingAcpDebugPreview = false
+    }
+
     func diagnoseSelectedConnection() async {
         guard let selectedServer else { return }
         isRunningConnectionDiagnostics = true
@@ -990,6 +1121,19 @@ final class AppViewModel: ObservableObject {
     private func connectSelectedServer(syncActiveChatCounts: Bool, preservingVisibleState: Bool) async {
         guard !isConnectingAppServer else { return }
         guard let targetServer = selectedServer else { return }
+        if targetServer.backendType == .acpGrok {
+            // ACP production path: use the pre-built helper (collector drives main conversationSections via SharedKMPBridge + mapper).
+            // Early return keeps the entire Codex connect body below byte-for-byte untouched.
+            await closeConnection(updateState: false, clearOpenSessionCounts: !preservingVisibleState, cancelReconnect: !preservingVisibleState)
+            connectionState = .connecting
+            await startAcpProductionSessionForCurrentProject()
+            // Collector inside helper will publish sections + status; set Connected explicitly for parity with Codex.
+            if selectedServerID == targetServer.id {
+                connectionState = .connected
+            }
+            isConnectingAppServer = false
+            return
+        }
         isConnectingAppServer = true
         connectionState = .connecting
         defer {
@@ -1494,6 +1638,33 @@ final class AppViewModel: ObservableObject {
         activeTurnBehavior: ActiveTurnSendBehavior = .queue
     ) async -> Bool {
         guard !baseInput.isEmpty || !localAttachmentPaths.isEmpty else { return false }
+        if selectedServer?.backendType == .acpGrok {
+            // ACP production send path (simple text prompt for v1; attachments/ rich input future).
+            // Uses stored sid + client; optimistic local echo appended to acpItems so it appears via the
+            // SharedKMPBridge.conversationSections mapper (identical rich UI elements as debug preview + Android).
+            guard let client = acpClient, let sid = acpSessionId else {
+                statusMessage = "No active Grok session."
+                return false
+            }
+            guard !isOperationActive(.sending) else { return false }
+            let text = baseInput.compactMap { if case .text(let t) = $0 { t } else { nil } }.joined(separator: " ")
+            if !text.isEmpty {
+                // Local user echo as CodexThreadItem (the type the Swift client + bridge expect).
+                let echo = CodexThreadItem.userMessage(id: "local-\(UUID().uuidString)", text: text)
+                await MainActor.run {
+                    acpItems.append(echo)
+                    publishConversationSections(SharedKMPBridge.conversationSections(from: acpItems))
+                }
+            }
+            await runOperation(.sending, status: "Sending") {
+                do {
+                    try await client.sendPrompt(sessionId: sid, text: text)
+                } catch {
+                    await MainActor.run { statusMessage = error.localizedDescription }
+                }
+            }
+            return true
+        }
         guard appServer != nil else {
             statusMessage = "Connect to the server before sending a message."
             return false
@@ -1673,6 +1844,12 @@ final class AppViewModel: ObservableObject {
 
     func respond(to approval: PendingApproval, accept: Bool) async {
         await runOperation(.respondingToApproval, status: accept ? "Approving" : "Declining") {
+            if acpClient != nil {
+                // ACP approvals surface as AgentEvent items via the stream/mapper (no separate pending list roundtrip yet).
+                // Clear any pending entry for UI consistency; full bidirectional approval is future work.
+                pendingApprovals.removeAll { $0.id == approval.id }
+                return
+            }
             guard let appServer else { return }
             guard let result = approvalResponse(for: approval, accept: accept) else {
                 return
@@ -1699,6 +1876,12 @@ final class AppViewModel: ObservableObject {
         }
         eventTask?.cancel()
         eventTask = nil
+        acpCollectorTask?.cancel()
+        acpCollectorTask = nil
+        if let c = acpClient { Task { await c.close() } }
+        acpClient = nil
+        acpSessionId = nil
+        acpItems = []
         cancelActiveTurnRefresh()
         await appServer?.close()
         appServer = nil

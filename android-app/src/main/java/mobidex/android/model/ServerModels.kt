@@ -13,6 +13,12 @@ enum class ServerAuthMethod(val label: String) {
 }
 
 @Serializable
+enum class BackendType {
+    CodexAppServer,
+    AcpGrok,
+}
+
+@Serializable
 data class ServerRecord(
     val id: String = UUID.randomUUID().toString(),
     val displayName: String,
@@ -25,6 +31,7 @@ data class ServerRecord(
     val projects: List<ProjectRecord> = emptyList(),
     val createdAtEpochSeconds: Long = Instant.now().epochSecond,
     val updatedAtEpochSeconds: Long = Instant.now().epochSecond,
+    val backendType: BackendType = BackendType.CodexAppServer,
 ) {
     val endpointLabel: String
         get() = "$username@$host:$port"
@@ -39,6 +46,7 @@ data class ServerRecord(
                 codexPath = launchConfig.codexPath,
                 executionPath = launchConfig.executionPath,
                 updatedAtEpochSeconds = Instant.now().epochSecond,
+                backendType = backendType,
             )
         }
 

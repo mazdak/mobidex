@@ -131,6 +131,148 @@ enum SharedKMPBridge {
         toRemoteDirectoryListing(try MobidexShared.RemoteDirectoryBrowser.shared.decodeListing(output: output))
     }
 
+    // MARK: - ACP / Grok agent (item 5 iOS client parity)
+    // Raw stdio launch command for `grok agent stdio` over openRawExec (CodexLineTransport).
+    // Mirrors appServerCommand pattern; delegates to KMP RemoteAcpCommand.
+    // No xaiApiKey: auth is the remote user's concern after SSH login (same as Codex).
+    static func acpStdioCommand(grokBin: String?, model: String?, extraArgs: [String] = []) -> String {
+        MobidexShared.RemoteAcpCommand.shared.stdioCommand(
+            acpPath: grokBin ?? "grok",
+            executionPath: "",
+            model: model ?? "grok-build",
+            extraArgs: extraArgs
+        )
+    }
+
+    // MARK: - ACP / Grok protocol surface (item 5 iOS AcpGrokClient parity)
+    // Minimal bridge mirroring the Codex RPC section below. Exposes request builders + classify + mapper
+    // so AcpGrokClient can drive `grok agent stdio` over CodexLineTransport (openRawExec) and feed the
+    // exact same SharedCodexSessionItem instances (AgentMessage, Reasoning, ToolCall, Plan, AgentEvent)
+    // into the existing conversation UI with zero new rendering code.
+    typealias SharedAcpRpcRequests = MobidexShared.AcpRpcRequests
+    typealias SharedAcpProtocolCore = MobidexShared.AcpProtocolCore
+    typealias SharedAcpRpcInboundClassification = MobidexShared.AcpRpcInboundClassification
+    typealias SharedAcpRpcInboundEnvelope = MobidexShared.AcpRpcInboundEnvelope
+    typealias SharedAcpSessionUpdate = MobidexShared.AcpSessionUpdate
+    typealias SharedAcpContentChunk = MobidexShared.AcpContentChunk
+    typealias SharedAcpContentChunkAgentMessageChunk = MobidexShared.AcpContentChunkAgentMessageChunk
+    typealias SharedAcpContentChunkAgentThoughtChunk = MobidexShared.AcpContentChunkAgentThoughtChunk
+    typealias SharedAcpContentChunkToolCall = MobidexShared.AcpContentChunkToolCall
+    typealias SharedAcpContentChunkPlan = MobidexShared.AcpContentChunkPlan
+    typealias SharedAcpContentChunkApprovalRequest = MobidexShared.AcpContentChunkApprovalRequest
+    typealias SharedAcpContentChunkOther = MobidexShared.AcpContentChunkOther
+
+    static func acpInitializeParams(clientName: String = "mobidex", clientTitle: String = "Mobidex", clientVersion: String = "0.1.0") -> JSONValue? {
+        let req = MobidexShared.AcpRpcRequests.shared.initialize(
+            id: 0,
+            clientName: clientName,
+            clientTitle: clientTitle,
+            clientVersion: clientVersion,
+            capabilities: [:]
+        )
+        return params(from: req)
+    }
+
+    static func acpSessionNewParams(cwd: String?, title: String?) -> JSONValue? {
+        let req = MobidexShared.AcpRpcRequests.shared.sessionNew(id: 0, cwd: cwd, title: title)
+        return params(from: req)
+    }
+
+    static func acpSessionPromptParams(sessionId: String, prompt: String, context: [JSONValue] = []) -> JSONValue? {
+        let req = MobidexShared.AcpRpcRequests.shared.sessionPrompt(
+            id: 0,
+            sessionId: sessionId,
+            prompt: prompt,
+            context: context.map(toSharedJSONValue)
+        )
+        return params(from: req)
+    }
+
+    static func acpSessionInterruptParams(sessionId: String) -> JSONValue? {
+        let req = MobidexShared.AcpRpcRequests.shared.sessionInterrupt(id: 0, sessionId: sessionId)
+        return params(from: req)
+    }
+
+    static func makeAcpProtocolCore() -> SharedAcpProtocolCore {
+        SharedAcpProtocolCore()
+    }
+
+    static func acpClassifyInbound(core: SharedAcpProtocolCore, envelope: (id: JSONValue?, method: String?, params: JSONValue?, result: JSONValue?, error: CodexRPCErrorInfo?)) -> AcpInboundAction? {
+        let sharedEnvelope = SharedAcpRpcInboundEnvelope(
+            id: envelope.id.map(toSharedJSONValue),
+            method: envelope.method,
+            params: envelope.params.map(toSharedJSONValue),
+            result: envelope.result.map(toSharedJSONValue),
+            error: envelope.error.map { SharedCodexRpcErrorInfo(code: Int32($0.code), message: $0.message) }
+        )
+        guard let classification = core.classifyInbound(envelope: sharedEnvelope) else { return nil }
+
+        // Map KMP classification to a simple Swift action (mirrors Codex classifyInbound switch)
+        switch classification.kind {
+        case "errorResponse":
+            guard let id = swiftInt(from: classification.numericId), let error = classification.error else { return nil }
+            return .errorResponse(id: id, error: CodexRPCErrorInfo(code: Int(error.code), message: error.message))
+        case "resultResponse":
+            guard let id = swiftInt(from: classification.numericId), let result = classification.result else { return nil }
+            return .resultResponse(id: id, result: toJSONValue(result))
+        case "serverRequest":
+            guard let id = classification.id, let method = classification.method else { return nil }
+            return .serverRequest(id: toJSONValue(id), method: method, params: classification.params.map(toJSONValue))
+        case "sessionUpdate":
+            // Special for ACP: return the classification itself so caller can map chunks to items
+            return .sessionUpdate(classification: classification)
+        case "notification":
+            guard let method = classification.method else { return nil }
+            return .notification(method: method, params: classification.params.map(toJSONValue))
+        default:
+            return nil
+        }
+    }
+
+    /// Maps an ACP classification (from session/update) into the exact CodexSessionItem instances
+    /// used by the conversation UI (Reasoning for thoughts, AgentMessage, ToolCall, Plan, AgentEvent).
+    /// This is the iOS-side realization of the "properly translated to right UI elements" requirement.
+    /// (Small pure-Swift mirror of the KMP AcpContentChunk.toCodexSessionItem + toCodexSessionItems
+    /// so we get identical rendering without new UI components.)
+    static func acpClassificationToSessionItems(_ classification: SharedAcpRpcInboundClassification) -> [CodexThreadItem] {
+        guard let update = classification.sessionUpdate, let chunk = update.chunk else { return [] }
+        guard let item = acpChunkToThreadItem(chunk) else { return [] }
+        return [item]
+    }
+
+    private static func acpChunkToThreadItem(_ chunk: SharedAcpContentChunk) -> CodexThreadItem? {
+        // Mirror the KMP mapper logic exactly for the 5 critical kinds (agent message, thought, tool, plan, approval)
+        if let m = chunk as? SharedAcpContentChunkAgentMessageChunk {
+            let text = m.delta
+            guard !text.isEmpty else { return nil }
+            return .agentMessage(id: "acp-\(UUID().uuidString.prefix(8))", text: text)
+        }
+        if let t = chunk as? SharedAcpContentChunkAgentThoughtChunk {
+            let content = t.delta
+            let summaryList = t.summary.map { [$0] } ?? []
+            let contentList = content.isEmpty ? [] : [content]
+            guard !summaryList.isEmpty || !contentList.isEmpty else { return nil }
+            return .reasoning(id: "acp-\(UUID().uuidString.prefix(8))", summary: summaryList, content: contentList)
+        }
+        if let tc = chunk as? SharedAcpContentChunkToolCall {
+            let label = tc.name ?? "tool"
+            let detail = tc.args != nil ? String(describing: tc.args!) : tc.status
+            return .toolCall(id: "acp-\(UUID().uuidString.prefix(8))", label: label, status: tc.status ?? "running", detail: detail)
+        }
+        if let p = chunk as? SharedAcpContentChunkPlan {
+            let text = [p.title, p.content].compactMap { $0 }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return .plan(id: "acp-\(UUID().uuidString.prefix(8))", text: text)
+        }
+        if let a = chunk as? SharedAcpContentChunkApprovalRequest {
+            let label = a.title ?? "Approval required"
+            let detail = a.detail
+            return .agentEvent(id: "acp-\(UUID().uuidString.prefix(8))", label: label, status: "pending", detail: detail)
+        }
+        // Other / unknown tolerated (no crash, no UI item)
+        return nil
+    }
+
     static func parseWebSocketFrame(buffer: Data) throws -> SharedWebSocketFrameParseResult? {
         guard let result = try MobidexShared.WebSocketFrameCodec.shared.parseServerFrame(buffer: toSharedByteArray(buffer)) else {
             return nil
@@ -756,6 +898,15 @@ enum CodexRPCInboundAction {
     case resultResponse(id: Int, result: JSONValue)
     case serverRequest(id: JSONValue, method: String, params: JSONValue?)
     case notification(method: String, params: JSONValue?)
+}
+
+// Dedicated ACP classification result (keeps CodexRPCInboundAction clean for the existing Codex client).
+enum AcpInboundAction {
+    case errorResponse(id: Int, error: CodexRPCErrorInfo)
+    case resultResponse(id: Int, result: JSONValue)
+    case serverRequest(id: JSONValue, method: String, params: JSONValue?)
+    case notification(method: String, params: JSONValue?)
+    case sessionUpdate(classification: MobidexShared.AcpRpcInboundClassification)
 }
 
 private extension JSONValue {

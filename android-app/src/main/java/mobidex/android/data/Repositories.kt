@@ -47,6 +47,8 @@ interface CredentialStore {
     suspend fun deleteCredential(serverID: String)
     suspend fun loadOpenAIAPIKey(): String?
     suspend fun saveOpenAIAPIKey(key: String?)
+    // XAI key methods removed: ACP/Grok auth follows the same model as Codex.
+    // Once SSH-authenticated, the remote process uses the user's ~/.grok/* or env.
 }
 
 interface HostKeyStore {
@@ -123,6 +125,8 @@ class AndroidCredentialStore(context: Context) : CredentialStore {
             writeSecret(APP_OPENAI_API_KEY, key?.trim())
         }
     }
+
+    // XAI key support removed (see interface comment). OpenAI key remains for transcription.
 
     private fun android.content.SharedPreferences.Editor.writeSecret(key: String, value: String?) {
         if (value.isNullOrEmpty()) remove(key) else putString(key, valueCrypto.encrypt(value))
