@@ -27,4 +27,4 @@
 - Decision: New `RemoteAcpCommand.kt` (separate from codex command file) for ACP launch command generation — clean separation, obvious naming.
 - (Future) Backend type on ServerRecord or dedicated "Grok Agents" section in server list for UX.
 
-**Current phase:** Initial sketch/implementation per "Yeah sketch it" request. Focus on command gen + minimal AcpClient handshake + one smoke path.
+**Current phase:** Item 9 full-sketch subagent review (mandatory check-work) complete + PASS (all Phase A+B executed: every file+git delta read, full Gradle 8.13+JBR re-validation of shared jvmTest *Acp* 16/16 + android compile+smoke+compat tests 5/5 green; mapper-to-UI-elements + 5-line mental model + guardrails + simplicity + KMP + no-excess + commit-readiness all confirmed). Android thin client (item 4) + platform transport parity (openRawExec both sides) + build (item 8) now marked done alongside. Zero findings requiring fixes. Next: item 10 conventional commit of full ACP sketch delta (feat(acp): ...), then wiring (7) + iOS client (5). Guardrails held 100%. Per process followed throughout.

@@ -178,6 +178,10 @@ protocol SSHService: Sendable {
     func createCodexWorktree(from projectPath: String, server: ServerRecord, credential: SSHCredential) async throws -> String
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String]
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient
+
+    /// Opens a raw line-based exec transport (no WebSocket wrapper).
+    /// Useful for ACP agents (e.g. `grok agent stdio`) and other stdio JSON-RPC protocols.
+    func openRawExec(server: ServerRecord, credential: SSHCredential, command: String) async throws -> any CodexLineTransport
 }
 
 protocol RemoteTerminalSession: AnyObject, Sendable {
@@ -511,6 +515,16 @@ final class CitadelSSHService: TerminalSSHService {
         } catch {
             try? await client.close()
             throw mapSSHError(error, server: server, operation: .appServer(command: command))
+        }
+    }
+
+    func openRawExec(server: ServerRecord, credential: SSHCredential, command: String) async throws -> any CodexLineTransport {
+        let client = try await connect(server: server, credential: credential)
+        do {
+            return try await SSHRawExecTransport.open(client: client, command: command)
+        } catch {
+            try? await client.close()
+            throw mapSSHError(error, server: server, operation: .command)
         }
     }
 
@@ -1084,7 +1098,9 @@ private func diagnosticStage(for mapped: Error, fallback: Error) -> String {
     return "SSH handshake"
 }
 
-private final class SSHAppServerProcessTransport: CodexLineTransport, @unchecked Sendable {
+/// Raw line-based transport over SSH exec (plain \n-delimited JSON-RPC lines, no WebSocket).
+/// This is the natural fit for stdio agents such as `grok agent stdio` (ACP).
+private final class SSHRawExecTransport: CodexLineTransport, @unchecked Sendable {
     let inboundLines: AsyncThrowingStream<String, Error>
 
     private let client: SSHClient
@@ -1107,8 +1123,8 @@ private final class SSHAppServerProcessTransport: CodexLineTransport, @unchecked
         outboundContinuation = outbound.continuation
     }
 
-    static func open(client: SSHClient, command: String) async throws -> SSHAppServerProcessTransport {
-        let transport = SSHAppServerProcessTransport(client: client, command: command)
+    static func open(client: SSHClient, command: String) async throws -> SSHRawExecTransport {
+        let transport = SSHRawExecTransport(client: client, command: command)
         let ready = transport.ready
         let command = transport.command
         let outboundLines = transport.outboundLines

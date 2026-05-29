@@ -53,6 +53,12 @@ interface MobidexSshService {
     suspend fun createCodexWorktree(projectPath: String, server: ServerRecord, credential: SSHCredential): String
     suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String>
     suspend fun openAppServer(server: ServerRecord, credential: SSHCredential): CodexAppServerClient
+    /**
+     * Opens a raw line-based exec channel over SSH (plain \n-delimited text, no WebSocket framing).
+     * Preferred for ACP agents such as `grok agent stdio`.
+     * The caller supplies the exact remote command (e.g. from RemoteAcpCommand.stdioCommand).
+     */
+    suspend fun openRawExec(server: ServerRecord, credential: SSHCredential, command: String): CodexLineTransport
     suspend fun openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential): RemoteTerminalSession
 }
 
@@ -148,6 +154,19 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
                 val command = session.exec(server.appServerProxyCommand)
                 val transport = SshjWebSocketProxyTransport.open(client, session, command)
                 CodexAppServerClient(transport).also { it.initialize() }
+            } catch (error: Throwable) {
+                client.close()
+                throw error
+            }
+        }
+
+    override suspend fun openRawExec(server: ServerRecord, credential: SSHCredential, command: String): CodexLineTransport =
+        withContext(Dispatchers.IO) {
+            val client = connect(server, credential)
+            try {
+                val session = client.startSession()
+                val exec = session.exec(command)
+                SshjRawExecTransport.open(client, session, exec)
             } catch (error: Throwable) {
                 client.close()
                 throw error
@@ -455,6 +474,92 @@ private class SshjWebSocketProxyTransport private constructor(
         synchronized(command.outputStream) {
             command.outputStream.write(frame)
             command.outputStream.flush()
+        }
+    }
+
+    private fun closeBlocking() {
+        runCatching { command.close() }
+        runCatching { command.join(1, TimeUnit.SECONDS) }
+        runCatching { session.close() }
+        runCatching { client.close() }
+        inboundChannel.close()
+    }
+}
+
+/**
+ * Raw line-based transport over SSH exec (plain \n-delimited text).
+ * No WebSocket wrapper. This is the preferred transport for ACP agents
+ * such as `grok agent stdio` and other stdio JSON-RPC protocols.
+ */
+private class SshjRawExecTransport private constructor(
+    private val client: SSHClient,
+    private val session: Session,
+    private val command: Session.Command,
+) : CodexLineTransport {
+    private val inboundChannel = Channel<String>(Channel.BUFFERED)
+
+    override val inboundLines: Flow<String> = inboundChannel.receiveAsFlow()
+
+    companion object {
+        fun open(client: SSHClient, session: Session, command: Session.Command): SshjRawExecTransport {
+            val transport = SshjRawExecTransport(client, session, command)
+            transport.startReader()
+            transport.startStderrDrainer()
+            return transport
+        }
+    }
+
+    override suspend fun sendLine(line: String) = withContext(Dispatchers.IO) {
+        synchronized(command.outputStream) {
+            command.outputStream.write("$line\n".toByteArray(Charsets.UTF_8))
+            command.outputStream.flush()
+        }
+    }
+
+    override suspend fun close() = withContext(Dispatchers.IO) {
+        closeBlocking()
+    }
+
+    private fun startReader() {
+        Thread {
+            try {
+                val reader = command.inputStream.bufferedReader(Charsets.UTF_8)
+                var pending = ""
+                while (true) {
+                    val chunk = CharArray(8192)
+                    val read = reader.read(chunk)
+                    if (read < 0) break
+                    pending += String(chunk, 0, read)
+
+                    val lines = pending.split('\n')
+                    pending = lines.last()
+                    for (line in lines.dropLast(1)) {
+                        if (line.isNotEmpty()) {
+                            inboundChannel.trySend(line)
+                        }
+                    }
+                }
+                if (pending.isNotEmpty()) {
+                    inboundChannel.trySend(pending)
+                }
+                inboundChannel.close()
+            } catch (error: Throwable) {
+                inboundChannel.close(error)
+            }
+        }.apply {
+            name = "mobidex-raw-exec-reader"
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun startStderrDrainer() {
+        Thread {
+            runCatching { IOUtils.readFully(command.errorStream) }
+        }.apply {
+            name = "mobidex-raw-exec-stderr-drainer"
+            isDaemon = true
+            start()
         }
     }
 
