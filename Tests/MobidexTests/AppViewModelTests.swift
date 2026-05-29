@@ -5805,6 +5805,10 @@ private final class SpyCredentialStore: CredentialStore, @unchecked Sendable {
     func loadOpenAIAPIKey() throws -> String? { nil }
 
     func saveOpenAIAPIKey(_ key: String?) throws {}
+
+    func loadXAIAPIKey() throws -> String? { nil }
+
+    func saveXAIAPIKey(_ key: String?) throws {}
 }
 
 private final class ThreadCheckingCredentialStore: CredentialStore, @unchecked Sendable {
@@ -5834,6 +5838,10 @@ private final class ThreadCheckingCredentialStore: CredentialStore, @unchecked S
     func loadOpenAIAPIKey() throws -> String? { nil }
 
     func saveOpenAIAPIKey(_ key: String?) throws {}
+
+    func loadXAIAPIKey() throws -> String? { nil }
+
+    func saveXAIAPIKey(_ key: String?) throws {}
 }
 
 private final class FailingFirstSaveCredentialStore: CredentialStore, @unchecked Sendable {
@@ -5868,6 +5876,10 @@ private final class FailingFirstSaveCredentialStore: CredentialStore, @unchecked
     func loadOpenAIAPIKey() throws -> String? { nil }
 
     func saveOpenAIAPIKey(_ key: String?) throws {}
+
+    func loadXAIAPIKey() throws -> String? { nil }
+
+    func saveXAIAPIKey(_ key: String?) throws {}
 }
 
 private final class BlockingSaveCredentialStore: CredentialStore, @unchecked Sendable {
@@ -5909,6 +5921,10 @@ private final class BlockingSaveCredentialStore: CredentialStore, @unchecked Sen
     func loadOpenAIAPIKey() throws -> String? { nil }
 
     func saveOpenAIAPIKey(_ key: String?) throws {}
+
+    func loadXAIAPIKey() throws -> String? { nil }
+
+    func saveXAIAPIKey(_ key: String?) throws {}
 }
 
 private final class SpyOpenAITranscriptionService: OpenAITranscribing, @unchecked Sendable {

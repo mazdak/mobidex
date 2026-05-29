@@ -17,18 +17,16 @@
 - [x] 9. Full-sketch subagent review (check-work style: every file+delta, all builds/tests re-run, mapper/UI/guardrails/simplicity eval). (done — PASS, zero findings requiring fixes per prior)
 - [ ] 10. Conventional commit of ACP sketch delta (feat(acp): add initial ACP/Grok stdio support sketch — RemoteAcpCommand + AcpProtocolCore mapper + Android AcpGrokClient + openRawExec parity on both platforms + smoke + trackers) + update MISSION/NEXT with status. **Current prep chunk.**
 
-## Current Status Snapshot (post mission skill invocation + FS inspection)
-- Git: detached ab0fda9 (last: feat(acp) AcpProtocolCore mapper commit); dirty with exactly the post-protocol client+transport delta (new AcpGrokClient.kt + SmokeTest.kt, SshService.kt extensions both platforms, test tweaks, tracker edits).
-- All early done criteria met for sketch phase. UI translation via mapper exercised and proven in Android client/smoke (Grok thoughts → Reasoning collapsed, etc.).
-- iOS: Full raw exec transport parity + docs already present (SSHRawExecTransport implements CodexLineTransport; openRawExec on SSHService). No ACP client or bridge yet. AppViewModel.swift 100% Codex-wired at connectSelectedServer ~1023.
-- Android symmetric (AppViewModel.kt hard-wired; SshService has openRawExec implemented).
-- No ServerRecord changes (backendType parked). No edits to any Codex launch/WS/proxy code.
-- Builds: shared-core jvmTest Acp* 16/16 green historically; Android smoke green. iOS verify scripts available (Scripts/verify-ios-build.sh etc.).
-- Guardrails: 100% (Codex untouched, no WS primary for ACP, simple, KMP for protocol/mapper, subagent after chunks, trackers updated).
+## Current Status Snapshot (post "Keep going" + item 7 close at 5fbd0c3 + mission re-align)
+- Git: detached at 5fbd0c3 (feat(acp): close item 7 minimal debug wiring with rich chat preview on both platforms (UI translation first-class + Codex untouched)); dirty exactly with start of acp-remote-auth-handling (RemoteAcpCommand + test now accept/pass xaiApiKey for XAI_API_KEY= prefix injection; see diff).
+- Item 7 (minimal debug wiring + rich chat preview closure on both + mapper exercised for "properly translated to right UI elements") COMPLETE + subagent PASS + conventional commit landed. UI translation first-class criterion satisfied (Grok chunks → existing ConversationSection via shared mapper, zero UI or Codex path changes).
+- All guardrails held: Codex launch/WS/RemoteCodexAppServerCommand 100% untouched (MD5/grep proofs in prior reviews); no ServerRecord discriminator/backendType (parked); raw stdio only; simple interfaces.
+- Next discrete item per MISSION.md handoff + TODO: **acp-remote-auth-handling** (complete the XAI key injection: credential store surface on both + wiring of loadXAI... into the two startAcpDebug* call sites + minimal remote ~/.grok/auth.json fallback via SSH exec when no local key; "fix both clients"; no new UI; then trackers + conventional commit).
+- Builds remain green from item 7 close (shared jvmTest *Acp*, android *AcpGrok*, iOS verify). Use exact Gradle 8.13 + JBR / Scripts/verify-ios-build.sh going forward.
+- Process: After every sub-chunk: todo_write + spawn_subagent (check-work with mission context + both-clients + Codex-untouched + UI-translation gates) → fix → exact builds → re-review → mark → conventional commit.
 
-## Next Immediate Chunk (per mission subagent rec + "keep going until finished")
-- acp-remote-auth-handling (next after item 7): Extend acpStdioCommand + platform raw-exec launch sites to inject XAI_API_KEY env var when ServerRecord has auth configured (or credential store), with fallback SSH exec of `cat ~/.grok/auth.json` or equivalent lookup on the remote. Add minimal surface in both clients (no new UI yet). Follow full cycle: smallest code chunk → subagent → fix → exact Gradle/xcode builds → trackers → conventional commit. "Fix both clients". Keep Codex paths untouched. Park full picker/discovery until auth solid.
-Prep + execute item 10: Small tracker polish (append this snapshot + iOS assessment learnings to NEXT/REVIEW_NOTES), launch check-work verifier subagent (focus: ACP sketch delta readiness for commit; re-run all *Acp* JVM tests under Gradle 8.13+JBR, Android smoke, iOS build via verify script, full diff review, mapper/UI fidelity, guardrails). If PASS: git commit (conventional message), mark 10 done, update trackers, then immediately pick item 5 (iOS client) as next smallest chunk.
+## Active Chunk
+- acp-remote-auth-handling: COMPLETE (check-work VERDICT: PASS 019e74f7-bbeb-7910-be44-64b904aec621; JVM 8/8 + Android tests + iOS verify BUILD SUCCEEDED after conditional fallback fix + test robustness; guardrails 100% (git/grep proofs, 0 Codex/ServerRecord touches); mission re-anchor also PASS. Ready for conventional commit + next item selection per mission check).
 
 ## Parked (do not start)
 All from NEXT.md: rogue Codex agents, full ServerRecord discriminator + picker, auth UI, x.ai extensions, rich approval/plan rendering, etc. Re-triage only after core items 5+7+10 closed.

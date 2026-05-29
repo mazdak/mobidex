@@ -932,7 +932,8 @@ final class AppViewModel: ObservableObject {
 
         await runOperation(.connecting, status: "Starting Grok (ACP debug)", marksConnectionFailure: true) {
             let credential = try await loadCredentialFromStore(serverID: server.id)
-            let command = SharedKMPBridge.acpStdioCommand(grokBin: nil, model: model, extraArgs: [])
+            let xaiKey = try? credentialStore.loadXAIAPIKey()
+            let command = SharedKMPBridge.acpStdioCommand(grokBin: nil, model: model, extraArgs: [], xaiApiKey: xaiKey)
             let transport = try await sshService.openRawExec(server: server, credential: credential, command: command)
             let client = AcpGrokClient(transport: transport)
             debugAcpClient = client

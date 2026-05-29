@@ -47,6 +47,8 @@ interface CredentialStore {
     suspend fun deleteCredential(serverID: String)
     suspend fun loadOpenAIAPIKey(): String?
     suspend fun saveOpenAIAPIKey(key: String?)
+    suspend fun loadXAIAPIKey(): String?
+    suspend fun saveXAIAPIKey(key: String?)
 }
 
 interface HostKeyStore {
@@ -124,6 +126,16 @@ class AndroidCredentialStore(context: Context) : CredentialStore {
         }
     }
 
+    override suspend fun loadXAIAPIKey(): String? = withContext(Dispatchers.IO) {
+        readSecret(APP_XAI_API_KEY)
+    }
+
+    override suspend fun saveXAIAPIKey(key: String?) = withContext(Dispatchers.IO) {
+        prefs.edit {
+            writeSecret(APP_XAI_API_KEY, key?.trim())
+        }
+    }
+
     private fun android.content.SharedPreferences.Editor.writeSecret(key: String, value: String?) {
         if (value.isNullOrEmpty()) remove(key) else putString(key, valueCrypto.encrypt(value))
     }
@@ -142,6 +154,7 @@ class AndroidCredentialStore(context: Context) : CredentialStore {
 
     private companion object {
         const val APP_OPENAI_API_KEY = "app.openai-api-key"
+        const val APP_XAI_API_KEY = "app.xai-api-key"
     }
 }
 

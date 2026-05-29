@@ -24,6 +24,8 @@ protocol CredentialStore: Sendable {
     func deleteCredential(serverID: UUID) throws
     func loadOpenAIAPIKey() throws -> String?
     func saveOpenAIAPIKey(_ key: String?) throws
+    func loadXAIAPIKey() throws -> String?
+    func saveXAIAPIKey(_ key: String?) throws
 }
 
 final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
@@ -58,6 +60,14 @@ final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
 
     func saveOpenAIAPIKey(_ key: String?) throws {
         try write(key, kind: "openai-api-key", serverID: appAccountID)
+    }
+
+    func loadXAIAPIKey() throws -> String? {
+        try read(kind: "xai-api-key", serverID: appAccountID)
+    }
+
+    func saveXAIAPIKey(_ key: String?) throws {
+        try write(key, kind: "xai-api-key", serverID: appAccountID)
     }
 
     private func account(kind: String, serverID: UUID) -> String {
@@ -159,6 +169,18 @@ final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {
     func saveOpenAIAPIKey(_ key: String?) throws {
         lock.withLock {
             openAIAPIKey = key?.isEmpty == false ? key : nil
+        }
+    }
+
+    private var xaiAPIKey: String?
+
+    func loadXAIAPIKey() throws -> String? {
+        lock.withLock { xaiAPIKey }
+    }
+
+    func saveXAIAPIKey(_ key: String?) throws {
+        lock.withLock {
+            xaiAPIKey = key?.isEmpty == false ? key : nil
         }
     }
 }

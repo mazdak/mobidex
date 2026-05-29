@@ -639,9 +639,11 @@ class AppViewModel(
 
             runBusy("Starting Grok (ACP debug)", marksFailure = true) {
                 val credential = credentialStore.loadCredential(server.id)
+                val xaiKey = credentialStore.loadXAIAPIKey()
                 val command = RemoteAcpCommand.stdioCommand(
                     executionPath = server.executionPath,
-                    model = model
+                    model = model,
+                    xaiApiKey = xaiKey
                 )
                 val transport = sshService.openRawExec(server, credential, command)
                 val client = AcpGrokClient(transport)

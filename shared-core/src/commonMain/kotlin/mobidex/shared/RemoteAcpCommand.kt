@@ -12,21 +12,41 @@ object RemoteAcpCommand {
         executionPath: String = RemoteAcpDefaults.executionPath,
         model: String = "grok-build",
         extraArgs: List<String> = emptyList(),
+        xaiApiKey: String? = null,
     ): String {
         val config = RemoteAcpDefaults.normalize(acpPath, executionPath)
         val modelArg = "--model ${model.shellQuoted()}"
         val extra = if (extraArgs.isEmpty()) "" else " " + extraArgs.joinToString(" ") { it.shellQuoted() }
+        val envPrefix = xaiApiKey?.let { "XAI_API_KEY=${it.shellQuoted()} " } ?: ""
+        // Minimal remote fallback (only when no explicit key passed from client credential store):
+        // best-effort cat + parse of ~/.grok/auth.json for common shapes (apiKey / xai.apiKey).
+        // The guard [ -z "$XAI_API_KEY" ] makes it a no-op if the explicit prefix already set it.
+        // Uses python3 (common on dev hosts); silent on failure (no key → grok will error naturally).
+        val xaiFallback = if (xaiApiKey == null) {
+            val D = "\$"
+            "[ -z \"${D}XAI_API_KEY\" ] && XAI_API_KEY=$(cat ~/.grok/auth.json 2>/dev/null | python3 -c '\n" +
+                "import json,sys\n" +
+                "try:\n" +
+                " d=json.load(sys.stdin)\n" +
+                " k = d.get(\"apiKey\") or (d.get(\"xai\") or {}).get(\"apiKey\") or d.get(\"key\") or \"\"\n" +
+                " print(k)\n" +
+                "except Exception:\n" +
+                " print(\"\")\n" +
+                "' 2>/dev/null || echo ''); [ -n \"${D}XAI_API_KEY\" ] && export ${D}XAI_API_KEY || true"
+        } else {
+            ""
+        }
 
         return if (config.acpPath == RemoteAcpDefaults.acpPath) {
-            listOf(
-                shellEnvironmentBootstrapCommand(config.executionPath),
-                defaultStdioCommand(modelArg = modelArg, extra = extra),
-            ).joinToString("; ")
+            val parts = mutableListOf(shellEnvironmentBootstrapCommand(config.executionPath))
+            if (xaiFallback.isNotEmpty()) parts += xaiFallback
+            parts += envPrefix + defaultStdioCommand(modelArg = modelArg, extra = extra)
+            parts.joinToString("; ")
         } else {
-            listOf(
-                shellEnvironmentBootstrapCommand(config.executionPath),
-                "exec ${config.acpPath.shellQuotedExecutablePath()} agent stdio $modelArg$extra",
-            ).joinToString("; ")
+            val parts = mutableListOf(shellEnvironmentBootstrapCommand(config.executionPath))
+            if (xaiFallback.isNotEmpty()) parts += xaiFallback
+            parts += "${envPrefix}exec ${config.acpPath.shellQuotedExecutablePath()} agent stdio $modelArg$extra"
+            parts.joinToString("; ")
         }
     }
 

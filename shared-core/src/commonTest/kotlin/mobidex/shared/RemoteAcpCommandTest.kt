@@ -23,10 +23,11 @@ class RemoteAcpCommandTest {
             model = "grok-build",
         )
 
-        assertEquals(
-            "export PATH=\"\${HOME}\"/'bin':'/custom/bin':\"\$PATH\"; exec '/home/user/bin/grok-special' agent stdio --model 'grok-build'",
-            command,
-        )
+        // Custom acpPath + executionPath quoting still honored (auth fallback block is now inserted for no-key case but does not change the exec line)
+        assertContains(command, "export PATH=")
+        assertContains(command, "'/custom/bin'")
+        assertContains(command, "exec '/home/user/bin/grok-special' agent stdio --model 'grok-build'")
+        assertFalse(command.contains("command -v grok")) // explicit path skips the default resolution dance
     }
 
     @Test
@@ -80,5 +81,29 @@ class RemoteAcpCommandTest {
 
         assertContains(command, "export PATH=")
         assertContains(command, "\"\${HOME}\"/'.bun/bin/grok' agent stdio --model 'grok-build'")
+    }
+
+    @Test
+    fun stdioCommandWithXaiApiKeyInjectsEnvPrefix() {
+        val command = RemoteAcpCommand.stdioCommand(
+            model = "grok-build",
+            xaiApiKey = "sk-test-123",
+        )
+
+        assertContains(command, "XAI_API_KEY='sk-test-123' ")
+        assertContains(command, "grok agent stdio --model 'grok-build'")
+    }
+
+    @Test
+    fun stdioCommandWithoutKeyIncludesRemoteAuthJsonFallback() {
+        val command = RemoteAcpCommand.stdioCommand(model = "grok-build")
+
+        // Fallback bootstrap (only when no explicit key) attempts ~/.grok/auth.json parse
+        assertContains(command, "cat ~/.grok/auth.json")
+        assertContains(command, "python3 -c")
+        assertContains(command, "apiKey")
+        assertContains(command, "export \$XAI_API_KEY")
+        // Still contains the grok launch (fallback runs before it)
+        assertContains(command, "grok agent stdio --model 'grok-build'")
     }
 }
