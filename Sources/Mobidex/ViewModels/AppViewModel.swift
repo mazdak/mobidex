@@ -342,6 +342,17 @@ final class AppViewModel: ObservableObject {
     private var suppressThreadAutoSelection = false
     private var autoConnectAttemptedServerIDs = Set<UUID>()
     private var appServerReconnectAttemptsByServerID: [UUID: Int] = [:]
+
+    // ACP / Grok debug wiring (item 7 minimal path, Codex untouched).
+    // Parallel holders + surface so mapped sessionItems (CodexThreadItem from the bridged KMP mapper)
+    // can be driven over real openRawExec + AcpGrokClient without touching appServer/eventTask/connectSelectedServer/send paths.
+    private var debugAcpClient: AcpGrokClient?
+    private var debugAcpCollectorTask: Task<Void, Never>?
+    @Published private(set) var debugAcpItems: [CodexThreadItem] = []
+    var debugAcpConversationSections: [ConversationSection] {
+        SharedKMPBridge.conversationSections(from: debugAcpItems)
+    }
+    @Published private(set) var isShowingAcpDebugPreview = false
     private var threadListCache: [ThreadLoadScope: CachedThreadList] = [:]
     private var threadDetailCache: [ThreadDetailCacheKey: CachedThreadDetail] = [:]
     private var suppressNextConversationDetailCache = false
@@ -898,6 +909,61 @@ final class AppViewModel: ObservableObject {
         if case .failed(let message) = connectionState {
             statusAlert = StatusAlert(title: "Connection Test Failed", message: message)
         }
+    }
+
+    /// Minimal debug/experimental path for item 7 (ACP/Grok wiring parity with Android).
+    /// Drives a real `grok agent stdio` over SSH raw exec + the Swift AcpGrokClient (actor) + bridged mapper.
+    /// Emits the exact CodexThreadItem kinds (reasoning for thoughts, agentMessage, toolCall, etc.)
+    /// into a parallel debug surface (`debugAcpItems`) that reuses the same models already rendered
+    /// by ConversationView / ConversationSection — satisfying "properly translated to right UI elements".
+    ///
+    /// Codex connectSelectedServer / send / disconnect paths are 100% untouched (byte-for-byte).
+    /// ServerRecord backendType and main flows remain parked.
+    func startAcpDebugSessionForGrok(model: String = "grok-build", initialPrompt: String? = nil) async {
+        guard let server = selectedServer else { return }
+
+        // Cancel prior debug ACP session (simple reset, no hidden sharing with Codex state).
+        debugAcpCollectorTask?.cancel()
+        if let prior = debugAcpClient {
+            await prior.close()
+        }
+        debugAcpClient = nil
+        debugAcpItems = []
+
+        await runOperation(.connecting, status: "Starting Grok (ACP debug)", marksConnectionFailure: true) {
+            let credential = try await loadCredentialFromStore(serverID: server.id)
+            let command = SharedKMPBridge.acpStdioCommand(grokBin: nil, model: model, extraArgs: [])
+            let transport = try await sshService.openRawExec(server: server, credential: credential, command: command)
+            let client = AcpGrokClient(transport: transport)
+            debugAcpClient = client
+
+            try await client.initialize()
+            let cwd = selectedProject?.path
+            let sid = try await client.createSession(cwd: cwd, title: "Grok debug session")
+
+            statusMessage = "ACP Grok session \(sid) connected (debug)."
+
+            if let prompt = initialPrompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try? await client.sendPrompt(sessionId: sid, text: prompt)
+            }
+
+            debugAcpCollectorTask = Task { [weak self] in
+                guard let self else { return }
+                for await item in client.sessionItems {
+                    await MainActor.run {
+                        self.debugAcpItems.append(item)
+                    }
+                }
+            }
+        }
+    }
+
+    func presentAcpDebugPreview() {
+        isShowingAcpDebugPreview = true
+    }
+
+    func dismissAcpDebugPreview() {
+        isShowingAcpDebugPreview = false
     }
 
     func diagnoseSelectedConnection() async {

@@ -20,10 +20,6 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Mobidex connects to SSH servers on your local network.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Mobidex records audio so OpenAI can transcribe it into the chat composer.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

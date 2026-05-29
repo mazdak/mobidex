@@ -931,6 +931,7 @@ private struct LoadingListStatusRow: View {
 struct ConnectionDiagnosticsView: View {
     @EnvironmentObject private var model: AppViewModel
     @Environment(\.dismiss) private var dismiss
+    @State private var showAcpDebugPreview = false
 
     var body: some View {
         NavigationStack {
@@ -1002,6 +1003,41 @@ struct ConnectionDiagnosticsView: View {
                         ContentUnavailableView("No Diagnostics Yet", systemImage: "stethoscope")
                     }
                 }
+
+                #if DEBUG
+                Section("ACP / Grok (Debug — item 7)") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Drive `grok agent stdio` over raw SSH exec + the real AcpGrokClient + bridged mapper. Responses appear as ConversationSection using the exact same projection as Codex (no new UI or classification).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Button {
+                            Task {
+                                await model.startAcpDebugSessionForGrok(model: "grok-build", initialPrompt: "Say hello and think step by step about the current directory.")
+                            }
+                        } label: {
+                            Label("Start Grok ACP debug session", systemImage: "play")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isRunningConnectionDiagnostics)
+
+                        if !model.debugAcpItems.isEmpty {
+                            Text("Received \(model.debugAcpItems.count) mapped items (\(model.debugAcpConversationSections.count) sections).")
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.green)
+
+                            Button {
+                                showAcpDebugPreview = true
+                                model.presentAcpDebugPreview()
+                            } label: {
+                                Label("Preview rich chat output (existing ConversationSection)", systemImage: "text.bubble")
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                #endif
             }
             .navigationTitle("Diagnostics")
             .toolbar {
@@ -1021,6 +1057,12 @@ struct ConnectionDiagnosticsView: View {
             .task {
                 if model.connectionDiagnosticReport == nil {
                     await model.diagnoseSelectedConnection()
+                }
+            }
+            .sheet(isPresented: $showAcpDebugPreview) {
+                AcpDebugChatPreview(sections: model.debugAcpConversationSections) {
+                    showAcpDebugPreview = false
+                    model.dismissAcpDebugPreview()
                 }
             }
         }
@@ -1091,6 +1133,74 @@ struct ThreadRow: View {
             return .red
         case .inactive:
             return .secondary.opacity(0.4)
+        }
+    }
+}
+
+// MARK: - Minimal ACP Debug Chat Preview (item 7 closure)
+// Re-uses the *exact* ConversationSection model produced by the shared KMP projection
+// (which the ACP mapper already feeds with correctly classified CodexThreadItem from Grok chunks).
+// This proves "responses emitted from Grok/ACP are properly translated to right UI elements in the chat window"
+// with zero new rendering logic or duplication of the main ConversationView/Section code.
+struct AcpDebugChatPreview: View {
+    let sections: [ConversationSection]
+    let onDismiss: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if sections.isEmpty {
+                    ContentUnavailableView(
+                        "No ACP items yet",
+                        systemImage: "bubble.left.and.bubble.right",
+                        description: Text("Start a debug Grok session from the diagnostics toolbar. Mapped sections will appear here using the same projection as live Codex chats.")
+                    )
+                } else {
+                    Section("ACP Grok Debug Output (via existing ConversationSection projection)") {
+                        Text("These are real ConversationSection instances produced by SharedKMPBridge.conversationSections(from: debugAcpItems). The 5 kinds (reasoning, assistant, tool, plan, agent) render with the same data contract the main chat uses — no custom UI for ACP.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .listRowSeparator(.hidden)
+                    }
+
+                    ForEach(sections) { section in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text(String(describing: section.kind).uppercased())
+                                    .font(.caption2.weight(.semibold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(.quaternary)
+                                    .clipShape(Capsule())
+                                Text(section.title)
+                                    .font(.headline)
+                            }
+                            if !section.body.isEmpty {
+                                Text(section.body)
+                                    .font(.body)
+                                    .textSelection(.enabled)
+                            }
+                            if let detail = section.detail, !detail.isEmpty {
+                                Text(detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let status = section.status, !status.isEmpty {
+                                Text("status: \(status)")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .navigationTitle("Grok ACP Preview")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { onDismiss() }
+                }
+            }
         }
     }
 }

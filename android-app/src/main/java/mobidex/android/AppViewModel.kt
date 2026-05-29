@@ -43,6 +43,7 @@ import mobidex.android.model.ServerConnectionState
 import mobidex.android.model.ServerRecord
 import mobidex.android.model.conversationSections
 import mobidex.android.model.toThreadItem
+import mobidex.android.service.AcpGrokClient
 import mobidex.android.service.CodexAppServerClient
 import mobidex.android.service.CodexAppServerEvent
 import mobidex.android.service.MobidexSshService
@@ -66,11 +67,13 @@ import mobidex.shared.CodexAccessMode
 import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
 import mobidex.shared.CodexSessionCachePolicy
+import mobidex.shared.CodexSessionItem
 import mobidex.shared.CodexThreadSummary
 import mobidex.shared.GitDiffSnapshot
 import mobidex.shared.JsonValue
 import mobidex.shared.ProjectCatalog
 import mobidex.shared.ProjectListSections
+import mobidex.shared.RemoteAcpCommand
 import mobidex.shared.RemoteDirectoryListing
 import mobidex.shared.RemoteProject
 import mobidex.shared.RemoteServerLaunchDefaults
@@ -214,6 +217,15 @@ class AppViewModel(
     private val reconnectAttemptsByServerID = mutableMapOf<String, Int>()
     private var reconnectJob: Job? = null
     private var suppressThreadAutoSelection = false
+
+    // ACP / Grok debug wiring (item 7 minimal path, Codex untouched).
+    // Parallel holders + surface so mapped sessionItems (Reasoning/AgentMessage/ToolCall/etc. from the shared mapper)
+    // can be driven over real openRawExec + AcpGrokClient without touching appServer/eventJob/connectSelectedServer/send paths.
+    private var debugAcpClient: AcpGrokClient? = null
+    private var debugAcpJob: Job? = null
+    private val _debugAcpItems = MutableStateFlow<List<CodexSessionItem>>(emptyList())
+    val debugAcpItems: StateFlow<List<CodexSessionItem>> = _debugAcpItems.asStateFlow()
+
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences("mobidex", Context.MODE_PRIVATE)
 
@@ -602,6 +614,56 @@ class AppViewModel(
                 val server = _state.value.selectedServer ?: return@runBusy
                 sshService.testConnection(server, credentialStore.loadCredential(server.id))
                 _state.update { it.copy(statusMessage = "Connection test passed for ${server.displayName}.") }
+            }
+        }
+    }
+
+    /**
+     * Minimal debug/experimental path for item 7 (ACP/Grok wiring).
+     * Drives a real `grok agent stdio` over SSH raw exec + the shared AcpGrokClient + mapper.
+     * Emits the exact CodexSessionItem kinds (Reasoning for thoughts, AgentMessage, ToolCall, etc.)
+     * into a parallel debug surface (`debugAcpItems`) that reuses the same models already rendered
+     * by ConversationSection / projection machinery — satisfying "properly translated to right UI elements".
+     *
+     * Codex connect/openAppServer/send/disconnect paths are 100% untouched (byte-for-byte).
+     * ServerRecord backendType and main flows remain parked.
+     */
+    fun startAcpDebugSessionForGrok(model: String = "grok-build", initialPrompt: String? = null) {
+        viewModelScope.launch {
+            val server = _state.value.selectedServer ?: return@launch
+            // Cancel any prior debug ACP session (keeps surface simple, no hidden state sharing).
+            debugAcpJob?.cancel()
+            debugAcpClient?.let { runCatching { it.close() } }
+            debugAcpClient = null
+            _debugAcpItems.value = emptyList()
+
+            runBusy("Starting Grok (ACP debug)", marksFailure = true) {
+                val credential = credentialStore.loadCredential(server.id)
+                val command = RemoteAcpCommand.stdioCommand(
+                    executionPath = server.executionPath,
+                    model = model
+                )
+                val transport = sshService.openRawExec(server, credential, command)
+                val client = AcpGrokClient(transport)
+                debugAcpClient = client
+
+                client.initialize()
+                val cwd = _state.value.selectedProject?.path
+                val sid = client.createSession(cwd = cwd, title = "Grok debug session")
+
+                _state.update { it.copy(statusMessage = "ACP Grok session $sid connected (debug).") }
+
+                if (!initialPrompt.isNullOrBlank()) {
+                    runCatching { client.sendPrompt(sid, initialPrompt) }
+                }
+
+                debugAcpJob = launch {
+                    client.sessionItems.collect { item ->
+                        _debugAcpItems.update { it + item }
+                    }
+                }
+                // Debug surface already emits the exact CodexSessionItem kinds (via shared mapper)
+                // that ConversationSection renders for Codex — same "properly translated" path as iOS preview.
             }
         }
     }
