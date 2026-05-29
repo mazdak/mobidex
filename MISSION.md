@@ -1,35 +1,29 @@
-Mission: Ship the latest project-add, remote-browser, SSH directory, E2E harness, and recording-indicator fixes to TestFlight internal and external testers.
+# Mission: ACP Support for Grok in Mobidex
 
-Done criteria:
-- Confirm `master` is based on the latest `origin/master`.
-- Commit the release-candidate fixes with a conventional commit.
-- Run focused/shared/iOS validation required for the release candidate.
-- Push the release commit to `origin/master`.
-- Upload a fresh TestFlight build and add it to internal testing.
-- Submit the same build to the external TestFlight group for beta review.
+**Mission statement:** Enable Mobidex to connect to and drive Grok agents (via the Agent Client Protocol over `grok agent stdio`) from the phone using the existing rich conversation UI and SSH connections, with a clean raw stdio/JSON-RPC line transport.
 
-Guardrails:
-- Build from up-to-date `master`, per repo release policy.
-- Prefer hard, simple fixes over compatibility shims or dead paths.
-- Do not revert unrelated local changes.
-- Do not ship if the release tooling or high-signal validation fails.
+**Done criteria:**
+- Can generate a minimal, correct launch command for `grok agent stdio` (with PATH bootstrap, model selection, nohup-free).
+- Raw line transport (`openRawExec` / `CodexLineTransport` impls) exists and is used for ACP (already partially scaffolded).
+- Minimal ACP client (initialize + session/new + session/prompt + basic streaming consumption of session/update) exists and can perform a handshake + simple prompt against a real `grok agent stdio` (or mock).
+- At least one end-to-end smoke (test or manual via a ViewModel path) demonstrates connecting and receiving streaming chunks from an ACP agent.
+- Codex app-server path and its launch logic remain 100% untouched.
+- Work tracked in MISSION.md / NEXT.md / TODO.md; every chunk follows code → subagent review → fix → test → mark done.
+- Conventional commit style for any commits.
 
-Critical learnings:
-- `master` was current with `origin/master` before release work; release candidate changes were uncommitted on top of build 32.
-- Validation passed for the release candidate: `git diff --check`, `Scripts/verify-ios-distribution-config.sh`, shared-core debug unit tests, XcodeBuildMCP simulator tests (`168 passed, 0 failed, 4 skipped`), real-host remote directory browse smoke, and real-host add discovered project smoke.
-- The add-discovered smoke failed once with Xcode exit 65 only when run concurrently with another live-host smoke; rerunning it alone passed.
-- TestFlight build `1.0 (33)` from commit `f36ac9d` uploaded successfully, was added to Internal Testers, and was submitted to External Testers for beta app review as build ID `701180f3-808a-4a1b-8b8e-58b4dd322e9a`.
-- `master` is now pushed through release commit `f36ac9d`.
-- The requested `REVIEW.md` is not present in this worktree. The available matching artifact is `REVIEW_NOTES.md`.
-- `REVIEW_NOTES.md` reads as a historical review log: every listed finding has adjacent fix/verification notes, and the latest completion-audit section ends with no blocking findings.
-- Focused validation found two still-real reachability gaps in the latest completion-audit area: iOS compact project taps did not promote to detail, and Android selected-project/no-thread detail did not expose the composer.
-- The iOS selected-project empty detail now shows the composer whenever `canSendMessage` is true, and compact project taps promote to detail.
-- The iOS tap UI smoke now asserts the project composer is visible before any explicit New Session action.
-- Android project selection in compact mode now opens chat detail, and the project-empty conversation pane reuses `ChatTimeline` so the same composer path can start the first thread.
-- Subagent review caught an Android callback signature regression in the first patch; fixed by calling the zero-argument `onOpenDetail()`.
-- Validation passed: `Scripts/verify-ios-build.sh MobidexTests`, `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" build/gradle-8.13/bin/gradle :android-app:compileDebugKotlin`, `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" build/gradle-8.13/bin/gradle :android-app:testDebugUnitTest`, `Scripts/verify-ios-build.sh Mobidex`, `Scripts/verify-ios-build.sh MobidexUITests`, `MOBIDEX_UI_SMOKE_TIMEOUT=120 Scripts/verify-tap-ui-smoke.sh`, and `git diff --check`.
-- Cursor's New Session audit was the intended review input. Follow-up fixes addressed remaining Android parity gaps: disconnected New Session now connects inside the operation, the UI promotes detail only after successful creation, thread opening is blocked during session mutations, and Android `thread/started`/creation adoption is guarded by the selected scope.
-- Follow-up validation passed: `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" build/gradle-8.13/bin/gradle :android-app:compileDebugKotlin :android-app:testDebugUnitTest`, `Scripts/verify-ios-build.sh Mobidex`, and `git diff --check`.
-- Test polish added Android ViewModel coverage for disconnected New Session connect/start, blocking `openThread` while explicit session creation is in flight, and blocking `openThread` while a send is starting a turn. This required Robolectric, AndroidX test core, and coroutine-test for local JVM coverage.
-- Final review pass found and fixed a stuck-`Connecting` Android failure path when disconnected New Session auto-connect fails, with a regression test for the failure state.
-- Final validation passed after test polish: focused `AppViewModelNewSessionTest`, full `:shared-core:jvmTest :android-app:testDebugUnitTest`, `Scripts/verify-ios-build.sh Mobidex`, and `git diff --check`.
+**Guardrails / Constraints:**
+- Do NOT edit the unconditional launch / proxy script logic inside RemoteCodexAppServerCommand.kt (rogue agents issue kept in back pocket).
+- Prefer simple, obvious, hard-to-misuse interfaces. No hidden modes or excessive config for the first cut.
+- KMP/shared-core for protocol request builders, JSON handling, and core client logic where it avoids duplication.
+- Reuse `CodexLineTransport` (neutral line pipe) for ACP clients in the sketch phase; rename only if it becomes a clear wart later (hard break when justified).
+- No WebSocket upgrade for the primary `grok agent stdio` SSH-exec path.
+- Auth: support injecting env (e.g. XAI_API_KEY) or rely on remote user context for `~/.grok`; keep simple for v1.
+- After each discrete chunk or todo item completion: launch subagent review, fix findings, run focused tests/build validation, then mark done.
+- Park non-blocking side quests (e.g. full UI branching, ServerRecord discriminator, x.ai/* extensions, rich plan/tool rendering) in NEXT.md.
+
+**Critical decisions logged:**
+- Decision: Reuse/extend existing raw exec transport scaffolding + CodexLineTransport abstraction rather than new parallel AcpTransport (simpler, less code, already documented for this use).
+- Decision: New `RemoteAcpCommand.kt` (separate from codex command file) for ACP launch command generation — clean separation, obvious naming.
+- (Future) Backend type on ServerRecord or dedicated "Grok Agents" section in server list for UX.
+
+**Current phase:** Initial sketch/implementation per "Yeah sketch it" request. Focus on command gen + minimal AcpClient handshake + one smoke path.

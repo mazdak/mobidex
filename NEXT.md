@@ -1,89 +1,40 @@
-## TestFlight Build 33
+# NEXT.md — ACP for Grok + Parked Items (Mobidex)
 
-- [x] Confirm `master` is current.
-- [x] Run focused release validation.
-- [x] Push the release commit to `origin/master`.
-- [x] Upload TestFlight build and assign internal testers.
-- [x] Submit the build to external TestFlight review.
+This file holds the durable mission checklist and parked side quests. Mirror key items into the live `todo_write` tool for execution tracking. Update after each chunk.
 
-## Review Notes Validation
+## Mission Checklist (active)
 
-- [x] Sync the detached worktree with `origin/master`.
-- [x] Locate the requested review artifact and record the path mismatch.
-- [x] Validate the latest potentially actionable review section against code and tests.
-- [x] Review the validation/fix chunk with a subagent.
-- [x] Run focused verification and record the outcome.
-- [x] Add Android New Session ViewModel race tests for disconnected start, blocked open during start, and blocked open during send.
-- [x] Fix review-found Android auto-connect failure recovery and add a regression test.
+- [ ] 1. Mission setup: MISSION.md + NEXT.md + initial todo_write list created. (done)
+- [x] 2. Add `RemoteAcpCommand` (new shared file) with minimal stdio launch command generator for `grok agent stdio`. Support PATH bootstrap, optional grok binary path override, model flag. Add unit test skeleton. (done — 2x subagent review, all tests green, exec symmetry + quoting coverage added)
+- [ ] 3. Define minimal ACP protocol types / request helpers in shared-core (AcpRpcRequests or similar, using existing JsonValue + codec patterns for KMP). Cover: initialize, session/new, session/prompt, basic session/update classification.
+- [ ] 4. Implement thin AcpClient (or GrokAgentClient) on Android (Kotlin) using CodexLineTransport + new core. At minimum: initialize handshake + send a prompt, consume streaming notifications.
+- [ ] 5. Port or create parallel minimal AcpClient on iOS (Swift) reusing the same line transport and (if possible) KMP bridge extensions. Ensure parity.
+- [ ] 6. Add a focused smoke test or scripted harness that exercises openRawExec + AcpClient handshake against a mock transport (or local grok if available). Verify round-trip and chunk streaming.
+- [ ] 7. First minimal wiring: expose a "connect as ACP/Grok" path in one ViewModel (e.g. a debug or new flow) so a real SSH + grok agent stdio can be driven from the app. Map basic agent_message_chunk to existing message rendering if feasible without big UI changes.
+- [ ] 8. Build + test validation on shared + at least one platform (use repo gradle or Android Studio JBR as per AGENTS.md). Fix any issues.
+- [ ] 9. Subagent review of the full sketch delta (using check-work or general reviewer). Address findings.
+- [ ] 10. Conventional commit (feat(acp): add initial ACP/Grok stdio support sketch...) + update MISSION/NEXT with status.
 
-## New Session And SSH Incident
+## Parked / Non-blocking Side Quests (do not start mid-mission without re-triage)
 
-- [x] Make iOS New Session show an immediate visible starting state and phase text.
-- [x] Add iOS deadlines for connect/worktree/thread-start so New Session cannot spin forever.
-- [x] Add regression tests for iOS New Session timeout/visibility behavior.
-- [x] Inventory every visible app page/surface and name the phantom page.
-- [x] Fix iOS New Session navigation so it starts/selects a session before showing detail.
-- [x] Review the New Session/navigation change with a subagent.
-- [x] Fix SSH app-server startup on Mac without breaking Linux/shared Android command generation.
-- [x] Review the SSH bootstrap change with a subagent.
-- [x] Harden SSH launch against stored/custom interactive shell startup files such as `~/.zshrc`.
-- [x] Review the hardened SSH launch fix with a subagent.
-- [x] Re-run shared, Android, Xcode, simulator, and SSH smoke validation for the hardened fix.
-- [x] Correct SSH launch to source rc files after installing Mobidex's launch PATH.
-- [x] Review the corrected rc-sourcing launch fix with a subagent.
-- [x] Re-run shared, Android, Xcode, simulator, and SSH smoke validation with real `.zshrc` sourcing.
-- [x] Change the default startup file to `.zprofile` and migrate stored `.zshrc` paths.
-- [x] Review the `.zprofile` default/migration change with a subagent.
-- [x] Re-run shared, Android, Xcode, simulator, and SSH smoke validation for `.zprofile` migration.
-- [x] Run focused unit tests, shared/Android checks, xcodebuild tests, and simulator launch/screenshot validation.
-- [x] Publish TestFlight build `1.0 (30)` to internal testers and submit it for external beta review.
-- [x] Record final critical learnings and remaining risks.
-- [x] Replace remote shell startup-file sourcing with explicit SSH execution PATH.
-- [x] Validate manual project paths before saving and ask before creating missing folders.
-- [x] Review the SSH execution PATH and project path validation changes with a subagent.
-- [x] Run shared, Android, Xcode, simulator, and SSH smoke validation.
-- [x] Add `.env.test` real-host E2E harness for connection, new session, join, and visible UI New Session paths.
-- [x] Validate real Mac SSH connection, project-directory New Session, join existing session, and New Worktree visible UI smoke.
-- [x] Review the latest iOS E2E/TestFlight readiness changes with a subagent and apply release-blocking fixes.
-- [x] Publish TestFlight build `1.0 (32)` to internal testers and submit it for external beta review.
-- [x] Publish TestFlight build `1.0 (33)` to internal testers and submit it for external beta review.
+- Rogue codex agents / unconditional launch fix in RemoteCodexAppServerCommand.kt (explicitly "keep in our back pocket").
+- Full ServerRecord discriminator (backend: codex vs acp/grok) + persistence + UI picker for connection type.
+- Rich mapping of all ACP chunk types (thoughts, tool_call, plan, x.ai/fs/*, approvals) into the conversation UI components.
+- Permission/approval flow for ACP interactive requests.
+- Auth provisioning UI (paste XAI key or "use remote grok auth").
+- Workspace/project discovery via ACP x.ai extensions vs current Codex discovery.
+- Supporting `grok agent serve` (HTTP/WS) as an alternative transport option.
+- Renaming CodexLineTransport → neutral name (e.g. LineJsonTransport) once ACP is primary.
+- End-to-end TestFlight-able flow + docs.
+- Any performance / streaming backpressure work for long agent runs.
 
-## Swipe Right Steer Now
+## Recent Critical Learnings
 
-- [x] Confirm whether the gesture already exists.
-- [x] Add leading swipe action to queued messages.
-- [x] Run review/checks and fix findings.
+- Raw stdio line transport scaffolding (`openRawExec`, SSHRawExecTransport, SshjRawExecTransport) + CodexLineTransport reuse is already in place from prior sketch work. Excellent — means we start the client layer on a solid, tested pipe.
+- Both platforms already document the raw path as "preferred for grok agent stdio (ACP)".
+- Existing CodexRpc* machinery (shared JsonValue, CodexRpcClientCore, platform clients) provides a strong pattern to copy/adapt for ACP without pulling in kotlinx.serialization into shared-core.
+- WebSocket is confirmed NOT used for the new ACP path (correct per earlier clarification).
+- Chunk 2 complete (RemoteAcpCommand + tests): clean separation from codex launch logic, correct `grok agent stdio --model ...` shape for raw CodexLineTransport, all quoting parity with codex tests, `exec ` symmetry added, 6/6 tests green after subagent review + fix cycle. Learnings: deliberate duplication of quoting helpers was the right call for v1 guardrail isolation; extraArgs quoting must be asserted exactly (single-quoted tokens); explicit `exec ` improves stdio handoff semantics.
+- Android `openRawExec` public surface still missing (private SshjRawExecTransport only) — surfaced as integration blocker for AcpClient wiring (iOS already has the full API).
 
-## Parked
-
-- [ ] Split Ad Hoc signing from Release App Store signing if the Ad Hoc workflow is still needed.
-
-## Project Add And Browser Smoke
-
-- [x] Fix discovered-project add from the Add Project sheet.
-- [x] Add live-host UI smoke for adding a discovered project.
-- [x] Add live-host UI smoke for remote folder browsing.
-- [x] Add visible recording activity while audio capture is active.
-- [x] Review and run focused/full iOS validation.
-
-## Project Detail Loading Placeholder
-
-- [x] Remove fake project-level session loading page from iOS detail pane.
-- [x] Mirror the detail-pane behavior in Android.
-- [x] Review the change with a subagent.
-- [x] Run focused tests/checks and fix any failures.
-
-## Refresh Button Loading State
-
-- [x] Disable/spin iOS refresh button while current pane is refreshing.
-- [x] Disable/spin Android refresh button while current pane is refreshing.
-- [x] Review refresh-button change with a subagent.
-- [x] Run focused checks after the refresh-button change.
-
-## Queued Message Visibility
-
-- [x] Reproduce/cover queued auto-send disappearing when the turn response has no user item.
-- [x] Render accepted queued input optimistically in iOS.
-- [x] Mirror optimistic queued input rendering in Android.
-- [x] Review queued-message fix with a subagent.
-- [x] Run focused checks after the queued-message fix.
+Update this file when mission or guardrails change. Keep entries terse.
