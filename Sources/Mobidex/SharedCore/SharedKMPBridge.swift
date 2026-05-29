@@ -133,16 +133,14 @@ enum SharedKMPBridge {
 
     // MARK: - ACP / Grok agent (item 5 iOS client parity)
     // Raw stdio launch command for `grok agent stdio` over openRawExec (CodexLineTransport).
-    // Mirrors appServerCommand pattern; delegates to KMP RemoteAcpCommand (added in shared-core ACP sketch).
-    static func acpStdioCommand(grokBin: String?, model: String?, extraArgs: [String] = [], xaiApiKey: String? = nil) -> String {
-        // KMP interop signature (from generated header + verifier inspection of RemoteAcpCommand):
-        // stdioCommand(acpPath:executionPath:model:extraArgs:xaiApiKey:)
+    // Mirrors appServerCommand pattern; delegates to KMP RemoteAcpCommand.
+    // No xaiApiKey: auth is the remote user's concern after SSH login (same as Codex).
+    static func acpStdioCommand(grokBin: String?, model: String?, extraArgs: [String] = []) -> String {
         MobidexShared.RemoteAcpCommand.shared.stdioCommand(
             acpPath: grokBin ?? "grok",
-            executionPath: "", // grok typically resolved via PATH or full bin in acpPath; executionPath optional for ACP stdio
+            executionPath: "",
             model: model ?? "grok-build",
-            extraArgs: extraArgs,
-            xaiApiKey: xaiApiKey
+            extraArgs: extraArgs
         )
     }
 

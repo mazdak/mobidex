@@ -23,11 +23,13 @@ class RemoteAcpCommandTest {
             model = "grok-build",
         )
 
-        // Custom acpPath + executionPath quoting still honored (auth fallback block is now inserted for no-key case but does not change the exec line)
         assertContains(command, "export PATH=")
         assertContains(command, "'/custom/bin'")
         assertContains(command, "exec '/home/user/bin/grok-special' agent stdio --model 'grok-build'")
         assertFalse(command.contains("command -v grok")) // explicit path skips the default resolution dance
+        // No mobile auth injection ever appears (SSH is the trust boundary, same as Codex)
+        assertFalse(command.contains("XAI_API_KEY"))
+        assertFalse(command.contains("auth.json"))
     }
 
     @Test
@@ -84,26 +86,16 @@ class RemoteAcpCommandTest {
     }
 
     @Test
-    fun stdioCommandWithXaiApiKeyInjectsEnvPrefix() {
-        val command = RemoteAcpCommand.stdioCommand(
-            model = "grok-build",
-            xaiApiKey = "sk-test-123",
-        )
-
-        assertContains(command, "XAI_API_KEY='sk-test-123' ")
-        assertContains(command, "grok agent stdio --model 'grok-build'")
-    }
-
-    @Test
-    fun stdioCommandWithoutKeyIncludesRemoteAuthJsonFallback() {
+    fun stdioCommandNeverContainsMobileAuthInjection() {
+        // Design: SSH authentication is the only mobile concern (matches Codex exactly).
+        // The remote `grok agent stdio` process uses whatever auth the logged-in user
+        // has on the host (~/.grok/auth.json, env from shell profile, etc.).
         val command = RemoteAcpCommand.stdioCommand(model = "grok-build")
 
-        // Fallback bootstrap (only when no explicit key) attempts ~/.grok/auth.json parse
-        assertContains(command, "cat ~/.grok/auth.json")
-        assertContains(command, "python3 -c")
-        assertContains(command, "apiKey")
-        assertContains(command, "export \$XAI_API_KEY")
-        // Still contains the grok launch (fallback runs before it)
+        assertFalse(command.contains("XAI_API_KEY", ignoreCase = true))
+        assertFalse(command.contains("auth.json"))
+        assertFalse(command.contains("xai"))
+        // The command is still a valid, minimal grok launch
         assertContains(command, "grok agent stdio --model 'grok-build'")
     }
 }

@@ -226,6 +226,15 @@ class AppViewModel(
     private val _debugAcpItems = MutableStateFlow<List<CodexSessionItem>>(emptyList())
     val debugAcpItems: StateFlow<List<CodexSessionItem>> = _debugAcpItems.asStateFlow()
 
+    // ACP / Grok *production* wiring (acp-production-wiring chunk).
+    // When selectedServer.backendType == AcpGrok, connect/send/approval/close paths drive these
+    // instead of appServer/eventJob. Collector feeds the *main* conversation state (same hydrate/append
+    // paths used by Codex events) so Grok/ACP chunks render as identical rich UI elements (Reasoning,
+    // AgentMessage, ToolCall with live status, Plan, interactive AgentEvent) via existing ConversationSection.
+    // Zero changes to any Codex paths or parked logic. Reuses AcpGrokClient + mapper + auth + raw-exec.
+    private var acpClient: AcpGrokClient? = null
+    private var acpJob: Job? = null
+
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences("mobidex", Context.MODE_PRIVATE)
 
@@ -639,11 +648,11 @@ class AppViewModel(
 
             runBusy("Starting Grok (ACP debug)", marksFailure = true) {
                 val credential = credentialStore.loadCredential(server.id)
-                val xaiKey = credentialStore.loadXAIAPIKey()
+                // No XAI key injection: after SSH auth, the remote `grok` process
+                // inherits the user's environment (same model as Codex).
                 val command = RemoteAcpCommand.stdioCommand(
                     executionPath = server.executionPath,
-                    model = model,
-                    xaiApiKey = xaiKey
+                    model = model
                 )
                 val transport = sshService.openRawExec(server, credential, command)
                 val client = AcpGrokClient(transport)

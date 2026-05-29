@@ -218,8 +218,7 @@ private class FakeCredentialStore : CredentialStore {
     override suspend fun deleteCredential(serverID: String) = Unit
     override suspend fun loadOpenAIAPIKey(): String? = null
     override suspend fun saveOpenAIAPIKey(key: String?) = Unit
-    override suspend fun loadXAIAPIKey(): String? = null
-    override suspend fun saveXAIAPIKey(key: String?) = Unit
+    // XAI methods removed; ACP uses same auth model as Codex (SSH is sufficient).
 }
 
 private class FakeHostKeyStore : HostKeyStore {

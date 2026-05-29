@@ -24,8 +24,9 @@ protocol CredentialStore: Sendable {
     func deleteCredential(serverID: UUID) throws
     func loadOpenAIAPIKey() throws -> String?
     func saveOpenAIAPIKey(_ key: String?) throws
-    func loadXAIAPIKey() throws -> String?
-    func saveXAIAPIKey(_ key: String?) throws
+    // XAI API key methods removed. ACP/Grok follows the Codex pattern:
+    // SSH authentication to the server is the only mobile-side auth concern.
+    // The remote process (grok agent stdio) uses the logged-in user's environment.
 }
 
 final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
@@ -62,13 +63,7 @@ final class KeychainCredentialStore: CredentialStore, @unchecked Sendable {
         try write(key, kind: "openai-api-key", serverID: appAccountID)
     }
 
-    func loadXAIAPIKey() throws -> String? {
-        try read(kind: "xai-api-key", serverID: appAccountID)
-    }
-
-    func saveXAIAPIKey(_ key: String?) throws {
-        try write(key, kind: "xai-api-key", serverID: appAccountID)
-    }
+    // XAI key methods removed (see protocol comment).
 
     private func account(kind: String, serverID: UUID) -> String {
         "\(serverID.uuidString).\(kind)"
@@ -172,15 +167,5 @@ final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable {
         }
     }
 
-    private var xaiAPIKey: String?
-
-    func loadXAIAPIKey() throws -> String? {
-        lock.withLock { xaiAPIKey }
-    }
-
-    func saveXAIAPIKey(_ key: String?) throws {
-        lock.withLock {
-            xaiAPIKey = key?.isEmpty == false ? key : nil
-        }
-    }
+    // XAI key methods removed (InMemory test store).
 }
