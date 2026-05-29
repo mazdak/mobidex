@@ -6,7 +6,7 @@ This file holds the durable mission checklist and parked side quests. Mirror key
 
 - [ ] 1. Mission setup: MISSION.md + NEXT.md + initial todo_write list created. (done)
 - [x] 2. Add `RemoteAcpCommand` (new shared file) with minimal stdio launch command generator for `grok agent stdio`. Support PATH bootstrap, optional grok binary path override, model flag. Add unit test skeleton. (done — 2x subagent review, all tests green, exec symmetry + quoting coverage added)
-- [ ] 3. Define minimal ACP protocol types / request helpers in shared-core (AcpRpcRequests or similar, using existing JsonValue + codec patterns for KMP). Cover: initialize, session/new, session/prompt, basic session/update classification.
+- [x] 3. Define minimal ACP protocol types / request helpers in shared-core (AcpRpcRequests or similar, using existing JsonValue + codec patterns for KMP). Cover: initialize, session/new, session/prompt, basic session/update classification + the chunk kinds needed for UI (message, thought/reasoning, tool_call, plan, approval requests). Include initial AcpChunkToSessionItem mapper sketch that produces CodexSessionItem instances (AgentMessage, Reasoning, Plan, ToolCall...) so existing UI projection + chat window "just work". (done — 2x subagent review, 10/10 tests green, KMP-safe, directly addresses user's "properly translated to right UI elements" request via existing CodexSessionItem + ConversationSection rendering)
 - [ ] 4. Implement thin AcpClient (or GrokAgentClient) on Android (Kotlin) using CodexLineTransport + new core. At minimum: initialize handshake + send a prompt, consume streaming notifications.
 - [ ] 5. Port or create parallel minimal AcpClient on iOS (Swift) reusing the same line transport and (if possible) KMP bridge extensions. Ensure parity.
 - [ ] 6. Add a focused smoke test or scripted harness that exercises openRawExec + AcpClient handshake against a mock transport (or local grok if available). Verify round-trip and chunk streaming.
@@ -19,7 +19,7 @@ This file holds the durable mission checklist and parked side quests. Mirror key
 
 - Rogue codex agents / unconditional launch fix in RemoteCodexAppServerCommand.kt (explicitly "keep in our back pocket").
 - Full ServerRecord discriminator (backend: codex vs acp/grok) + persistence + UI picker for connection type.
-- Rich mapping of all ACP chunk types (thoughts, tool_call, plan, x.ai/fs/*, approvals) into the conversation UI components.
+- (Completed as part of chunk 3) Rich mapping of all ACP chunk types (thoughts, tool_call, plan, x.ai/fs/*, approvals) into the conversation UI components via CodexSessionItem + existing projection (user explicitly called this out; mapper in AcpProtocolCore.kt produces the exact renderable items).
 - Permission/approval flow for ACP interactive requests.
 - Auth provisioning UI (paste XAI key or "use remote grok auth").
 - Workspace/project discovery via ACP x.ai extensions vs current Codex discovery.
@@ -36,5 +36,6 @@ This file holds the durable mission checklist and parked side quests. Mirror key
 - WebSocket is confirmed NOT used for the new ACP path (correct per earlier clarification).
 - Chunk 2 complete (RemoteAcpCommand + tests): clean separation from codex launch logic, correct `grok agent stdio --model ...` shape for raw CodexLineTransport, all quoting parity with codex tests, `exec ` symmetry added, 6/6 tests green after subagent review + fix cycle. Learnings: deliberate duplication of quoting helpers was the right call for v1 guardrail isolation; extraArgs quoting must be asserted exactly (single-quoted tokens); explicit `exec ` improves stdio handoff semantics.
 - Android `openRawExec` public surface still missing (private SshjRawExecTransport only) — surfaced as integration blocker for AcpClient wiring (iOS already has the full API).
+- Chunk 3 complete (AcpProtocolCore + mapper): requests, tolerant session/update classification, AcpContentChunk sealed, and the critical `toCodexSessionItem()` extension that turns Grok chunks directly into AgentMessage/Reasoning/ToolCall/Plan/AgentEvent. This satisfies the explicit UI translation requirement with zero changes to ConversationView or the projection. KMP fix (no System.currentTimeMillis in commonMain) + 10 green tests after 2x subagent review. Reuse of CodexRpc* + JsonValue kept the sketch tiny.
 
 Update this file when mission or guardrails change. Keep entries terse.
