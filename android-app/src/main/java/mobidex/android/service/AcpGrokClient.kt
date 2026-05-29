@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -46,6 +47,7 @@ class AcpGrokClient(
     private val pendingMutex = Mutex()
     private var closed = false
     private var currentSessionId: String? = null
+    private val idCounter = AtomicLong(1)
 
     /** Emits mapped CodexSessionItem instances (AgentMessage, Reasoning for thoughts, ToolCall, Plan, AgentEvent for approvals, etc.). */
     val sessionItems: Flow<CodexSessionItem> = itemsChannel.receiveAsFlow()
@@ -98,7 +100,7 @@ class AcpGrokClient(
         itemsChannel.close()
     }
 
-    private fun nextId(): Long = System.currentTimeMillis() // simple unique id for sketch; real core tracks monotonically
+    private fun nextId(): Long = idCounter.getAndIncrement() // monotonic to avoid collisions on rapid initialize + session/new (codex review P2)
 
     private suspend fun sendRequestAndAwait(req: mobidex.shared.CodexRpcRequest): JsonElement {
         val waiter = CompletableDeferred<JsonElement>()

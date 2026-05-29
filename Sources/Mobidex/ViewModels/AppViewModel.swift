@@ -452,15 +452,15 @@ final class AppViewModel: ObservableObject {
     }
 
     var canSendMessage: Bool {
-        appServer != nil && !isSessionMutationInFlight
+        (appServer != nil || acpClient != nil) && !isSessionMutationInFlight
     }
 
     var canInterruptActiveTurn: Bool {
-        appServer != nil && activeTurnID != nil
+        (appServer != nil || acpClient != nil) && activeTurnID != nil
     }
 
     var isAppServerConnected: Bool {
-        appServer != nil
+        appServer != nil || acpClient != nil
     }
 
     var isBusy: Bool {
