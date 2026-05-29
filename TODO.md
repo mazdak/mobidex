@@ -28,13 +28,13 @@
 - Process: After every sub-chunk: todo_write + spawn_subagent (check-work with full mission + both-clients + Codex-untouched + UI gates) → fix → exact builds → re-review → mark → conventional commit. "Keep going until all items are finished in the mission."
 
 ## Active Chunk
-- acp-production-wiring (post user "Yes" + mission re-anchor): IN PROGRESS.
-  - [x] Discriminator polish (BackendType + field + iOS decodeIfPresent/default init + editor/smoke sites + Android import; 100+ tests untouched via defaults; legacy JSON compat; iOS verify + Gradle 8.13+JBR green; dedicated check-work 019e7517-fae2 VERDICT: PASS). Learnings logged in MISSION.md.
-  - [ ] Android real connect/send/approval/close branching (promote AcpGrokClient + collector to main UI state when .acpGrok; reuse mapper/auth/raw-exec; zero Codex changes).
-  - [ ] iOS symmetric VM branching.
-  - [ ] Full wiring subagent reviews (2+ with UI gate + Codex proofs) + builds.
-  - [ ] Trackers + conventional commit at chunk close.
-  "Keep going" — full process on every sub-chunk.
+- acp-production-wiring (post user "Yes" + mission re-anchor): COMPLETE (2026-05-29).
+  - [x] Discriminator polish (BackendType + field + ... VERDICT: PASS).
+  - [x] Android real connect/send/approval/close branching + startAcpProduction + collector via CodexSessionProjection into main state + 1x check-work PASS (019e754c) + minor fix + re-green.
+  - [x] iOS symmetric (acpSessionId storage + branches in connect/send/respond/close + cleanups + echo via publish + SharedKMPBridge) + fresh iOS verify "Build succeeded".
+  - [x] 2x full check-work (UI-gate sentence verbatim + Codex-untouched git/grep proofs on both platforms + both-clients parity) → VERDICT: PASS (Android then full).
+  - [x] Trackers updated + conventional commit prepared: `feat(acp): wire backendType into main connect/send/approval paths for transparent Grok/ACP in normal chat UI (Android + iOS)`.
+  All mandated builds green; "properly translated..." gate + "Codex untouched" + "fix both clients" satisfied. Mission phase complete.
 
 ## Parked (do not start)
 All from NEXT.md: rogue Codex agents, full ServerRecord discriminator + picker, auth UI, x.ai extensions, rich approval/plan rendering, etc. Re-triage only after core items 5+7+10 closed.

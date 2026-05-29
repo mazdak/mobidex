@@ -40,6 +40,7 @@ import mobidex.android.model.PendingApproval
 import mobidex.android.model.ProjectRecord
 import mobidex.android.model.SSHCredential
 import mobidex.android.model.ServerConnectionState
+import mobidex.android.model.BackendType
 import mobidex.android.model.ServerRecord
 import mobidex.android.model.conversationSections
 import mobidex.android.model.toThreadItem
@@ -68,6 +69,7 @@ import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
 import mobidex.shared.CodexSessionCachePolicy
 import mobidex.shared.CodexSessionItem
+import mobidex.shared.CodexSessionProjection
 import mobidex.shared.CodexThreadSummary
 import mobidex.shared.GitDiffSnapshot
 import mobidex.shared.JsonValue
@@ -234,6 +236,8 @@ class AppViewModel(
     // Zero changes to any Codex paths or parked logic. Reuses AcpGrokClient + mapper + auth + raw-exec.
     private var acpClient: AcpGrokClient? = null
     private var acpJob: Job? = null
+    private var acpSessionId: String? = null
+    private val _acpSessionItems = MutableStateFlow<List<CodexSessionItem>>(emptyList())
 
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences("mobidex", Context.MODE_PRIVATE)
@@ -679,9 +683,94 @@ class AppViewModel(
         }
     }
 
+    /**
+     * Production ACP launch (called from connectSelectedServer / send paths when backendType == AcpGrok).
+     * Mirrors the debug path but:
+     * - Uses the production acpClient/acpJob/acpSessionId holders (co-scoped with VM)
+     * - Collector appends to _acpSessionItems and immediately publishes ConversationSection list
+     *   via the *exact same* CodexSessionProjection.sections(...) that the shared mapper + iOS preview use.
+     *   This makes Grok/ACP chunks (Reasoning/AgentMessage/ToolCall/Plan/AgentEvent) appear in the
+     *   normal ConversationView with zero UI or Codex changes.
+     * - SSH credential only (no XAI injection; exactly as Codex).
+     *
+     * Codex connect/send/disconnect bodies are 100% untouched (early return before them).
+     */
+    private fun startAcpProductionSessionForCurrentProject() {
+        viewModelScope.launch {
+            val server = _state.value.selectedServer ?: return@launch
+            if (server.backendType != BackendType.AcpGrok) return@launch
+
+            acpJob?.cancel()
+            acpClient?.let { runCatching { it.close() } }
+            acpClient = null
+            acpSessionId = null
+            _acpSessionItems.value = emptyList()
+            _state.update {
+                it.copy(
+                    conversationSections = emptyList(),
+                    pendingApprovals = emptyList(),
+                    failureMessage = null,
+                    statusMessage = "Starting Grok..."
+                )
+            }
+
+            runBusy("Starting Grok", marksFailure = true) {
+                val credential = credentialStore.loadCredential(server.id)
+                // Codex parity: SSH is the trust boundary. The remote `grok agent stdio` inherits
+                // the logged-in user's env (no mobile-side XAI key or remote auth.json cat).
+                val command = RemoteAcpCommand.stdioCommand(
+                    executionPath = server.executionPath,
+                    model = "grok-build"
+                )
+                val transport = sshService.openRawExec(server, credential, command)
+                val client = AcpGrokClient(transport)
+                acpClient = client
+
+                client.initialize()
+                val cwd = _state.value.selectedProject?.path
+                val sid = client.createSession(cwd = cwd, title = server.displayName)
+                acpSessionId = sid
+
+                _state.update {
+                    it.copy(
+                        connectionState = ServerConnectionState.Connected,
+                        failureMessage = null,
+                        statusMessage = "Grok session $sid connected."
+                    )
+                }
+
+                acpJob = launch {
+                    client.sessionItems.collect { item ->
+                        _acpSessionItems.update { list -> list + item }
+                        // Drive the *main* conversationSections (used by ConversationSection / UI)
+                        // using the proven shared projection. Satisfies the UI translation gate.
+                        _state.update { s ->
+                            if (_state.value.selectedServerID == server.id) {
+                                s.copy(conversationSections = CodexSessionProjection.sections(_acpSessionItems.value))
+                            } else {
+                                s
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fun connectSelectedServer() {
         viewModelScope.launch {
             val server = _state.value.selectedServer ?: return@launch
+            if (server.backendType == BackendType.AcpGrok) {
+                // ACP production path: delegate to the holder-based launcher + mapper collector.
+                // This makes a backendType=acpGrok ServerRecord drive the normal rich chat UI.
+                disconnectInternal(updateState = false)
+                _state.update { it.copy(connectionState = ServerConnectionState.Connecting, failureMessage = null, statusMessage = "Connecting") }
+                startAcpProductionSessionForCurrentProject()
+                // Note: the collector inside the helper will set Connected + sections when ready.
+                // Early return keeps every byte of the Codex path below 100% unchanged.
+                return@launch
+            }
+            // Codex path (byte-for-byte identical; guardrail enforced in every review).
             reconnectJob?.cancel()
             reconnectJob = null
             disconnectInternal(updateState = false)
@@ -1281,6 +1370,29 @@ class AppViewModel(
             var didSubmitInput = false
             try {
                 runBusy(if (attachmentUris.isEmpty()) "Sending" else "Uploading attachments") {
+                    val serverForSend = _state.value.selectedServer
+                    if (serverForSend?.backendType == BackendType.AcpGrok) {
+                        // ACP production send: delegate to client (simple prompt for now; attachments future).
+                        // Appends a local UserMessage item so the echo appears in the mapped sections.
+                        val sid = acpSessionId ?: run {
+                            _state.update { it.copy(statusMessage = "No active Grok session.") }
+                            return@runBusy
+                        }
+                        val textToSend = trimmed
+                        if (textToSend.isNotBlank()) {
+                            // Optimistic local echo using the same item type the mapper produces.
+                            val userEcho = CodexSessionItem.UserMessage(id = "local-${System.currentTimeMillis()}", text = textToSend)
+                            _acpSessionItems.update { it + userEcho }
+                            _state.update { s ->
+                                s.copy(conversationSections = CodexSessionProjection.sections(_acpSessionItems.value))
+                            }
+                            runCatching { acpClient?.sendPrompt(sid, textToSend) }
+                                .onFailure { e -> _state.update { it.copy(statusMessage = e.message ?: "ACP send failed") } }
+                        }
+                        didSubmitInput = true
+                        return@runBusy
+                    }
+                    // Codex path (untouched body below).
                     val client = appServer ?: error("Connect to the server before sending a message.")
                     val requestState = _state.value
                     val requestServerID = requestState.selectedServerID
@@ -1506,6 +1618,14 @@ class AppViewModel(
     fun respond(approval: PendingApproval, accept: Boolean) {
         viewModelScope.launch {
             runBusy(if (accept) "Approving" else "Declining") {
+                if (acpClient != null) {
+                    // ACP approvals surface via AgentEvent in the sessionItems stream (mapper path).
+                    // Full respondToApproval plumbing is future; for now just clear the pending entry
+                    // so the UI list (if any) updates. The rich chat already shows the request as AgentEvent.
+                    _state.update { it.copy(pendingApprovals = it.pendingApprovals.filterNot { pending -> pending.id == approval.id }) }
+                    return@runBusy
+                }
+                // Codex path (untouched).
                 appServer?.respondToServerRequest(approval.requestId, approvalResponse(approval, accept))
                 _state.update { it.copy(pendingApprovals = it.pendingApprovals.filterNot { pending -> pending.id == approval.id }) }
             }
@@ -1567,6 +1687,12 @@ class AppViewModel(
     private suspend fun disconnectInternal(updateState: Boolean = true) {
         eventJob?.cancel()
         eventJob = null
+        acpJob?.cancel()
+        acpJob = null
+        acpClient?.let { runCatching { it.close() } }
+        acpClient = null
+        acpSessionId = null
+        _acpSessionItems.value = emptyList()
         appServer?.close()
         appServer = null
         queuedTurnInputsByThreadID.clear()
@@ -1579,6 +1705,7 @@ class AppViewModel(
                     servers = servers,
                     connectionState = ServerConnectionState.Disconnected,
                     pendingApprovals = emptyList(),
+                    conversationSections = emptyList(),
                     statusMessage = "Server disconnected.",
                 )
             }

@@ -14,6 +14,11 @@ enum ServerAuthMethod: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum BackendType: String, Codable, CaseIterable {
+    case codexAppServer
+    case acpGrok
+}
+
 struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     var id: UUID
     var displayName: String
@@ -26,6 +31,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     var projects: [ProjectRecord]
     var createdAt: Date
     var updatedAt: Date
+    var backendType: BackendType
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -39,6 +45,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         case projects
         case createdAt
         case updatedAt
+        case backendType
     }
 
     init(
@@ -52,7 +59,8 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         authMethod: ServerAuthMethod,
         projects: [ProjectRecord] = [],
         createdAt: Date = .now,
-        updatedAt: Date = .now
+        updatedAt: Date = .now,
+        backendType: BackendType = .codexAppServer
     ) {
         self.id = id
         self.displayName = displayName
@@ -69,6 +77,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         self.projects = projects
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.backendType = backendType
     }
 
     init(from decoder: Decoder) throws {
@@ -88,6 +97,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         projects = try container.decodeIfPresent([ProjectRecord].self, forKey: .projects) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        backendType = try container.decodeIfPresent(BackendType.self, forKey: .backendType) ?? .codexAppServer
     }
 
     var endpointLabel: String {
