@@ -17,6 +17,20 @@ enum ServerAuthMethod: String, Codable, CaseIterable, Identifiable {
 enum BackendType: String, Codable, CaseIterable {
     case codexAppServer
     case acpGrok
+
+    var label: String {
+        switch self {
+        case .codexAppServer: "Codex"
+        case .acpGrok: "ACP Agent"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .codexAppServer: "Uses `codex app-server` for Codex sessions."
+        case .acpGrok: "Uses any ACP-compatible stdio agent command."
+        }
+    }
 }
 
 struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
@@ -27,6 +41,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     var username: String
     var codexPath: String
     var executionPath: String
+    var acpLaunchCommand: String
     var authMethod: ServerAuthMethod
     var projects: [ProjectRecord]
     var createdAt: Date
@@ -41,6 +56,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         case username
         case codexPath
         case executionPath
+        case acpLaunchCommand
         case authMethod
         case projects
         case createdAt
@@ -56,6 +72,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         username: String,
         codexPath: String = SharedKMPBridge.defaultCodexPath,
         executionPath: String = SharedKMPBridge.defaultExecutionPath,
+        acpLaunchCommand: String = SharedKMPBridge.defaultAcpLaunchCommand,
         authMethod: ServerAuthMethod,
         projects: [ProjectRecord] = [],
         createdAt: Date = .now,
@@ -73,6 +90,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         )
         self.codexPath = launchConfig.codexPath
         self.executionPath = launchConfig.executionPath
+        self.acpLaunchCommand = acpLaunchCommand.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? SharedKMPBridge.defaultAcpLaunchCommand
         self.authMethod = authMethod
         self.projects = projects
         self.createdAt = createdAt
@@ -93,6 +111,9 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         )
         codexPath = launchConfig.codexPath
         executionPath = launchConfig.executionPath
+        acpLaunchCommand = try container.decodeIfPresent(String.self, forKey: .acpLaunchCommand)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nonEmpty ?? SharedKMPBridge.defaultAcpLaunchCommand
         authMethod = try container.decode(ServerAuthMethod.self, forKey: .authMethod)
         projects = try container.decodeIfPresent([ProjectRecord].self, forKey: .projects) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)

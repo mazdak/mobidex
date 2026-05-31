@@ -3,6 +3,7 @@ package mobidex.android.model
 import java.time.Instant
 import java.util.UUID
 import kotlinx.serialization.Serializable
+import mobidex.shared.RemoteAcpCommand
 import mobidex.shared.RemoteCodexAppServerCommand
 import mobidex.shared.RemoteServerLaunchDefaults
 
@@ -13,9 +14,9 @@ enum class ServerAuthMethod(val label: String) {
 }
 
 @Serializable
-enum class BackendType {
-    CodexAppServer,
-    AcpGrok,
+enum class BackendType(val label: String, val detail: String) {
+    CodexAppServer("Codex", "Uses codex app-server for Codex sessions."),
+    AcpGrok("ACP Agent", "Uses any ACP-compatible stdio agent command."),
 }
 
 @Serializable
@@ -27,6 +28,7 @@ data class ServerRecord(
     val username: String,
     val codexPath: String = RemoteServerLaunchDefaults.codexPath,
     val executionPath: String = RemoteServerLaunchDefaults.executionPath,
+    val acpLaunchCommand: String = RemoteAcpCommand.defaultLaunchCommand,
     val authMethod: ServerAuthMethod,
     val projects: List<ProjectRecord> = emptyList(),
     val createdAtEpochSeconds: Long = Instant.now().epochSecond,
@@ -45,6 +47,7 @@ data class ServerRecord(
                 username = username.trim(),
                 codexPath = launchConfig.codexPath,
                 executionPath = launchConfig.executionPath,
+                acpLaunchCommand = acpLaunchCommand.trim().ifEmpty { RemoteAcpCommand.defaultLaunchCommand },
                 updatedAtEpochSeconds = Instant.now().epochSecond,
                 backendType = backendType,
             )

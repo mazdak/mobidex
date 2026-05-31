@@ -689,7 +689,7 @@ class AppViewModel(
      * - Uses the production acpClient/acpJob/acpSessionId holders (co-scoped with VM)
      * - Collector appends to _acpSessionItems and immediately publishes ConversationSection list
      *   via the *exact same* CodexSessionProjection.sections(...) that the shared mapper + iOS preview use.
-     *   This makes Grok/ACP chunks (Reasoning/AgentMessage/ToolCall/Plan/AgentEvent) appear in the
+     *   This makes ACP chunks (Reasoning/AgentMessage/ToolCall/Plan/AgentEvent) appear in the
      *   normal ConversationView with zero UI or Codex changes.
      * - SSH credential only (no XAI injection; exactly as Codex).
      *
@@ -710,17 +710,17 @@ class AppViewModel(
                     conversationSections = emptyList(),
                     pendingApprovals = emptyList(),
                     failureMessage = null,
-                    statusMessage = "Starting Grok..."
+                    statusMessage = "Starting ACP agent..."
                 )
             }
 
-            runBusy("Starting Grok", marksFailure = true) {
+            runBusy("Starting ACP agent", marksFailure = true) {
                 val credential = credentialStore.loadCredential(server.id)
-                // Codex parity: SSH is the trust boundary. The remote `grok agent stdio` inherits
-                // the logged-in user's env (no mobile-side XAI key or remote auth.json cat).
-                val command = RemoteAcpCommand.stdioCommand(
+                // Codex parity: SSH is the trust boundary. The remote ACP command inherits
+                // the logged-in user's env (no mobile-side agent auth injection).
+                val command = RemoteAcpCommand.shellCommand(
+                    launchCommand = server.acpLaunchCommand,
                     executionPath = server.executionPath,
-                    model = "grok-build"
                 )
                 val transport = sshService.openRawExec(server, credential, command)
                 val client = AcpGrokClient(transport)
@@ -735,7 +735,7 @@ class AppViewModel(
                     it.copy(
                         connectionState = ServerConnectionState.Connected,
                         failureMessage = null,
-                        statusMessage = "Grok session $sid connected."
+                        statusMessage = "ACP agent session $sid connected."
                     )
                 }
 
@@ -929,23 +929,19 @@ class AppViewModel(
             client.listThreads(cwd, includeArchived = includeArchived, pageLimit = pageLimit)
         } else {
             val exactMatches = sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived, pageLimit = pageLimit) }
-            if (exactMatches.isEmpty() || (project?.activeChatCount ?: 0) > 0) {
-                val unscoped = client.listThreads(null, includeArchived = includeArchived, pageLimit = pageLimit)
-                val groupedSessionIDs = SessionListSections.sessionIdsForProject(
-                    sessions = unscoped.map { thread ->
-                        CodexThreadSummary(
-                            id = thread.id,
-                            cwd = thread.cwd,
-                            updatedAtEpochSeconds = thread.updatedAtEpochSeconds,
-                        )
-                    },
-                    projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
-                    projectPath = cwd.orEmpty(),
-                )
-                (exactMatches + unscoped.filter { it.id in groupedSessionIDs }).distinctBy { it.id }
-            } else {
-                exactMatches.distinctBy { it.id }
-            }
+            val unscoped = client.listThreads(null, includeArchived = includeArchived, pageLimit = pageLimit)
+            val groupedSessionIDs = SessionListSections.sessionIdsForProject(
+                sessions = unscoped.map { thread ->
+                    CodexThreadSummary(
+                        id = thread.id,
+                        cwd = thread.cwd,
+                        updatedAtEpochSeconds = thread.updatedAtEpochSeconds,
+                    )
+                },
+                projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
+                projectPath = cwd.orEmpty(),
+            )
+            (exactMatches + unscoped.filter { it.id in groupedSessionIDs }).distinctBy { it.id }
         }
     }
 
@@ -1375,7 +1371,7 @@ class AppViewModel(
                         // ACP production send: delegate to client (simple prompt for now; attachments future).
                         // Appends a local UserMessage item so the echo appears in the mapped sections.
                         val sid = acpSessionId ?: run {
-                            _state.update { it.copy(statusMessage = "No active Grok session.") }
+                            _state.update { it.copy(statusMessage = "No active ACP session.") }
                             return@runBusy
                         }
                         val textToSend = trimmed

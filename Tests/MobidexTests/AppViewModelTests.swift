@@ -1173,6 +1173,39 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testAcpConnectionFailureDoesNotBecomeConnectedAndUsesConfiguredCommand() async throws {
+        let server = ServerRecord(
+            displayName: "ACP Box",
+            host: "build.example.com",
+            username: "mazdak",
+            executionPath: "$HOME/bin:/usr/bin:$PATH",
+            acpLaunchCommand: "custom-agent --stdio --profile work",
+            authMethod: .password,
+            backendType: .acpGrok
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let sshService = StubSSHService(rawExecError: TestError.unexpectedSSH)
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: sshService
+        )
+
+        await viewModel.connectSelectedServer()
+
+        guard case .failed = viewModel.connectionState else {
+            return XCTFail("Expected failed ACP connection, got \(viewModel.connectionState).")
+        }
+        XCTAssertNotEqual(viewModel.connectionState, .connected)
+        XCTAssertEqual(sshService.rawExecCallCount, 1)
+        let command = try XCTUnwrap(sshService.lastRawExecCommand)
+        XCTAssertTrue(command.contains("export PATH=\"${HOME}\"/'bin':'/usr/bin':\"$PATH\""))
+        XCTAssertTrue(command.contains("exec custom-agent --stdio --profile work"))
+    }
+
+    @MainActor
     func testSidebarServerSwitchDisconnectsActiveAppServerBeforeSelecting() async throws {
         let first = ServerRecord(displayName: "First Box", host: "first.example.com", username: "mazdak", authMethod: .password)
         let second = ServerRecord(displayName: "Second Box", host: "second.example.com", username: "mazdak", authMethod: .password)
@@ -6006,6 +6039,10 @@ private final class BlockingOpenSSHService: SSHService, @unchecked Sendable {
         await gate.wait()
         return appServer
     }
+
+    func openRawExec(server: ServerRecord, credential: SSHCredential, command: String) async throws -> any CodexLineTransport {
+        throw TestError.unexpectedSSH
+    }
 }
 
 private actor AsyncGate {
@@ -6198,6 +6235,10 @@ private final class ScriptedSSHService: SSHService, @unchecked Sendable {
             throw error
         }
     }
+
+    func openRawExec(server: ServerRecord, credential: SSHCredential, command: String) async throws -> any CodexLineTransport {
+        throw TestError.unexpectedSSH
+    }
 }
 
 private final class StubSSHService: SSHService, @unchecked Sendable {
@@ -6206,25 +6247,38 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
     private let testConnectionError: Error?
     private let openAppServerError: Error?
     private let openAppServerDelayNanoseconds: UInt64
+    private let rawExecError: Error?
     private let lock = NSLock()
     private var openAppServerCalls = 0
+    private var rawExecCalls = 0
+    private var rawExecCommands: [String] = []
 
     init(
         discoveredProjects: [RemoteProject] = [],
         discoverProjectsError: Error? = nil,
         testConnectionError: Error? = nil,
         openAppServerError: Error? = nil,
-        openAppServerDelayNanoseconds: UInt64 = 0
+        openAppServerDelayNanoseconds: UInt64 = 0,
+        rawExecError: Error? = nil
     ) {
         self.discoveredProjects = discoveredProjects
         self.discoverProjectsError = discoverProjectsError
         self.testConnectionError = testConnectionError
         self.openAppServerError = openAppServerError
         self.openAppServerDelayNanoseconds = openAppServerDelayNanoseconds
+        self.rawExecError = rawExecError
     }
 
     var openAppServerCallCount: Int {
         lock.withLock { openAppServerCalls }
+    }
+
+    var rawExecCallCount: Int {
+        lock.withLock { rawExecCalls }
+    }
+
+    var lastRawExecCommand: String? {
+        lock.withLock { rawExecCommands.last }
     }
 
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws {
@@ -6285,6 +6339,17 @@ private final class StubSSHService: SSHService, @unchecked Sendable {
         }
         if let openAppServerError {
             throw openAppServerError
+        }
+        throw TestError.unexpectedSSH
+    }
+
+    func openRawExec(server: ServerRecord, credential: SSHCredential, command: String) async throws -> any CodexLineTransport {
+        try lock.withLock {
+            rawExecCalls += 1
+            rawExecCommands.append(command)
+            if let rawExecError {
+                throw rawExecError
+            }
         }
         throw TestError.unexpectedSSH
     }

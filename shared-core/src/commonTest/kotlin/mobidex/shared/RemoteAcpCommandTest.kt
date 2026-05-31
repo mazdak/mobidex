@@ -98,4 +98,22 @@ class RemoteAcpCommandTest {
         // The command is still a valid, minimal grok launch
         assertContains(command, "grok agent stdio --model 'grok-build'")
     }
+
+    @Test
+    fun shellCommandUsesGenericAcpLaunchCommandWithPathBootstrap() {
+        val command = RemoteAcpCommand.shellCommand(
+            launchCommand = "my-agent --stdio --profile work",
+            executionPath = "\$HOME/bin:/usr/bin:\$PATH",
+        )
+
+        assertContains(command, "export PATH=")
+        assertContains(command, "\"\${HOME}\"/'bin'")
+        assertContains(command, "'/usr/bin'")
+        assertContains(command, "exec my-agent --stdio --profile work")
+    }
+
+    @Test
+    fun shellCommandFallsBackToDefaultAcpLaunchCommand() {
+        assertContains(RemoteAcpCommand.shellCommand(launchCommand = " "), RemoteAcpCommand.defaultLaunchCommand)
+    }
 }

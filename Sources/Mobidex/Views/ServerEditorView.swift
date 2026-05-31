@@ -11,6 +11,8 @@ struct ServerEditorView: View {
     @State private var username: String
     @State private var codexPath: String
     @State private var executionPath: String
+    @State private var backendType: BackendType
+    @State private var acpLaunchCommand: String
     @State private var authMethod: ServerAuthMethod
     @State private var password: String
     @State private var privateKey: String
@@ -30,6 +32,8 @@ struct ServerEditorView: View {
         _username = State(initialValue: server?.username ?? "")
         _codexPath = State(initialValue: server?.codexPath ?? SharedKMPBridge.defaultCodexPath)
         _executionPath = State(initialValue: server?.executionPath ?? SharedKMPBridge.defaultExecutionPath)
+        _backendType = State(initialValue: server?.backendType ?? .codexAppServer)
+        _acpLaunchCommand = State(initialValue: server?.acpLaunchCommand ?? SharedKMPBridge.defaultAcpLaunchCommand)
         _authMethod = State(initialValue: server?.authMethod ?? .password)
         _password = State(initialValue: "")
         _privateKey = State(initialValue: "")
@@ -55,6 +59,21 @@ struct ServerEditorView: View {
                 }
 
                 Section {
+                    Picker("Agent Protocol", selection: $backendType) {
+                        ForEach(BackendType.allCases, id: \.self) { backend in
+                            Text(backend.label).tag(backend)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text(backendType.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Agent Protocol")
+                }
+
+                Section {
                     TextField("Execution Path", text: $executionPath, prompt: Text(SharedKMPBridge.defaultExecutionPath))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -65,17 +84,32 @@ struct ServerEditorView: View {
                     Text("Mobidex injects this PATH for SSH commands. Shell startup files are not sourced.")
                 }
 
-                Section {
-                    TextField("Full Path to Codex", text: $codexPath, prompt: Text("~/.bun/bin/codex"))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("codexPathField")
-                } header: {
-                    Text("Codex Binary Path")
-                } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Use the full remote executable path when possible. Mobidex uses this to attach through Codex's official Unix control socket, or to start that socket if needed.")
-                        Text("Examples: ~/.bun/bin/codex, /home/ubuntu/.bun/bin/codex, /usr/local/bin/codex.")
+                if backendType == .codexAppServer {
+                    Section {
+                        TextField("Full Path to Codex", text: $codexPath, prompt: Text("~/.bun/bin/codex"))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("codexPathField")
+                    } header: {
+                        Text("Codex Binary Path")
+                    } footer: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Use the full remote executable path when possible. Mobidex uses this to attach through Codex's official Unix control socket, or to start that socket if needed.")
+                            Text("Examples: ~/.bun/bin/codex, /home/ubuntu/.bun/bin/codex, /usr/local/bin/codex.")
+                        }
+                    }
+                } else {
+                    Section {
+                        TextField("ACP Launch Command", text: $acpLaunchCommand, prompt: Text(SharedKMPBridge.defaultAcpLaunchCommand), axis: .vertical)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .lineLimit(2...4)
+                            .font(.system(.body, design: .monospaced))
+                            .accessibilityIdentifier("acpLaunchCommandField")
+                    } header: {
+                        Text("ACP Launch Command")
+                    } footer: {
+                        Text("Mobidex runs this remote command over SSH and expects ACP JSON-RPC over stdio. Grok is the default, but any ACP-compatible coding agent can be used.")
                     }
                 }
 
@@ -212,10 +246,12 @@ struct ServerEditorView: View {
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
             codexPath: codexPath,
             executionPath: executionPath,
+            acpLaunchCommand: acpLaunchCommand,
             authMethod: authMethod,
             projects: original?.projects ?? [],
             createdAt: original?.createdAt ?? .now,
-            updatedAt: .now
+            updatedAt: .now,
+            backendType: backendType
         )
         let credential = SSHCredential(
             password: authMethod == .password ? password : nil,

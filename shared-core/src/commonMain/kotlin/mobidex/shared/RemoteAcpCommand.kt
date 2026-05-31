@@ -7,6 +7,8 @@ package mobidex.shared
  * and to avoid any coupling to the Codex app-server launch/proxy logic.
  */
 object RemoteAcpCommand {
+    const val defaultLaunchCommand: String = "grok agent stdio --model grok-build"
+
     fun stdioCommand(
         acpPath: String = RemoteAcpDefaults.acpPath,
         executionPath: String = RemoteAcpDefaults.executionPath,
@@ -31,6 +33,18 @@ object RemoteAcpCommand {
                 "exec ${config.acpPath.shellQuotedExecutablePath()} agent stdio $modelArg$extra",
             ).joinToString("; ")
         }
+    }
+
+    fun shellCommand(
+        launchCommand: String = defaultLaunchCommand,
+        executionPath: String = RemoteAcpDefaults.executionPath,
+    ): String {
+        val command = launchCommand.trim().ifEmpty { defaultLaunchCommand }
+        val config = RemoteAcpDefaults.normalize(acpPath = RemoteAcpDefaults.acpPath, executionPath = executionPath)
+        return listOf(
+            shellEnvironmentBootstrapCommand(config.executionPath),
+            "exec $command",
+        ).joinToString("; ")
     }
 
     private fun defaultStdioCommand(modelArg: String, extra: String): String {

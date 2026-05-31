@@ -144,6 +144,17 @@ enum SharedKMPBridge {
         )
     }
 
+    static var defaultAcpLaunchCommand: String {
+        MobidexShared.RemoteAcpCommand.shared.defaultLaunchCommand
+    }
+
+    static func acpShellCommand(launchCommand: String, executionPath: String) -> String {
+        MobidexShared.RemoteAcpCommand.shared.shellCommand(
+            launchCommand: launchCommand,
+            executionPath: executionPath
+        )
+    }
+
     // MARK: - ACP / Grok protocol surface (item 5 iOS AcpGrokClient parity)
     // Minimal bridge mirroring the Codex RPC section below. Exposes request builders + classify + mapper
     // so AcpGrokClient can drive `grok agent stdio` over CodexLineTransport (openRawExec) and feed the

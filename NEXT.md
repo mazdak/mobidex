@@ -1,4 +1,39 @@
-# NEXT.md — ACP for Grok + Parked Items (Mobidex)
+# NEXT.md — Active Work + Parked Items (Mobidex)
+
+## Mission Checklist (active, 2026-05-31)
+
+## TestFlight Release Checklist (active, 2026-05-31)
+
+- [ ] T1. Commit verified release delta.
+- [ ] T2. Merge release commit to `master` and confirm `master` vs `origin/master`.
+- [ ] T3. Resolve TestFlight version/build and external tester group.
+- [ ] T4. Run `.asc` TestFlight workflow for internal testers.
+- [ ] T5. Publish the uploaded build to external TestFlight testers.
+- [ ] T6. Record version/build/build ID and final release status.
+
+## Completed ACP UI Checklist (2026-05-31)
+
+- [x] A1. Add generic ACP Agent UI on iOS and Android server editors.
+- [x] A2. Store and normalize per-server ACP launch commands, with Grok as the default command.
+- [x] A3. Route production ACP launch through the configured command on both clients.
+- [x] A4. Add/update focused tests and run shared, Android, and iOS validation.
+- [x] A5. Launch subagent review for the ACP UI/generalization chunk and fix confirmed findings. (review agent 019e8060-8833-7dd0-94a2-6e9cb755a8b0; fixed iOS failed-connect state overwrite and ACP re-entry guard)
+
+## Completed Markdown/Project Session Checklist (2026-05-31)
+
+- [x] 1. Mission setup: re-anchor `MISSION.md` and `NEXT.md` for markdown rendering + project session coverage.
+- [x] 2. Replace agent reply markdown rendering with parser-backed rendering on iOS and Android.
+- [x] 3. Fix project-scoped session loading so exact project sessions do not hide matching Codex worktree sessions.
+- [x] 4. Add regression coverage and run focused validation.
+- [x] 5. Launch subagent review, fix confirmed findings, and mark the mission complete.
+
+## Current Critical Learnings
+
+- Both clients already choose markdown rendering for assistant/reasoning/plan/review/system sections; the homegrown parser should be replaced for rendered agent output instead of extended.
+- Project-scoped session loading currently skips unscoped discovery when exact `cwd` matches exist, which can hide worktree sessions for projects such as "cheetah".
+- Subagent review found a real parser bug where delimiter tokens were dropped in literal/incomplete markdown; fixed by preserving delimiter tokens outside structural nodes and adding regression coverage.
+
+---
 
 This file holds the durable mission checklist and parked side quests. Mirror key items into the live `todo_write` tool for execution tracking. Update after each chunk.
 

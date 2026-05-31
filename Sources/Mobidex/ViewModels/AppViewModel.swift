@@ -673,6 +673,7 @@ final class AppViewModel: ObservableObject {
         )
         next.codexPath = launchConfig.codexPath
         next.executionPath = launchConfig.executionPath
+        next.acpLaunchCommand = next.acpLaunchCommand.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? SharedKMPBridge.defaultAcpLaunchCommand
         next.updatedAt = .now
 
         do {
@@ -687,7 +688,7 @@ final class AppViewModel: ObservableObject {
             autoConnectAttemptedServerIDs.remove(next.id)
             appServerReconnectAttemptsByServerID.removeValue(forKey: next.id)
             let wasSelected = selectedServerID == next.id
-            let shouldDisconnectSavedSelection = wasSelected && (appServer != nil || connectionState == .connecting)
+            let shouldDisconnectSavedSelection = wasSelected && (appServer != nil || acpClient != nil || connectionState == .connecting)
 
             var nextServers = servers
             var previousEndpoint: (host: String, port: Int)?
@@ -982,15 +983,15 @@ final class AppViewModel: ObservableObject {
     }
 
     /// Production ACP path helper (called from main send / connect branches when backendType == .acpGrok).
-    /// Launches (or reuses) a real `grok agent stdio` via openRawExec + AcpGrokClient actor for the
-    /// currently selected project. Collector feeds the *main* conversationSections via the exact same
+    /// Launches the server's configured ACP stdio command via openRawExec + AcpGrokClient actor for
+    /// the currently selected project. Collector feeds the *main* conversationSections via the exact same
     /// SharedKMPBridge.conversationSections(from:) projection used by the debug preview and (on the
     /// KMP side) by the Android production collector. This makes a .acpGrok ServerRecord "just work"
     /// in the normal chat UI with identical rich elements (Reasoning, ToolCall, Plan, etc.).
     ///
     /// Codex paths remain 100% untouched.
-    private func startAcpProductionSessionForCurrentProject() async {
-        guard let server = selectedServer, server.backendType == .acpGrok else { return }
+    private func startAcpProductionSessionForCurrentProject() async -> Bool {
+        guard let server = selectedServer, server.backendType == .acpGrok else { return false }
         let projectPath = selectedProject?.path
 
         // Cancel prior production ACP session for this server if project changed or we are restarting.
@@ -1001,9 +1002,12 @@ final class AppViewModel: ObservableObject {
         acpClient = nil
         acpItems = []
 
-        await runOperation(.connecting, status: "Starting Grok", marksConnectionFailure: true) {
+        return await runOperation(.connecting, status: "Starting ACP agent", marksConnectionFailure: true) {
             let credential = try await loadCredentialFromStore(serverID: server.id)
-            let command = SharedKMPBridge.acpStdioCommand(grokBin: nil, model: "grok-build", extraArgs: [])
+            let command = SharedKMPBridge.acpShellCommand(
+                launchCommand: server.acpLaunchCommand,
+                executionPath: server.executionPath
+            )
             let transport = try await sshService.openRawExec(server: server, credential: credential, command: command)
             let client = AcpGrokClient(transport: transport)
             acpClient = client
@@ -1012,7 +1016,7 @@ final class AppViewModel: ObservableObject {
             let sid = try await client.createSession(cwd: projectPath, title: server.displayName)
             acpSessionId = sid
 
-            statusMessage = "Grok session connected."
+            statusMessage = "ACP agent session connected."
 
             acpCollectorTask = Task { [weak self] in
                 guard let self else { return }
@@ -1124,14 +1128,16 @@ final class AppViewModel: ObservableObject {
         if targetServer.backendType == .acpGrok {
             // ACP production path: use the pre-built helper (collector drives main conversationSections via SharedKMPBridge + mapper).
             // Early return keeps the entire Codex connect body below byte-for-byte untouched.
+            isConnectingAppServer = true
+            defer {
+                isConnectingAppServer = false
+            }
             await closeConnection(updateState: false, clearOpenSessionCounts: !preservingVisibleState, cancelReconnect: !preservingVisibleState)
             connectionState = .connecting
-            await startAcpProductionSessionForCurrentProject()
-            // Collector inside helper will publish sections + status; set Connected explicitly for parity with Codex.
-            if selectedServerID == targetServer.id {
+            let connected = await startAcpProductionSessionForCurrentProject()
+            if connected, selectedServerID == targetServer.id {
                 connectionState = .connected
             }
-            isConnectingAppServer = false
             return
         }
         isConnectingAppServer = true
@@ -1643,7 +1649,7 @@ final class AppViewModel: ObservableObject {
             // Uses stored sid + client; optimistic local echo appended to acpItems so it appears via the
             // SharedKMPBridge.conversationSections mapper (identical rich UI elements as debug preview + Android).
             guard let client = acpClient, let sid = acpSessionId else {
-                statusMessage = "No active Grok session."
+                statusMessage = "No active ACP session."
                 return false
             }
             guard !isOperationActive(.sending) else { return false }
@@ -2881,8 +2887,7 @@ final class AppViewModel: ObservableObject {
             }
         }
         if let projectPath = scope.cwd,
-           let selectedServer,
-           merged.isEmpty || (selectedServer.projects.first(where: { $0.path == projectPath })?.activeChatCount ?? 0) > 0 {
+           let selectedServer {
             let unscopedThreads = try await appServer.listThreads(
                 cwd: nil,
                 includeArchived: scope.includeArchivedSessions,

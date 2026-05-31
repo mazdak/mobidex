@@ -139,6 +139,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -163,6 +164,7 @@ import mobidex.android.MobidexUiState
 import mobidex.android.NewSessionLocation
 import mobidex.android.QueuedTurnInput
 import mobidex.android.model.CodexThread
+import mobidex.android.model.BackendType
 import mobidex.android.model.PendingApproval
 import mobidex.android.model.ProjectRecord
 import mobidex.android.model.SSHCredential
@@ -175,6 +177,8 @@ import mobidex.shared.CodexReasoningEffortOption
 import mobidex.shared.ConversationSection
 import mobidex.shared.ConversationSectionKind
 import mobidex.shared.GitDiffSnapshot
+import mobidex.shared.MarkdownDocumentParser
+import mobidex.shared.RemoteAcpCommand
 import mobidex.shared.RemoteDirectoryEntry
 import mobidex.shared.RemoteServerLaunchDefaults
 import org.json.JSONObject
@@ -1572,77 +1576,110 @@ private val markdownSectionKinds = setOf(
     ConversationSectionKind.System,
 )
 
-private sealed interface MarkdownBlock {
-    data class Paragraph(val text: String) : MarkdownBlock
-    data class BulletList(val items: List<String>) : MarkdownBlock
-    data class OrderedList(val items: List<String>) : MarkdownBlock
-    data class CodeBlock(val code: String) : MarkdownBlock
-}
-
 @Composable
 private fun MarkdownContent(body: String) {
+    val document = remember(body) { MarkdownDocumentParser.parse(body) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        parseMarkdownBlocks(body).forEach { block ->
-            when (block) {
-                is MarkdownBlock.Paragraph -> InlineMarkdownText(block.text)
-                is MarkdownBlock.BulletList -> Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    block.items.forEach { item ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Text("•", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            InlineMarkdownText(item, Modifier.weight(1f))
-                        }
-                    }
-                }
-                is MarkdownBlock.OrderedList -> Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    block.items.forEachIndexed { index, item ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Text("${index + 1}.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            InlineMarkdownText(item, Modifier.weight(1f))
-                        }
-                    }
-                }
-                is MarkdownBlock.CodeBlock -> Text(
-                    block.code,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f), MaterialTheme.shapes.small)
-                        .padding(10.dp),
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
+        document.blocks.forEach { block ->
+            SharedMarkdownBlock(block)
         }
     }
 }
 
 @Composable
-private fun InlineMarkdownText(text: String, modifier: Modifier = Modifier) {
-    val annotated = buildAnnotatedString {
-        parseInlineMarkdownRuns(text).forEach { run ->
-            when (run) {
-                is InlineMarkdownRun.Text -> append(run.text)
-                is InlineMarkdownRun.Code -> appendMarkdownCode(run.text)
-                is InlineMarkdownRun.Link -> {
-                    val linkStyle = SpanStyle(color = MaterialTheme.colorScheme.primary)
-                    val url = markdownUrl(run.destination)
-                    if (url == null) {
-                        withStyle(linkStyle) {
-                            append(run.label)
-                        }
-                    } else {
-                        withLink(LinkAnnotation.Url(url = url, styles = TextLinkStyles(style = linkStyle))) {
-                            append(run.label)
-                        }
+private fun SharedMarkdownBlock(block: mobidex.shared.MarkdownBlock) {
+    when (block) {
+        is mobidex.shared.MarkdownBlock.Paragraph -> SharedInlineMarkdownText(block.inlines)
+        is mobidex.shared.MarkdownBlock.Heading -> SharedInlineMarkdownText(
+            block.inlines,
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+        )
+        is mobidex.shared.MarkdownBlock.BulletList -> Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            block.items.forEach { item ->
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("•", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        item.blocks.forEach { SharedMarkdownBlock(it) }
                     }
                 }
             }
         }
+        is mobidex.shared.MarkdownBlock.OrderedList -> Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            block.items.forEachIndexed { index, item ->
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("${block.start + index}.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        item.blocks.forEach { SharedMarkdownBlock(it) }
+                    }
+                }
+            }
+        }
+        is mobidex.shared.MarkdownBlock.CodeBlock -> Text(
+            block.code,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f), MaterialTheme.shapes.small)
+                .padding(10.dp),
+            fontFamily = FontFamily.Monospace,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        is mobidex.shared.MarkdownBlock.Quote -> Column(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), MaterialTheme.shapes.small)
+                .padding(start = 10.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            block.blocks.forEach { SharedMarkdownBlock(it) }
+        }
+    }
+}
+
+@Composable
+private fun SharedInlineMarkdownText(
+    inlines: List<mobidex.shared.MarkdownInline>,
+    modifier: Modifier = Modifier,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyMedium,
+) {
+    val linkColor = MaterialTheme.colorScheme.primary
+    val annotated = buildAnnotatedString {
+        appendSharedMarkdownInlines(inlines, linkColor)
     }
     Text(
         text = annotated,
         modifier = modifier,
-        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+        style = style.copy(color = MaterialTheme.colorScheme.onSurface),
     )
+}
+
+private fun androidx.compose.ui.text.AnnotatedString.Builder.appendSharedMarkdownInlines(
+    inlines: List<mobidex.shared.MarkdownInline>,
+    linkColor: Color,
+) {
+    inlines.forEach { inline ->
+        when (inline) {
+            is mobidex.shared.MarkdownInline.Text -> append(inline.text)
+            is mobidex.shared.MarkdownInline.Code -> appendMarkdownCode(inline.text)
+            is mobidex.shared.MarkdownInline.LineBreak -> append("\n")
+            is mobidex.shared.MarkdownInline.Emphasis -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
+                appendSharedMarkdownInlines(inline.children, linkColor)
+            }
+            is mobidex.shared.MarkdownInline.Strong -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                appendSharedMarkdownInlines(inline.children, linkColor)
+            }
+            is mobidex.shared.MarkdownInline.Link -> {
+                val linkStyle = SpanStyle(color = linkColor)
+                val url = markdownUrl(inline.destination)
+                if (url == null) {
+                    withStyle(linkStyle) { appendSharedMarkdownInlines(inline.children, linkColor) }
+                } else {
+                    withLink(LinkAnnotation.Url(url = url, styles = TextLinkStyles(style = linkStyle))) {
+                        appendSharedMarkdownInlines(inline.children, linkColor)
+                    }
+                }
+            }
+        }
+    }
 }
 
 private fun androidx.compose.ui.text.AnnotatedString.Builder.appendMarkdownCode(text: String) {
@@ -1652,175 +1689,10 @@ private fun androidx.compose.ui.text.AnnotatedString.Builder.appendMarkdownCode(
     }
 }
 
-private sealed interface InlineMarkdownRun {
-    data class Text(val text: String) : InlineMarkdownRun
-    data class Code(val text: String) : InlineMarkdownRun
-    data class Link(val label: String, val destination: String) : InlineMarkdownRun
-}
-
-private fun parseInlineMarkdownRuns(text: String): List<InlineMarkdownRun> {
-    val runs = mutableListOf<InlineMarkdownRun>()
-    var index = 0
-
-    fun appendText(value: String) {
-        if (value.isEmpty()) return
-        val last = runs.lastOrNull()
-        if (last is InlineMarkdownRun.Text) {
-            runs[runs.lastIndex] = InlineMarkdownRun.Text(last.text + value)
-        } else {
-            runs += InlineMarkdownRun.Text(value)
-        }
-    }
-
-    while (index < text.length) {
-        when (text[index]) {
-            '`' -> {
-                val close = text.indexOf('`', startIndex = index + 1)
-                if (close < 0) {
-                    appendText(text.substring(index))
-                    index = text.length
-                } else {
-                    runs += InlineMarkdownRun.Code(text.substring(index + 1, close))
-                    index = close + 1
-                }
-            }
-            '[' -> {
-                val parsed = parseInlineMarkdownLink(text, index)
-                if (parsed == null) {
-                    appendText("[")
-                    index += 1
-                } else {
-                    runs += InlineMarkdownRun.Link(parsed.label, parsed.destination)
-                    index = parsed.nextIndex
-                }
-            }
-            else -> {
-                val nextCode = text.indexOf('`', startIndex = index).takeIf { it >= 0 } ?: text.length
-                val nextLink = text.indexOf('[', startIndex = index).takeIf { it >= 0 } ?: text.length
-                val next = minOf(nextCode, nextLink)
-                appendText(text.substring(index, next))
-                index = next
-            }
-        }
-    }
-
-    return runs
-}
-
-private data class ParsedInlineMarkdownLink(val label: String, val destination: String, val nextIndex: Int)
-
-private fun parseInlineMarkdownLink(text: String, start: Int): ParsedInlineMarkdownLink? {
-    val labelEnd = text.indexOf(']', startIndex = start + 1)
-    if (labelEnd <= start + 1 || labelEnd + 1 >= text.length || text[labelEnd + 1] != '(') return null
-    val destinationStart = labelEnd + 2
-    val destinationEnd = text.indexOf(')', startIndex = destinationStart)
-    if (destinationEnd <= destinationStart) return null
-    val destination = text.substring(destinationStart, destinationEnd).trim()
-    if (destination.isEmpty()) return null
-    return ParsedInlineMarkdownLink(
-        label = text.substring(start + 1, labelEnd),
-        destination = destination,
-        nextIndex = destinationEnd + 1,
-    )
-}
-
 private fun markdownUrl(destination: String): String? {
     val trimmed = destination.trim()
     if (trimmed.startsWith("/")) return null
     return trimmed.takeIf { Uri.parse(it).scheme != null }
-}
-
-private fun parseMarkdownBlocks(body: String): List<MarkdownBlock> =
-    markdownBlocks(displayBody(body)).map { block ->
-        val lines = block.replace("\r\n", "\n").replace("\r", "\n").lines()
-        fencedCode(lines)
-            ?: bulletList(lines)
-            ?: orderedList(lines)
-            ?: MarkdownBlock.Paragraph(lines.map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" "))
-    }.filterNot { it is MarkdownBlock.Paragraph && it.text.isBlank() }
-
-private fun displayBody(body: String): String =
-    stripCodexAppDirectives(body).trim()
-
-private fun markdownBlocks(body: String): List<String> {
-    val blocks = mutableListOf<String>()
-    val current = mutableListOf<String>()
-    var isInFence = false
-    body.replace("\r\n", "\n").replace("\r", "\n").lines().forEach { line ->
-        val trimmed = line.trim()
-        if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) isInFence = !isInFence
-        if (trimmed.isEmpty() && !isInFence) {
-            if (current.isNotEmpty()) {
-                blocks += current.joinToString("\n").trim()
-                current.clear()
-            }
-        } else {
-            current += line
-        }
-    }
-    if (current.isNotEmpty()) blocks += current.joinToString("\n").trim()
-    return blocks.filter { it.isNotEmpty() }
-}
-
-private fun fencedCode(lines: List<String>): MarkdownBlock.CodeBlock? {
-    val first = lines.firstOrNull()?.trim() ?: return null
-    if (!first.startsWith("```") && !first.startsWith("~~~")) return null
-    val codeLines = lines.drop(1).let { remaining ->
-        val last = remaining.lastOrNull()?.trim()
-        if (last?.startsWith("```") == true || last?.startsWith("~~~") == true) remaining.dropLast(1) else remaining
-    }
-    return MarkdownBlock.CodeBlock(codeLines.joinToString("\n"))
-}
-
-private fun bulletList(lines: List<String>): MarkdownBlock.BulletList? {
-    val items = lines.map { it.trim() }.filter { it.isNotEmpty() }.mapNotNull { line ->
-        when {
-            line.startsWith("- ") -> line.removePrefix("- ").trim()
-            line.startsWith("* ") -> line.removePrefix("* ").trim()
-            else -> null
-        }
-    }
-    return if (items.isNotEmpty() && items.size == lines.count { it.trim().isNotEmpty() }) MarkdownBlock.BulletList(items) else null
-}
-
-private fun orderedList(lines: List<String>): MarkdownBlock.OrderedList? {
-    val nonEmpty = lines.map { it.trim() }.filter { it.isNotEmpty() }
-    val items = nonEmpty.mapNotNull { line ->
-        val marker = line.indexOf(". ")
-        if (marker <= 0 || line.take(marker).any { !it.isDigit() }) null else line.substring(marker + 2).trim()
-    }
-    return if (items.isNotEmpty() && items.size == nonEmpty.size) MarkdownBlock.OrderedList(items) else null
-}
-
-private fun stripCodexAppDirectives(body: String): String {
-    var isInFence = false
-    return body.lines().filter { line ->
-        val trimmed = line.trim()
-        if (trimmed.startsWith("```") || trimmed.startsWith("~~~")) {
-            isInFence = !isInFence
-            true
-        } else {
-            isInFence || !isCodexAppDirectiveLine(trimmed)
-        }
-    }.joinToString("\n")
-}
-
-private fun isCodexAppDirectiveLine(line: String): Boolean {
-    var remaining = line
-    var foundDirective = false
-    val names = listOf("archive", "code-comment", "git-commit", "git-create-branch", "git-create-pr", "git-push", "git-stage")
-    while (remaining.isNotEmpty()) {
-        remaining = remaining.trimStart()
-        if (remaining.isEmpty()) return foundDirective
-        val name = names.firstOrNull { remaining.startsWith("::$it") } ?: return false
-        remaining = remaining.drop(2 + name.length)
-        if (!remaining.startsWith("{")) return false
-        val closeBrace = remaining.indexOf('}')
-        if (closeBrace < 0) return false
-        remaining = remaining.drop(closeBrace + 1)
-        foundDirective = true
-    }
-    return foundDirective
 }
 
 @Composable
@@ -2356,6 +2228,8 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
     var username by remember(original?.id) { mutableStateOf(original?.username ?: "") }
     var codexPath by remember(original?.id) { mutableStateOf(original?.codexPath ?: RemoteServerLaunchDefaults.codexPath) }
     var executionPath by remember(original?.id) { mutableStateOf(original?.executionPath ?: RemoteServerLaunchDefaults.executionPath) }
+    var backendType by remember(original?.id) { mutableStateOf(original?.backendType ?: BackendType.CodexAppServer) }
+    var acpLaunchCommand by remember(original?.id) { mutableStateOf(original?.acpLaunchCommand ?: RemoteAcpCommand.defaultLaunchCommand) }
     var authMethod by remember(original?.id) { mutableStateOf(original?.authMethod ?: ServerAuthMethod.Password) }
     var password by remember(original?.id) { mutableStateOf("") }
     var privateKey by remember(original?.id) { mutableStateOf("") }
@@ -2381,8 +2255,28 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
                 OutlinedTextField(host, { host = it }, label = { Text("Host") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(port, { port = it.filter(Char::isDigit) }, label = { Text("Port") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(username, { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth())
+                Text("Agent Protocol", style = MaterialTheme.typography.labelLarge)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = backendType == BackendType.CodexAppServer, onClick = { backendType = BackendType.CodexAppServer })
+                    Text(BackendType.CodexAppServer.label)
+                    RadioButton(selected = backendType == BackendType.AcpGrok, onClick = { backendType = BackendType.AcpGrok })
+                    Text(BackendType.AcpGrok.label)
+                }
+                Text(backendType.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(executionPath, { executionPath = it }, label = { Text("Execution Path") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(codexPath, { codexPath = it }, label = { Text("Full Path to Codex") }, modifier = Modifier.fillMaxWidth())
+                if (backendType == BackendType.CodexAppServer) {
+                    OutlinedTextField(codexPath, { codexPath = it }, label = { Text("Full Path to Codex") }, modifier = Modifier.fillMaxWidth())
+                } else {
+                    OutlinedTextField(
+                        acpLaunchCommand,
+                        { acpLaunchCommand = it },
+                        label = { Text("ACP Launch Command") },
+                        placeholder = { Text(RemoteAcpCommand.defaultLaunchCommand) },
+                        minLines = 2,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text("Mobidex expects ACP JSON-RPC over stdio. Grok is the default, but any ACP-compatible coding agent can be used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = authMethod == ServerAuthMethod.Password, onClick = { authMethod = ServerAuthMethod.Password })
                     Text("Password")
@@ -2437,9 +2331,11 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
                     username = username,
                     codexPath = codexPath,
                     executionPath = executionPath,
+                    acpLaunchCommand = acpLaunchCommand,
                     authMethod = authMethod,
                     projects = original?.projects.orEmpty(),
                     createdAtEpochSeconds = original?.createdAtEpochSeconds ?: java.time.Instant.now().epochSecond,
+                    backendType = backendType,
                 )
                 model.saveServer(
                     server,

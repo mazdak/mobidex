@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import mobidex.shared.RemoteAcpCommand
 import mobidex.shared.RemoteServerLaunchDefaults
 
 class ServerModelsTest {
@@ -23,7 +24,9 @@ class ServerModelsTest {
         assertEquals("mazdak", server.username)
         assertEquals("codex", server.codexPath)
         assertEquals("\$HOME/bin:/usr/bin:\$PATH", server.executionPath)
+        assertEquals(RemoteAcpCommand.defaultLaunchCommand, server.acpLaunchCommand)
         assertEquals(RemoteServerLaunchDefaults.executionPath, server.copy(executionPath = "").normalized.executionPath)
+        assertEquals(RemoteAcpCommand.defaultLaunchCommand, server.copy(acpLaunchCommand = " ").normalized.acpLaunchCommand)
     }
 
     @Test

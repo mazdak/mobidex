@@ -96,6 +96,7 @@ final class CredentialStorageTests: XCTestCase {
     func testServerRecordDefaultsAndDecodesExecutionPath() throws {
         let server = ServerRecord(displayName: "Server", host: "host", username: "user", authMethod: .password)
         XCTAssertEqual(server.executionPath, SharedKMPBridge.defaultExecutionPath)
+        XCTAssertEqual(server.acpLaunchCommand, SharedKMPBridge.defaultAcpLaunchCommand)
         XCTAssertTrue(server.appServerProxyCommand.hasPrefix("export PATH="))
         XCTAssertFalse(server.appServerProxyCommand.contains("mobidex_shell_rc"))
 
@@ -116,6 +117,8 @@ final class CredentialStorageTests: XCTestCase {
         """.utf8)
         let decoded = try JSONDecoder().decode(ServerRecord.self, from: legacyPayload)
         XCTAssertEqual(decoded.executionPath, SharedKMPBridge.defaultExecutionPath)
+        XCTAssertEqual(decoded.acpLaunchCommand, SharedKMPBridge.defaultAcpLaunchCommand)
+        XCTAssertEqual(decoded.backendType, .codexAppServer)
 
         let executionPathPayload = Data("""
         {
@@ -135,6 +138,30 @@ final class CredentialStorageTests: XCTestCase {
         let decodedExecutionPath = try JSONDecoder().decode(ServerRecord.self, from: executionPathPayload)
         XCTAssertEqual(decodedExecutionPath.executionPath, "$HOME/bin:/usr/bin:$PATH")
         XCTAssertTrue(decodedExecutionPath.appServerProxyCommand.contains("export PATH=\"${HOME}\"/'bin':'/usr/bin':\"$PATH\""))
+    }
+
+    func testServerRecordStoresGenericAcpLaunchCommand() throws {
+        let server = ServerRecord(
+            displayName: "Server",
+            host: "host",
+            username: "user",
+            acpLaunchCommand: "  my-agent --stdio --profile work  ",
+            authMethod: .password,
+            backendType: .acpGrok
+        )
+
+        XCTAssertEqual(server.backendType, .acpGrok)
+        XCTAssertEqual(server.acpLaunchCommand, "my-agent --stdio --profile work")
+
+        let blankCommandServer = ServerRecord(
+            displayName: "Server",
+            host: "host",
+            username: "user",
+            acpLaunchCommand: " ",
+            authMethod: .password,
+            backendType: .acpGrok
+        )
+        XCTAssertEqual(blankCommandServer.acpLaunchCommand, SharedKMPBridge.defaultAcpLaunchCommand)
     }
 
     func testServerRecordDefaultAppServerCommandResolvesCodexExecutable() {
@@ -310,6 +337,9 @@ private struct CredentialStorageStubSSHService: SSHService {
     }
     func stageLocalFiles(localPaths: [String], server: ServerRecord, credential: SSHCredential) async throws -> [String] { [] }
     func openAppServer(server: ServerRecord, credential: SSHCredential) async throws -> CodexAppServerClient {
+        throw SSHServiceError.authenticationFailed
+    }
+    func openRawExec(server: ServerRecord, credential: SSHCredential, command: String) async throws -> any CodexLineTransport {
         throw SSHServiceError.authenticationFailed
     }
 }

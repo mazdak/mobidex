@@ -213,6 +213,32 @@ class SharedCoreParityTest {
     }
 
     @Test
+    fun sessionListSectionsGroupUntrackedCodexWorktreesWithExactProjectSessions() {
+        val project = ProjectRecord(path = "/Users/me/Code/cheetah")
+        val sections = SessionListSections.from(
+            sessions = listOf(
+                CodexThreadSummary(id = "cheetah-main", cwd = "/Users/me/Code/cheetah", updatedAtEpochSeconds = 20),
+                CodexThreadSummary(id = "cheetah-worktree", cwd = "/Users/me/.codex/worktrees/4845/cheetah", updatedAtEpochSeconds = 40),
+            ),
+            projects = listOf(project),
+        )
+
+        assertEquals(listOf("/Users/me/Code/cheetah"), sections.map { it.id })
+        assertEquals(listOf("cheetah-worktree", "cheetah-main"), sections.single().sessionIds)
+        assertEquals(
+            listOf("cheetah-worktree", "cheetah-main"),
+            SessionListSections.sessionIdsForProject(
+                sessions = listOf(
+                    CodexThreadSummary(id = "cheetah-main", cwd = "/Users/me/Code/cheetah", updatedAtEpochSeconds = 20),
+                    CodexThreadSummary(id = "cheetah-worktree", cwd = "/Users/me/.codex/worktrees/4845/cheetah", updatedAtEpochSeconds = 40),
+                ),
+                projects = listOf(project),
+                projectPath = "/Users/me/Code/cheetah",
+            ),
+        )
+    }
+
+    @Test
     fun diffParserBuildsFileDiffs() {
         val diff = """
             diff --git a/Sources/App.swift b/Sources/App.swift

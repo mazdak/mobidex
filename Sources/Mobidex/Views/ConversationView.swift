@@ -1670,61 +1670,14 @@ struct ConversationSectionView: View {
 }
 
 private struct MarkdownText: View {
-    private let blocks: [ConversationMarkdownBlock]
+    private let markdown: String
 
     init(_ markdown: String, id: String) {
-        self.blocks = ConversationMarkdownParser.blocks(from: markdown)
+        self.markdown = markdown
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(blocks) { block in
-                blockView(block)
-            }
-        }
-        .transaction { transaction in
-            transaction.animation = nil
-        }
-    }
-
-    @ViewBuilder
-    private func blockView(_ block: ConversationMarkdownBlock) -> some View {
-        switch block {
-        case .paragraph(_, let text):
-            InlineMarkdownText(text)
-                .fixedSize(horizontal: false, vertical: true)
-        case .bulletList(_, let items):
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(items.indices, id: \.self) { index in
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Text("•")
-                        InlineMarkdownText(items[index])
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        case .orderedList(_, let items):
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(items.indices, id: \.self) { index in
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Text("\(index + 1).")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                        InlineMarkdownText(items[index])
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        case .codeBlock(_, let code):
-            ScrollView(.horizontal, showsIndicators: true) {
-                Text(code)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-        }
+        SharedMarkdownView(markdown: markdown)
     }
 }
 
