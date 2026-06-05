@@ -19,14 +19,28 @@
 
 ## Mission Checklist (active, 2026-05-31)
 
-## TestFlight Release Checklist (active, 2026-05-31)
+## TestFlight Release Checklist (completed, 2026-06-05)
 
-- [ ] T1. Commit verified release delta.
-- [ ] T2. Merge release commit to `master` and confirm `master` vs `origin/master`.
-- [ ] T3. Resolve TestFlight version/build and external tester group.
-- [ ] T4. Run `.asc` TestFlight workflow for internal testers.
-- [ ] T5. Publish the uploaded build to external TestFlight testers.
-- [ ] T6. Record version/build/build ID and final release status.
+- [x] T1. Commit verified release delta.
+- [x] T2. Merge release commit to `master`, confirm `master` vs `origin/master`, and push.
+- [x] T3. Resolve TestFlight version/build and external tester group.
+- [x] T4. Run `.asc` TestFlight workflow for internal testers.
+- [x] T5. Publish the uploaded build to external TestFlight testers.
+- [x] T6. Record version/build/build ID and final release status.
+
+## asc TestFlight submissions (internal + external build 36) — 2026-06-05
+
+- Executed from `master` at `045bdf3` after `origin/master` was pulled and the release commit was pushed.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 36.
+  - BUILD_ID: `d9c424d8-3135-4a39-9195-cab5122aff82`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-36.ipa` (17,821,759 bytes).
+  - Run record: `.asc/runs/testflight-20260605T142840Z-46a68b9f.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+- External workflow: `asc workflow run testflight_external BUILD_ID:d9c424d8-3135-4a39-9195-cab5122aff82 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+  - Run record: `.asc/runs/testflight_external-20260605T143230Z-4154a259.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+- Public TestFlight link remains `https://testflight.apple.com/join/zmqueV6P`.
 
 ## Completed ACP UI Checklist (2026-05-31)
 
