@@ -955,21 +955,14 @@ final class AppViewModelTests: XCTestCase {
           {"id":"thread-app","preview":"App work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}
         """)
-        let initialRead = try await waitForRequest(method: "thread/read", in: transport, after: cursor)
-        cursor = initialRead.nextCursor
-        transport.receive("""
-        {"id":\(initialRead.id),"result":{"thread":{
-          "id":"thread-app",
-          "preview":"App work",
-          "cwd":"/srv/app",
-          "status":{"type":"idle"},
-          "updatedAt":1770000300,
-          "createdAt":1770000000,
-          "turns":[]
-        }}}
-        """)
         await connectTask.value
-        XCTAssertEqual(viewModel.selectedThreadID, "thread-app")
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
+        XCTAssertNil(viewModel.selectedThreadID)
+
+        viewModel.selectProject(appProject.id)
+        XCTAssertNil(viewModel.selectedThreadID)
+        XCTAssertNil(viewModel.selectedThread)
+        XCTAssertTrue(viewModel.conversationSections.isEmpty)
 
         viewModel.selectProject(toolsProject.id)
         XCTAssertNil(viewModel.selectedThreadID)
@@ -4306,6 +4299,11 @@ final class AppViewModelTests: XCTestCase {
         ],"nextCursor":null}}
         """)
         await steerTask.value
+        try await waitForConversationSection(kind: .user, containing: "Keep going", in: viewModel)
+        XCTAssertEqual(
+            viewModel.conversationSections.filter { $0.kind == .user && $0.body.contains("Keep going") }.count,
+            1
+        )
 
         await viewModel.queueComposerText("Queued steer")
         XCTAssertEqual(viewModel.queuedTurnInputCount, 1)
@@ -4329,6 +4327,11 @@ final class AppViewModelTests: XCTestCase {
         """)
         await queuedSteerTask.value
         XCTAssertEqual(viewModel.queuedTurnInputCount, 0)
+        try await waitForConversationSection(kind: .user, containing: "Queued steer", in: viewModel)
+        XCTAssertEqual(
+            viewModel.conversationSections.filter { $0.kind == .user && $0.body.contains("Queued steer") }.count,
+            1
+        )
 
         transport.receive("""
         {"method":"item/agentMessage/delta","params":{

@@ -1,5 +1,22 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## Mission Checklist (active, 2026-06-05 queue)
+
+- [x] Trace queued input, auto-start, steer, and local transcript echo paths.
+- [x] Preserve queue state across disconnect/reconnect.
+- [x] Remove queued items at pickup time and requeue only on failed pickup.
+- [x] Add optimistic steer transcript echoes with duplicate reconciliation.
+- [x] Run focused iOS and Android queue tests/checks.
+
+## Mission Checklist (active, 2026-06-05)
+
+- [x] Trace current navigation, session list ordering, and conversation bubble layout.
+- [x] Implement project-to-session-list navigation and empty-list behavior.
+- [x] Freeze session-list order while visible, refreshing on load and explicit mutations.
+- [x] Adjust agent bubble horizontal inset on iOS and Android.
+- [x] Review changes with a subagent and fix confirmed findings.
+- [x] Run focused tests/build checks and fix failures or record blockers. (Android AppViewModelNewSessionTest green; iOS MobidexTests build + focused AppViewModelTests regression green)
+
 ## Mission Checklist (active, 2026-05-31)
 
 ## TestFlight Release Checklist (active, 2026-05-31)

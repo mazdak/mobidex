@@ -340,6 +340,7 @@ final class AppViewModel: ObservableObject {
     private var isConnectingAppServer = false
     private var didLoadServers = false
     private var suppressThreadAutoSelection = false
+    private var suppressCachedThreadSelection = false
     private var autoConnectAttemptedServerIDs = Set<UUID>()
     private var appServerReconnectAttemptsByServerID: [UUID: Int] = [:]
 
@@ -526,6 +527,7 @@ final class AppViewModel: ObservableObject {
 
         selectedServerID = serverID
         isShowingAllSessions = false
+        suppressCachedThreadSelection = false
         selectedProjectID = serverID.flatMap { id in
             servers.first { $0.id == id }?.projects.firstAddedProjectID
         }
@@ -585,11 +587,9 @@ final class AppViewModel: ObservableObject {
     }
 
     func selectProject(_ projectID: UUID?) {
-        guard selectedProjectID != projectID || isShowingAllSessions else {
-            return
-        }
         isShowingAllSessions = false
         suppressThreadAutoSelection = true
+        suppressCachedThreadSelection = true
         invalidateSessionRefreshes()
         selectedProjectID = projectID
         if restoreCachedSessionState(for: currentThreadLoadScope) {
@@ -604,6 +604,7 @@ final class AppViewModel: ObservableObject {
         }
         isShowingAllSessions = true
         suppressThreadAutoSelection = true
+        suppressCachedThreadSelection = true
         invalidateSessionRefreshes()
         selectedProjectID = nil
         if restoreCachedSessionState(for: currentThreadLoadScope) {
@@ -1288,6 +1289,7 @@ final class AppViewModel: ObservableObject {
         let scope = currentThreadLoadScope
         let shouldPromoteProject = isShowingAllSessions
         suppressThreadAutoSelection = false
+        suppressCachedThreadSelection = false
         selectedThreadID = thread.id
         selectedThreadTokenUsage = nil
         hydrateConversation(from: thread)
@@ -1394,6 +1396,7 @@ final class AppViewModel: ObservableObject {
             pendingApprovals = []
             hydrateConversation(from: thread)
             suppressThreadAutoSelection = false
+            suppressCachedThreadSelection = false
             createdThreadID = thread.id
             threads = sortedThreads([thread] + threads.filter { $0.id != thread.id })
             invalidateSessionCaches(for: selectedServerID)
@@ -1547,12 +1550,17 @@ final class AppViewModel: ObservableObject {
         queuedTurnInputsByThreadID[selectedThreadID] = queue
         refreshQueuedTurnInputCount()
         let scope = currentThreadLoadScope
+        var localEchoID: String?
         let sent = await runOperation(.sending, status: "Steering active turn") {
             guard currentThreadLoadScope == scope, self.selectedThreadID == selectedThreadID else { return }
+            localEchoID = appendLocalUserEcho(input: item.input, turnID: activeTurnID)
             try await appServer.steer(threadID: selectedThreadID, expectedTurnID: activeTurnID, input: item.input)
             await refreshThreadListAfterEvent()
         }
         if !sent {
+            if let localEchoID {
+                removeLocalUserEcho(id: localEchoID)
+            }
             prependQueuedInput(item, threadID: selectedThreadID)
         }
     }
@@ -1680,6 +1688,7 @@ final class AppViewModel: ObservableObject {
         let scope = currentThreadLoadScope
         let startingThreadID = selectedThreadID
         let startingThread = selectedThread
+        var localSteerEchoID: String?
         var didSubmitInput = false
         let sent = await runOperation(.sending, status: localAttachmentPaths.isEmpty ? "Sending" : "Uploading attachments") {
             guard let appServer else { return }
@@ -1758,9 +1767,13 @@ final class AppViewModel: ObservableObject {
                         didSubmitInput = true
                         return
                     }
+                    localSteerEchoID = appendLocalUserEcho(input: input, turnID: activeTurnID)
                     try await appServer.steer(threadID: thread.id, expectedTurnID: activeTurnID, input: input)
                     guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
                         return
+                    }
+                    if localSteerEchoID != nil {
+                        statusMessage = "Steered active turn."
                     }
                     didSubmitInput = true
                     shouldHydrateThreadsAfterSend = false
@@ -1809,6 +1822,9 @@ final class AppViewModel: ObservableObject {
            selectedThread?.status.isActive != true,
            queuedTurnInputsByThreadID[selectedThreadID]?.isEmpty == false {
             await startNextQueuedTurnIfReady(threadID: selectedThreadID)
+        }
+        if !sent, let localSteerEchoID {
+            removeLocalUserEcho(id: localSteerEchoID)
         }
         return sent && didSubmitInput
     }
@@ -1892,7 +1908,6 @@ final class AppViewModel: ObservableObject {
         await appServer?.close()
         appServer = nil
         pendingApprovals = []
-        queuedTurnInputsByThreadID.removeAll()
         refreshQueuedTurnInputCount()
         if shouldClearOpenSessionCounts {
             clearOpenSessionCounts()
@@ -2059,11 +2074,14 @@ final class AppViewModel: ObservableObject {
     }
 
     private func cachedSelectedThreadID(in cachedList: CachedThreadList) -> String? {
+        guard !suppressCachedThreadSelection else {
+            return nil
+        }
         if let selectedThreadID = cachedList.selectedThreadID,
            cachedList.threads.contains(where: { $0.id == selectedThreadID }) {
             return selectedThreadID
         }
-        return suppressThreadAutoSelection ? nil : cachedList.threads.first?.id
+        return cachedList.threads.first?.id
     }
 
     private func isSessionListCacheFresh(for scope: ThreadLoadScope, now: Date = .now) -> Bool {
@@ -2237,6 +2255,7 @@ final class AppViewModel: ObservableObject {
         }
         let scope = currentThreadLoadScope
         if !forceReload, restoreCachedSessionState(for: scope), canUseCachedSessionState(for: scope) {
+            await drainSelectedQueueIfReady()
             return
         }
         sessionRefreshListLoadGeneration &+= 1
@@ -2270,7 +2289,7 @@ final class AppViewModel: ObservableObject {
             refreshQueuedTurnInputCount()
             return
         }
-        if currentSelection == nil, suppressThreadAutoSelection {
+        if currentSelection == nil, suppressThreadAutoSelection, suppressCachedThreadSelection {
             selectedThreadID = nil
             selectedThread = nil
             liveItems = []
@@ -2306,6 +2325,7 @@ final class AppViewModel: ObservableObject {
             appServer: appServer,
             expectedSelectedThread: selectedThread
         )
+        await drainSelectedQueueIfReady()
     }
 
     private func loadCompleteThreadListAfterInitialSessionRefresh(
@@ -2358,7 +2378,7 @@ final class AppViewModel: ObservableObject {
     ) {
         if let selectedThreadID {
             guard let selectedSummary = sortedThreads.first(where: { $0.id == selectedThreadID }) else {
-                guard !suppressThreadAutoSelection,
+                guard !(suppressThreadAutoSelection && suppressCachedThreadSelection),
                       let fallbackThread = sortedThreads.first else {
                     self.selectedThreadID = nil
                     selectedThread = nil
@@ -2396,7 +2416,7 @@ final class AppViewModel: ObservableObject {
             return
         }
 
-        guard !suppressThreadAutoSelection,
+        guard !(suppressThreadAutoSelection && suppressCachedThreadSelection),
               let threadToShow = sortedThreads.first else {
             return
         }
@@ -2933,6 +2953,9 @@ final class AppViewModel: ObservableObject {
         } else if activeTurnRefreshThreadID == thread.id {
             cancelActiveTurnRefresh()
         }
+        if !thread.status.isActive {
+            Task { await self.drainSelectedQueueIfReady() }
+        }
     }
 
     private func applySelectedThreadStatus(_ status: CodexThreadStatus) {
@@ -3218,32 +3241,44 @@ final class AppViewModel: ObservableObject {
     }
 
     private func turnPreservingLocalUserEcho(_ turn: CodexTurn, in thread: CodexThread) -> CodexTurn {
-        guard !turn.items.contains(where: Self.isUserMessage),
-              let existing = thread.turns.first(where: { $0.id == turn.id }),
-              let userMessage = existing.items.first(where: Self.isUserMessage)
-        else {
-            return turn
-        }
-        var turn = turn
-        turn.items.insert(userMessage, at: 0)
-        return turn
+        guard let existing = thread.turns.first(where: { $0.id == turn.id }) else { return turn }
+        return Self.turnMergingLocalUserEchoes(turn, existing: existing)
     }
 
     private func threadPreservingExistingUserMessages(_ thread: CodexThread, existing: CodexThread?) -> CodexThread {
         guard let existing else { return thread }
         var thread = thread
         thread.turns = thread.turns.map { turn in
-            guard !turn.items.contains(where: Self.isUserMessage),
-                  let existingTurn = existing.turns.first(where: { $0.id == turn.id }),
-                  let userMessage = existingTurn.items.first(where: Self.isUserMessage)
-            else {
-                return turn
-            }
-            var turn = turn
-            turn.items.insert(userMessage, at: 0)
-            return turn
+            guard let existingTurn = existing.turns.first(where: { $0.id == turn.id }) else { return turn }
+            return Self.turnMergingLocalUserEchoes(turn, existing: existingTurn)
         }
         return thread
+    }
+
+    private static func turnMergingLocalUserEchoes(_ incoming: CodexTurn, existing: CodexTurn) -> CodexTurn {
+        let incomingUserIDs = Set(incoming.items.compactMap { item -> String? in
+            if case .userMessage(let id, _) = item { return id }
+            return nil
+        })
+        let incomingUserTexts = Set(incoming.items.compactMap { item -> String? in
+            if case .userMessage(_, let text) = item { return text }
+            return nil
+        })
+        let localEchoes = existing.items.compactMap { item -> CodexThreadItem? in
+            guard case .userMessage(let id, let text) = item,
+                  id.hasPrefix("local-user-"),
+                  !incomingUserIDs.contains(id),
+                  !incomingUserTexts.contains(text)
+            else {
+                return nil
+            }
+            return item
+        }
+        guard !localEchoes.isEmpty else { return incoming }
+        var turn = incoming
+        let insertAt = turn.items.prefix { Self.isUserMessage($0) }.count
+        turn.items.insert(contentsOf: localEchoes, at: insertAt)
+        return turn
     }
 
     private static func isUserMessage(_ item: CodexThreadItem) -> Bool {
@@ -3263,6 +3298,44 @@ final class AppViewModel: ObservableObject {
         liveItems = Self.visibleLiveItems(from: thread)
         rebuildConversationFromLiveItems()
         scheduleActiveTurnRefresh(threadID: thread.id, scope: currentThreadLoadScope)
+    }
+
+    @discardableResult
+    private func appendLocalUserEcho(input: [CodexInputItem], turnID: String) -> String? {
+        guard let text = Self.displayText(for: input) else { return nil }
+        guard !liveItems.contains(where: { existing in
+            if case .userMessage(_, let existingText) = existing {
+                return existingText == text
+            }
+            return false
+        }) else {
+            return nil
+        }
+        let item = CodexThreadItem.userMessage(id: "local-user-\(turnID)-\(UUID().uuidString)", text: text)
+        if var thread = selectedThread {
+            if let turnIndex = thread.turns.firstIndex(where: { $0.id == turnID }) {
+                thread.turns[turnIndex].items.append(item)
+            } else {
+                thread.turns.append(CodexTurn(id: turnID, items: [item], status: "inProgress"))
+            }
+            selectedThread = thread
+        }
+        liveItems.append(item)
+        rebuildConversationFromLiveItems()
+        return item.id
+    }
+
+    private func removeLocalUserEcho(id itemID: String) {
+        liveItems.removeAll { $0.id == itemID }
+        if var thread = selectedThread {
+            thread.turns = thread.turns.map { turn in
+                var turn = turn
+                turn.items.removeAll { $0.id == itemID }
+                return turn
+            }
+            selectedThread = thread
+        }
+        rebuildConversationFromLiveItems()
     }
 
     private func applyTurnCompleted(_ turn: CodexTurn) {
@@ -3338,6 +3411,16 @@ final class AppViewModel: ObservableObject {
         activeTurnRefreshTask?.cancel()
         activeTurnRefreshTask = nil
         activeTurnRefreshThreadID = nil
+    }
+
+    private func drainSelectedQueueIfReady() async {
+        guard let selectedThreadID,
+              selectedThread?.status.isActive != true,
+              queuedTurnInputsByThreadID[selectedThreadID]?.isEmpty == false
+        else {
+            return
+        }
+        await startNextQueuedTurnIfReady(threadID: selectedThreadID)
     }
 
     private func startNextQueuedTurnIfReady(threadID: String) async {

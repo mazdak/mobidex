@@ -200,6 +200,7 @@ struct ProjectSessionListView: View {
     @Binding var preferredCompactColumn: NavigationSplitViewColumn
     @State private var showingProjectAdd = false
     @State private var sessionsProjectID: UUID?
+    @State private var visibleSessionSections: [SessionListSection] = []
     @State private var projectSearchText = ""
     @State private var sessionSearchText = ""
     @State private var isSessionRefreshRequested = false
@@ -216,7 +217,7 @@ struct ProjectSessionListView: View {
                     serverControlsSection(server)
 
                     if let sessionsProjectID, let project = server.projects.first(where: { $0.id == sessionsProjectID }) {
-                        let sessionSections = filteredSessionSections(model.sessionSections)
+                        let sessionSections = filteredSessionSections(visibleSessionSections)
                         SessionsContent(
                             selectedProject: project,
                             showsArchivedSessions: $model.showsArchivedSessions,
@@ -225,10 +226,16 @@ struct ProjectSessionListView: View {
                             serverContentDisabled: serverContentDisabled,
                             contentOpacity: contentOpacity,
                             onArchive: { thread in
-                                Task { await model.archiveThread(thread) }
+                                Task {
+                                    await model.archiveThread(thread)
+                                    visibleSessionSections = model.sessionSections
+                                }
                             },
                             onUnarchive: { thread in
-                                Task { await model.unarchiveThread(thread) }
+                                Task {
+                                    await model.unarchiveThread(thread)
+                                    visibleSessionSections = model.sessionSections
+                                }
                             },
                             onOpen: { thread in
                                 promoteDetailIfCompact()
@@ -266,11 +273,13 @@ struct ProjectSessionListView: View {
                             contentOpacity: contentOpacity,
                             onOpenProject: { project in
                                 sessionsProjectID = project.id
+                                visibleSessionSections = []
                                 model.selectProject(project.id)
-                                promoteDetailIfCompact()
+                                visibleSessionSections = model.sessionSections
                                 isSessionRefreshRequested = true
                                 Task {
                                     await model.refreshThreadsIfNeeded()
+                                    visibleSessionSections = model.sessionSections
                                     isSessionRefreshRequested = false
                                 }
                             }
@@ -292,8 +301,13 @@ struct ProjectSessionListView: View {
                 .onChange(of: model.showsArchivedSessions) { _, _ in
                     handleArchivedSessionsChange()
                 }
+                .onChange(of: model.isRefreshingSessions) { wasRefreshing, isRefreshing in
+                    guard wasRefreshing, !isRefreshing, sessionsProjectID != nil else { return }
+                    visibleSessionSections = model.sessionSections
+                }
                 .onChange(of: server.id) { _, _ in
                     sessionsProjectID = nil
+                    visibleSessionSections = []
                 }
                 .toolbar {
                     SelectedServerToolbar(
@@ -302,6 +316,7 @@ struct ProjectSessionListView: View {
                         disabled: serverControlsDisabled,
                         onBackToProjects: {
                             sessionsProjectID = nil
+                            visibleSessionSections = []
                             sessionSearchText = ""
                         },
                         canCreateSession: model.canChooseNewSessionLocation,
@@ -359,6 +374,7 @@ struct ProjectSessionListView: View {
                 }
                 withAnimation {
                     sessionsProjectID = nil
+                    visibleSessionSections = []
                     sessionSearchText = ""
                 }
             }
@@ -369,6 +385,7 @@ struct ProjectSessionListView: View {
         isSessionRefreshRequested = true
         Task {
             await model.refreshThreads()
+            visibleSessionSections = model.sessionSections
             isSessionRefreshRequested = false
         }
     }
@@ -461,6 +478,7 @@ struct ProjectSessionListView: View {
     @MainActor
     private func startNewSessionAndPromote(location: NewSessionLocation) async {
         let createdThreadID = await model.startNewSession(location: location)
+        visibleSessionSections = model.sessionSections
         guard createdThreadID != nil, model.selectedThreadID == createdThreadID else {
             return
         }

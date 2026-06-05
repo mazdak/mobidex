@@ -1,3 +1,38 @@
+# Mission: Fix Queued Turn Reliability
+
+**Mission statement:** Make queued follow-ups leave the queue when picked up, survive reconnect/background churn, and show steer submissions immediately in the transcript without duplicates.
+
+**Done criteria:**
+- A queued item is removed as soon as it is picked up for sending and is requeued only if pickup fails.
+- Queued inputs are not cleared by disconnect/reconnect paths that can happen while the app is inactive.
+- Steered input gets a local transcript echo quickly and reconciles with the server item without duplicate user messages.
+- iOS and Android queue behavior stay symmetric where both clients implement the feature.
+
+**Critical learnings:**
+- Queue state was being treated like connection state and cleared during disconnect/reconnect.
+- Android dequeued only after `turn/start` returned, leaving a race where completion/refresh paths could pick the same item twice.
+- Existing local echo preservation needed to preserve unmatched local echoes and drop matching ones by user text once real server items arrive.
+
+---
+
+# Mission: Fix Predictable Project/Session Navigation
+
+**Mission statement:** Fix project-to-session navigation so users move predictably through server > project > session > conversation, stabilize visible session lists, and reduce agent bubble horizontal waste.
+
+**Done criteria:**
+- Tapping a project opens that project's session list without auto-opening an active/empty session.
+- Empty projects show an empty session list with the existing new-session action.
+- Visible session lists do not reorder from ambient active-session updates, but do refresh after load and explicit user mutations.
+- Agent/Codex bubbles use symmetric horizontal margins.
+- Focused iOS/Android checks or blockers are recorded.
+
+**Critical learnings:**
+- Project taps must suppress thread restoration even when the project was already selected by default.
+- Freezing the visible session list needs explicit refreshes after archive/unarchive/new-session so user mutations still appear.
+- The Android compact UI needed explicit back handling for chat > sessions and sessions > projects.
+
+---
+
 # Mission: Ship Mobidex To TestFlight
 
 **Mission statement:** Merge the verified release changes to up-to-date `master`, upload a new Mobidex TestFlight build, and distribute it to internal and external testers.

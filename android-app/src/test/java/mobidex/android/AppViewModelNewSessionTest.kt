@@ -85,6 +85,29 @@ class AppViewModelNewSessionTest {
     }
 
     @Test
+    fun selectingCurrentProjectShowsSessionListWithoutOpeningCachedThread() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app")
+        val server = server(project)
+        val transport = ScriptedAppServerTransport()
+        val model = viewModel(server, FakeSshService(transport))
+        advanceUntilIdle()
+
+        var completed = false
+        model.startNewSession(NewSessionLocation.ProjectDirectory) { completed = it }
+        waitUntil { completed }
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+
+        model.selectProject(project.id)
+        advanceUntilIdle()
+
+        assertEquals(project.id, model.state.value.selectedProjectID)
+        assertEquals(null, model.state.value.selectedThreadID)
+        assertEquals(null, model.state.value.selectedThread)
+        assertTrue(model.state.value.conversationSections.isEmpty())
+        assertEquals(listOf("thread-new"), model.state.value.threads.map { it.id })
+    }
+
+    @Test
     fun startNewSessionConnectionFailureDoesNotLeaveConnectingState() = runTest(dispatcher) {
         val project = ProjectRecord(path = "/srv/app")
         val server = server(project)

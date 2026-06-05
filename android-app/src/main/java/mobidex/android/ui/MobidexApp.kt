@@ -17,6 +17,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -159,6 +160,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import mobidex.android.AndroidProjectListSections
+import mobidex.android.AndroidSessionListSection
 import mobidex.android.AppViewModel
 import mobidex.android.MobidexUiState
 import mobidex.android.NewSessionLocation
@@ -275,6 +277,9 @@ private fun CompactMobidexApp(
     onSettings: () -> Unit,
 ) {
     var tab by remember { mutableStateOf(0) }
+    BackHandler(enabled = tab == 2) {
+        tab = 1
+    }
     Scaffold(
         topBar = {
             Column {
@@ -391,6 +396,8 @@ private fun ProjectSessionPane(
     var showInactive by remember { mutableStateOf(false) }
     var showTerminal by remember { mutableStateOf(false) }
     var serverPendingDeletion by remember { mutableStateOf<ServerRecord?>(null) }
+    var visibleSessionSections by remember(state.selectedServerID, sessionsProjectID) { mutableStateOf<List<AndroidSessionListSection>>(emptyList()) }
+    var sessionListMutationRefreshPending by remember(state.selectedServerID, sessionsProjectID) { mutableStateOf(false) }
     val server = state.selectedServer
     val sessionsProject = server?.projects?.firstOrNull { it.id == sessionsProjectID }
     val connectionMode = state.connectionState == ServerConnectionState.Connecting
@@ -433,12 +440,20 @@ private fun ProjectSessionPane(
                     enabled = state.canCreateSession && !connectionMode,
                     onStart = {
                         model.startNewSession { created ->
-                            if (created) onOpenDetail()
+                            if (created) {
+                                sessionListMutationRefreshPending = true
+                                visibleSessionSections = model.sessionSections("")
+                                onOpenDetail()
+                            }
                         }
                     },
                     onStartInProjectDirectory = {
                         model.startNewSession(NewSessionLocation.ProjectDirectory) { created ->
-                            if (created) onOpenDetail()
+                            if (created) {
+                                sessionListMutationRefreshPending = true
+                                visibleSessionSections = model.sessionSections("")
+                                onOpenDetail()
+                            }
                         }
                     },
                 )
@@ -484,7 +499,39 @@ private fun ProjectSessionPane(
                 modifier = Modifier.weight(1f),
             )
         } else if (sessionsProject != null) {
-            ThreadList(state, model, sessionSearch, { sessionSearch = it }, disabled = connectionMode, onOpenDetail = onOpenDetail)
+            BackHandler(enabled = true) {
+                sessionsProjectID = null
+                sessionSearch = ""
+                visibleSessionSections = emptyList()
+                sessionListMutationRefreshPending = false
+            }
+            LaunchedEffect(state.isRefreshingSessions, sessionsProjectID) {
+                if (!state.isRefreshingSessions && sessionsProjectID != null) {
+                    visibleSessionSections = model.sessionSections("")
+                }
+            }
+            LaunchedEffect(state.isBusy, state.isStartingNewSession, sessionListMutationRefreshPending, sessionsProjectID) {
+                if (sessionListMutationRefreshPending &&
+                    !state.isBusy &&
+                    !state.isStartingNewSession &&
+                    sessionsProjectID != null
+                ) {
+                    visibleSessionSections = model.sessionSections("")
+                    sessionListMutationRefreshPending = false
+                }
+            }
+            ThreadList(
+                state,
+                model,
+                visibleSessionSections,
+                sessionSearch,
+                { sessionSearch = it },
+                disabled = connectionMode,
+                onMutationRequested = {
+                    sessionListMutationRefreshPending = true
+                },
+                onOpenDetail = onOpenDetail,
+            )
         } else {
             ProjectList(
                 state,
@@ -496,8 +543,8 @@ private fun ProjectSessionPane(
                 disabled = connectionMode,
                 onOpenSessions = { project ->
                     sessionsProjectID = project.id
+                    visibleSessionSections = emptyList()
                     model.selectProject(project.id)
-                    onOpenDetail()
                 },
             )
         }
@@ -902,18 +949,35 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
     )
 }
 
+private fun filterSessionSections(
+    sections: List<AndroidSessionListSection>,
+    search: String,
+): List<AndroidSessionListSection> {
+    val query = search.trim()
+    if (query.isEmpty()) return sections
+    return sections.mapNotNull { section ->
+        val threads = section.threads.filter { thread ->
+            thread.title.contains(query, ignoreCase = true) ||
+                thread.cwd.contains(query, ignoreCase = true)
+        }
+        if (threads.isEmpty()) null else section.copy(threads = threads)
+    }
+}
+
 @Composable
 private fun ThreadList(
     state: MobidexUiState,
     model: AppViewModel,
+    visibleSections: List<AndroidSessionListSection>,
     search: String,
     onSearchChange: (String) -> Unit,
     disabled: Boolean = false,
+    onMutationRequested: () -> Unit,
     onOpenDetail: () -> Unit,
 ) {
     val contentDisabled = disabled || state.isBusy || state.isStartingNewSession
     val contentAlpha = if (contentDisabled) 0.42f else 1f
-    val sections = model.sessionSections(search)
+    val sections = filterSessionSections(visibleSections, search)
     Column(Modifier.fillMaxSize()) {
         if (!state.isShowingAllSessions) {
             state.selectedProject?.let { project ->
@@ -975,6 +1039,7 @@ private fun ThreadList(
                             trailingContent = {
                                 TextButton(
                                     onClick = {
+                                        onMutationRequested()
                                         if (thread.isArchived) {
                                             model.unarchiveThread(thread)
                                         } else {
@@ -1026,21 +1091,7 @@ private fun ConversationPane(
                 SessionDetailMode.Changes -> ChangesView(state, model, Modifier.weight(1f))
             }
         } else if (project != null) {
-            ProjectHeader(project, state, model)
-            if (state.isRefreshingSessions) {
-                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                ChatTimeline(state, model, composerDrafts, Modifier.weight(1f)) {
-                    EmptyState(
-                        projectSessionEmptyTitle(state),
-                        projectSessionEmptyDetail(state),
-                        Icons.Default.Description,
-                        Modifier.fillMaxSize(),
-                    )
-                }
-            }
+            EmptyState("Select a Session", "Choose a session from the project list.", Icons.Default.Description, Modifier.weight(1f))
         } else {
             EmptyState("Select a Session", "Choose a project or session to continue.", Icons.Default.Description, Modifier.weight(1f))
         }
@@ -1543,7 +1594,7 @@ private fun ConversationSectionRow(section: ConversationSection) {
     ) {
         Column(
             Modifier
-                .fillMaxWidth(0.88f)
+                .fillMaxWidth(if (isUser) 0.88f else 1f)
                 .background(sectionBackground(section), MaterialTheme.shapes.medium)
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),

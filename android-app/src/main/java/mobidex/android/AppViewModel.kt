@@ -219,6 +219,7 @@ class AppViewModel(
     private val reconnectAttemptsByServerID = mutableMapOf<String, Int>()
     private var reconnectJob: Job? = null
     private var suppressThreadAutoSelection = false
+    private var suppressCachedThreadSelection = false
 
     // ACP / Grok debug wiring (item 7 minimal path, Codex untouched).
     // Parallel holders + surface so mapped sessionItems (Reasoning/AgentMessage/ToolCall/etc. from the shared mapper)
@@ -285,6 +286,7 @@ class AppViewModel(
             return
         }
         resetSessionRefreshTracking()
+        suppressCachedThreadSelection = false
         _state.update { state ->
             val server = state.servers.firstOrNull { it.id == serverID }
             state.copy(
@@ -335,6 +337,7 @@ class AppViewModel(
         }
         resetSessionRefreshTracking()
         suppressThreadAutoSelection = true
+        suppressCachedThreadSelection = true
         _state.update { state ->
             state.copy(
                 selectedProjectID = projectID,
@@ -368,6 +371,7 @@ class AppViewModel(
         }
         resetSessionRefreshTracking()
         suppressThreadAutoSelection = true
+        suppressCachedThreadSelection = true
         _state.update { state ->
             state.copy(
                 selectedProjectID = null,
@@ -844,6 +848,7 @@ class AppViewModel(
     private fun refreshThreadsIfNeeded() {
         val cacheKey = currentThreadScopeCacheKey()
         if (restoreCachedSessionState(cacheKey) && canUseCachedSessionState(cacheKey)) {
+            drainSelectedQueueIfReady()
             return
         }
         val refreshGeneration = beginSessionRefresh()
@@ -909,6 +914,7 @@ class AppViewModel(
                         )
                     }
                     loadCompleteThreadListAfterInitialSessionRefresh(client, state, cacheKey, listLoadGeneration)
+                    drainSelectedQueueIfReady()
                 }
             } finally {
                 endSessionRefresh(refreshGeneration)
@@ -1177,10 +1183,11 @@ class AppViewModel(
     }
 
     private fun cachedSelectedThreadID(cached: CachedThreadList): String? {
+        if (suppressCachedThreadSelection) return null
         cached.selectedThreadID
             ?.takeIf { id -> cached.threads.any { it.id == id } }
             ?.let { return it }
-        return if (suppressThreadAutoSelection) null else cached.threads.firstOrNull()?.id
+        return cached.threads.firstOrNull()?.id
     }
 
     private fun isSessionCacheFresh(cacheKey: ThreadScopeCacheKey): Boolean =
@@ -1209,6 +1216,7 @@ class AppViewModel(
         }
         viewModelScope.launch {
             suppressThreadAutoSelection = false
+            suppressCachedThreadSelection = false
             sessionRefreshDetailLoadGeneration += 1
             val requestState = _state.value
             val requestServerID = requestState.selectedServerID
@@ -1325,6 +1333,7 @@ class AppViewModel(
                     if (!adopted) return@runBusy
                     createdThread = true
                     suppressThreadAutoSelection = false
+                    suppressCachedThreadSelection = false
                     _state.update { current ->
                         if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID || current.selectedThreadID != thread.id) {
                             current
@@ -1428,7 +1437,13 @@ class AppViewModel(
                             }
                             didSubmitInput = true
                         } else if (activeTurnID != null) {
-                            client.steer(thread.id, activeTurnID, input)
+                            val localEchoID = appendLocalUserEcho(thread.id, activeTurnID, input)
+                            try {
+                                client.steer(thread.id, activeTurnID, input)
+                            } catch (error: Exception) {
+                                localEchoID?.let { removeLocalUserEcho(thread.id, it) }
+                                throw error
+                            }
                             _state.update {
                                 if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
                                     it.copy(statusMessage = "Steered active turn.")
@@ -1549,7 +1564,13 @@ class AppViewModel(
             refreshQueuedTurnInputs()
             try {
                 val client = appServer ?: error("Connect to the server before steering.")
-                client.steer(threadID, activeTurnID, item.input)
+                val localEchoID = appendLocalUserEcho(threadID, activeTurnID, item.input)
+                try {
+                    client.steer(threadID, activeTurnID, item.input)
+                } catch (error: Exception) {
+                    localEchoID?.let { removeLocalUserEcho(threadID, it) }
+                    throw error
+                }
                 refreshThreads()
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -1563,6 +1584,41 @@ class AppViewModel(
     private fun refreshQueuedTurnInputs() {
         val threadID = _state.value.selectedThreadID
         _state.update { it.copy(queuedTurnInputs = threadID?.let { id -> queuedTurnInputsByThreadID[id].orEmpty() }.orEmpty()) }
+    }
+
+    private fun appendLocalUserEcho(threadID: String, turnID: String, input: List<CodexInputItem>): String? {
+        val text = input.displayText() ?: return null
+        var insertedID: String? = null
+        _state.update { state ->
+            val thread = state.selectedThread ?: return@update state
+            if (thread.id != threadID) return@update state
+            if (thread.turns.any { turn -> turn.items.any { it is CodexThreadItem.UserMessage && it.text == text } }) {
+                return@update state
+            }
+            val item = CodexThreadItem.UserMessage(id = "local-user-$turnID-${System.currentTimeMillis()}", text = text)
+            insertedID = item.id
+            val nextTurns = if (thread.turns.any { it.id == turnID }) {
+                thread.turns.map { turn -> if (turn.id == turnID) turn.copy(items = turn.items + item) else turn }
+            } else {
+                thread.turns + CodexTurn(id = turnID, items = listOf(item), status = "inProgress")
+            }
+            val nextThread = thread.copy(turns = nextTurns)
+            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
+        }
+        cacheCurrentSelectedThreadDetail()
+        return insertedID
+    }
+
+    private fun removeLocalUserEcho(threadID: String, itemID: String) {
+        _state.update { state ->
+            val thread = state.selectedThread ?: return@update state
+            if (thread.id != threadID) return@update state
+            val nextThread = thread.copy(
+                turns = thread.turns.map { turn -> turn.copy(items = turn.items.filterNot { it.id == itemID }) }
+            )
+            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
+        }
+        cacheCurrentSelectedThreadDetail()
     }
 
     private suspend fun stageAttachmentInputs(uris: List<Uri>, server: ServerRecord): List<CodexInputItem> {
@@ -1691,7 +1747,7 @@ class AppViewModel(
         _acpSessionItems.value = emptyList()
         appServer?.close()
         appServer = null
-        queuedTurnInputsByThreadID.clear()
+        refreshQueuedTurnInputs()
         resetSessionRefreshTracking()
         if (updateState) {
             val servers = _state.value.servers.clearingAppServerProjectState()
@@ -1980,7 +2036,7 @@ class AppViewModel(
         if (appServer === client) {
             appServer = null
         }
-        queuedTurnInputsByThreadID.clear()
+        refreshQueuedTurnInputs()
         resetSessionRefreshTracking()
         client.close()
         if (serverID != null && shouldReconnect(serverID)) {
@@ -2269,28 +2325,49 @@ class AppViewModel(
         }
         if (didHydrate) {
             cacheThreadDetail(requestServerID, _state.value.selectedThread ?: thread)
+            drainSelectedQueueIfReady()
         }
         return didHydrate
     }
 
+    private fun drainSelectedQueueIfReady() {
+        val thread = _state.value.selectedThread ?: return
+        if (thread.status.isActive) return
+        if (queuedTurnInputsByThreadID[thread.id].isNullOrEmpty()) return
+        viewModelScope.launch { startNextQueuedTurnIfReady(thread.id) }
+    }
+
     private suspend fun startNextQueuedTurnIfReady(threadID: String) {
+        var inFlightQueuedInput: QueuedTurnInput? = null
         try {
             while (queuedTurnInputsByThreadID[threadID]?.isNotEmpty() == true) {
-                val queuedInput = queuedTurnInputsByThreadID[threadID]?.firstOrNull() ?: return
-                val client = appServer ?: return
+                val queue = queuedTurnInputsByThreadID[threadID] ?: return
+                val queuedInput = queue.removeFirstOrNull() ?: return
+                inFlightQueuedInput = queuedInput
+                if (queue.isEmpty()) {
+                    queuedTurnInputsByThreadID.remove(threadID)
+                }
+                refreshQueuedTurnInputs()
+                val client = appServer
+                if (client == null) {
+                    queuedTurnInputsByThreadID.getOrPut(threadID) { mutableListOf() }.add(0, queuedInput)
+                    refreshQueuedTurnInputs()
+                    return
+                }
                 val state = _state.value
                 val thread = state.selectedThread?.takeIf { it.id == threadID } ?: client.readThread(threadID)
-                if (thread.status.isActive) return
+                if (thread.status.isActive) {
+                    queuedTurnInputsByThreadID.getOrPut(threadID) { mutableListOf() }.add(0, queuedInput)
+                    inFlightQueuedInput = null
+                    refreshQueuedTurnInputs()
+                    return
+                }
                 val turn = client.startTurn(
                     threadID = thread.id,
                     input = queuedInput.input,
                     options = turnOptions(state.selectedReasoningEffort, state.selectedAccessMode, thread.cwd),
                 ).forDisplay(queuedInput.input)
-                queuedTurnInputsByThreadID[threadID]?.removeFirstOrNull()
-                if (queuedTurnInputsByThreadID[threadID]?.isEmpty() == true) {
-                    queuedTurnInputsByThreadID.remove(threadID)
-                }
-                refreshQueuedTurnInputs()
+                inFlightQueuedInput = null
                 if (state.selectedThreadID == threadID) {
                     hydrateConversation(thread.copy(status = thread.status.copy(type = if (turn.status == "inProgress") "active" else "idle"), turns = thread.turns.upsert(turn)))
                 }
@@ -2299,6 +2376,10 @@ class AppViewModel(
             }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
+            inFlightQueuedInput?.let {
+                queuedTurnInputsByThreadID.getOrPut(threadID) { mutableListOf() }.add(0, it)
+                refreshQueuedTurnInputs()
+            }
             _state.update { it.copy(statusMessage = error.message) }
         }
     }
@@ -2663,11 +2744,7 @@ private fun List<CodexTurn>.upsert(turn: CodexTurn): List<CodexTurn> =
     }
 
 private fun CodexTurn.preserveLocalUserEcho(existing: CodexTurn): CodexTurn {
-    if (items.any { it is CodexThreadItem.UserMessage }) return this
-    val userMessage = existing.items.firstOrNull {
-        it is CodexThreadItem.UserMessage
-    } ?: return this
-    return copy(items = listOf(userMessage) + items)
+    return mergeLocalUserEchoes(existing)
 }
 
 private fun CodexTurn.forDisplay(input: List<CodexInputItem>): CodexTurn {
@@ -2691,16 +2768,21 @@ private fun CodexThread.preserveExistingUserMessages(existing: CodexThread?): Co
     existing ?: return this
     return copy(
         turns = turns.map { turn ->
-            if (turn.items.any { it is CodexThreadItem.UserMessage }) {
-                turn
-            } else {
-                val userMessage = existing.turns.firstOrNull { it.id == turn.id }
-                    ?.items
-                    ?.firstOrNull { it is CodexThreadItem.UserMessage }
-                if (userMessage == null) turn else turn.copy(items = listOf(userMessage) + turn.items)
-            }
+            val existingTurn = existing.turns.firstOrNull { it.id == turn.id }
+            if (existingTurn == null) turn else turn.mergeLocalUserEchoes(existingTurn)
         }
     )
+}
+
+private fun CodexTurn.mergeLocalUserEchoes(existing: CodexTurn): CodexTurn {
+    val incomingUserIDs = items.filterIsInstance<CodexThreadItem.UserMessage>().map { it.id }.toSet()
+    val incomingUserTexts = items.filterIsInstance<CodexThreadItem.UserMessage>().map { it.text }.toSet()
+    val localEchoes = existing.items.filterIsInstance<CodexThreadItem.UserMessage>().filter {
+        it.id.startsWith("local-user-") && it.id !in incomingUserIDs && it.text !in incomingUserTexts
+    }
+    if (localEchoes.isEmpty()) return this
+    val insertAt = items.takeWhile { it is CodexThreadItem.UserMessage }.count()
+    return copy(items = items.toMutableList().apply { addAll(insertAt, localEchoes) })
 }
 
 private fun List<CodexThreadItem>.upsert(item: CodexThreadItem): List<CodexThreadItem> =

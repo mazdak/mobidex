@@ -60,14 +60,8 @@ struct ConversationView: View {
                 if model.isStartingNewSession {
                     newSessionStartingView
                 } else {
-                    macOSPrivacyWarningBanner(warning: project.macOSPrivacyWarning)
-                    projectHeader(project)
-                    Divider()
-                    if model.isRefreshingSessions {
-                        sessionRefreshView
-                    } else {
-                        projectEmptyView
-                    }
+                    ContentUnavailableView("Select a Session", systemImage: "bubble.left.and.bubble.right")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
                 ContentUnavailableView("Select a Session", systemImage: "bubble.left.and.bubble.right")
@@ -1508,10 +1502,10 @@ struct ConversationSectionView: View {
             }
             sectionCard
             .padding(10)
-            .frame(maxWidth: 680, alignment: .leading)
+            .frame(maxWidth: section.kind == .user ? 680 : .infinity, alignment: .leading)
             .background(background, in: RoundedRectangle(cornerRadius: 8))
             if section.kind != .user {
-                Spacer(minLength: 36)
+                EmptyView()
             }
         }
         .onGeometryChange(for: CGFloat.self) { geometry in
