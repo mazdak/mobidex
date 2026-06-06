@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import MobidexShared
 import PhotosUI
 import SwiftUI
 import UIKit
@@ -255,10 +256,15 @@ struct ConversationView: View {
     private var timeline: some View {
         let isStreaming = model.selectedThread?.status.isActive == true
         let liveSectionID = isStreaming ? model.conversationSections.last?.id : nil
+        let latestSectionID = model.conversationSections.last?.id
         return ScrollViewReader { proxy in
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
+                        if model.isSelectedThreadLoading {
+                            timelineLoadingRow
+                                .id("conversationLoading")
+                        }
                         ForEach(model.pendingApprovals) { approval in
                             ApprovalCard(approval: approval)
                                 .environmentObject(model)
@@ -313,10 +319,10 @@ struct ConversationView: View {
                         autoFollowStreaming = true
                         isTimelineNearBottom = true
                         timelineDistanceFromBottom = 0
-                        scrollToConversationBottom(proxy)
+                        scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                             withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
-                                scrollToConversationBottom(proxy)
+                                scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                             }
                         }
                     } label: {
@@ -352,16 +358,16 @@ struct ConversationView: View {
                 }
                 .onChange(of: model.conversationFollowToken) { _, _ in
                     guard isStreaming, autoFollowStreaming, !userIsDraggingTimeline else { return }
-                    scrollToConversationBottom(proxy)
+                    scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                 }
                 .onChange(of: model.conversationSendToken) { _, _ in
                     autoFollowStreaming = true
                     isTimelineNearBottom = true
                     timelineDistanceFromBottom = 0
-                    scrollToConversationBottom(proxy)
+                    scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
-                            scrollToConversationBottom(proxy)
+                            scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                         }
                     }
                 }
@@ -369,13 +375,28 @@ struct ConversationView: View {
                     let wasStreaming = oldStatus?.isActive == true
                     let isStreaming = status?.isActive == true
                     if wasStreaming && !isStreaming && autoFollowStreaming {
-                        scrollToConversationBottom(proxy)
+                        scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            scrollToConversationBottom(proxy)
+                            scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                         }
                     }
                 }
         }
+    }
+
+    private var timelineLoadingRow: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+            Text(model.conversationSections.isEmpty ? "Loading conversation..." : "Updating conversation...")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .accessibilityIdentifier("conversationLoadingStatus")
     }
 
     private var projectEmptyTitle: String {
@@ -426,12 +447,15 @@ struct ConversationView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func scrollToConversationBottom(_ proxy: ScrollViewProxy) {
+    private func scrollToConversationBottom(_ proxy: ScrollViewProxy, latestSectionID: String? = nil) {
         isTimelineNearBottom = true
         timelineDistanceFromBottom = 0
         programmaticBottomScrollGeneration &+= 1
         let generation = programmaticBottomScrollGeneration
         programmaticBottomScrollSettling = true
+        if let latestSectionID {
+            proxy.scrollTo(latestSectionID, anchor: .bottom)
+        }
         proxy.scrollTo(conversationBottomID, anchor: .bottom)
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.bottomScrollSettleDuration) {
             guard programmaticBottomScrollGeneration == generation else { return }
@@ -446,10 +470,10 @@ struct ConversationView: View {
         initialBottomScrollThreadID = selectedThreadID
         DispatchQueue.main.async {
             guard model.selectedThreadID == selectedThreadID else { return }
-            scrollToConversationBottom(proxy)
+            scrollToConversationBottom(proxy, latestSectionID: model.conversationSections.last?.id)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 guard model.selectedThreadID == selectedThreadID else { return }
-                scrollToConversationBottom(proxy)
+                scrollToConversationBottom(proxy, latestSectionID: model.conversationSections.last?.id)
             }
         }
     }
@@ -460,7 +484,7 @@ struct ConversationView: View {
         DispatchQueue.main.async {
             followLayoutScrollScheduled = false
             guard isStreaming, autoFollowStreaming, !userIsDraggingTimeline else { return }
-            scrollToConversationBottom(proxy)
+            scrollToConversationBottom(proxy, latestSectionID: model.conversationSections.last?.id)
         }
     }
 
@@ -1665,13 +1689,18 @@ struct ConversationSectionView: View {
 
 private struct MarkdownText: View {
     private let markdown: String
+    @State private var document: MobidexShared.MarkdownDocument
 
     init(_ markdown: String, id: String) {
         self.markdown = markdown
+        _document = State(initialValue: MobidexShared.MarkdownDocumentParser.shared.parse(markdown: markdown))
     }
 
     var body: some View {
-        SharedMarkdownView(markdown: markdown)
+        SharedMarkdownDocumentView(document: document)
+            .onChange(of: markdown) { _, newValue in
+                document = MobidexShared.MarkdownDocumentParser.shared.parse(markdown: newValue)
+            }
     }
 }
 

@@ -1,3 +1,46 @@
+# Mission: Ship Chat Audit Fix To TestFlight
+
+**Mission statement:** Commit the chat-screen performance/scroll fixes, build from up-to-date `master`, upload the next TestFlight build, and distribute it to internal and external testers.
+
+**Done criteria:**
+- Chat audit fixes are committed on `master` with a conventional commit.
+- `master` is pulled from `origin/master` before the TestFlight build.
+- `.asc` internal TestFlight workflow completes and records the new build number/build ID.
+- External TestFlight workflow submits the same build to `External Testers`.
+- `NEXT.md` records the uploaded build, run records, and final status.
+
+**Guardrails / Constraints:**
+- Build TestFlight only from up-to-date `master`.
+- Do not discard the current chat-screen changes.
+- Use the existing `.asc` workflow and App Store Connect configuration.
+
+**Critical learnings:**
+- `HEAD`, `master`, and `origin/master` started aligned at `d73adde`; the chat audit changes were uncommitted in a detached worktree.
+
+---
+
+# Mission: Audit Chat Screen Performance And Bottom Scroll
+
+**Mission statement:** Audit and fix the chat screen paths that get slow as conversations grow, make the down-arrow bottom-scroll control reliable, and improve the UX when older data has not loaded yet.
+
+**Done criteria:**
+- Identify the chat screen rendering/loading causes behind slow long chats.
+- Fix the down-arrow control so it scrolls to the newest loaded message predictably.
+- Improve loading/scroll UX where unloaded data affects the user experience.
+- Run focused review and verification for the changed chat paths.
+
+**Guardrails / Constraints:**
+- Keep iOS and Android symmetry in mind, but avoid unrelated client rewrites.
+- Prefer simple, obvious scroll/loading state over legacy compatibility modes.
+- Do not discard unrelated worktree changes.
+
+**Critical learnings:**
+- iOS chat slowdown came from repeated full-section publication on unchanged thread refreshes plus markdown parsing during SwiftUI view construction for visible assistant/reasoning/plan rows.
+- The iOS down-arrow targeted only a bottom spacer inside a lazy stack; targeting the latest real section first makes the scroll command reliable when lazy layout is still catching up.
+- The selected-thread detail load state existed in the model but was not surfaced in the chat timeline.
+
+---
+
 # Mission: Fix Steer Now and New Worktree Regressions
 
 **Mission statement:** Restore queued "Steer now" and "Start in New Worktree" behavior after the queue/navigation release.

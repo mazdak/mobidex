@@ -9,6 +9,14 @@ struct SharedMarkdownView: View {
     }
 
     var body: some View {
+        SharedMarkdownDocumentView(document: document)
+    }
+}
+
+struct SharedMarkdownDocumentView: View {
+    let document: MobidexShared.MarkdownDocument
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(document.blocks.enumerated()), id: \.offset) { _, block in
                 SharedMarkdownBlockView(block: block)

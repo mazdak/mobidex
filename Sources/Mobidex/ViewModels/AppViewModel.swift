@@ -3148,10 +3148,13 @@ final class AppViewModel: ObservableObject {
 
     private func publishConversationSections(_ nextSections: [ConversationSection]) {
         let didChange = conversationSections != nextSections
-        conversationSections = nextSections
+        if didChange {
+            conversationSections = nextSections
+        }
         if let selectedThread, !suppressNextConversationDetailCache {
             cacheThreadDetail(thread: selectedThread, liveItems: liveItems, sections: nextSections)
         }
+        guard didChange else { return }
         conversationRevision += 1
         conversationRenderToken += 1
         conversationRenderDigest = Self.conversationRenderDigest(for: nextSections)
