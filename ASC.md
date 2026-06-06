@@ -102,7 +102,7 @@ External TestFlight setup currently uses:
 - Demo account required: `false`
 - Beta app description: Mobidex requires a tester-controlled SSH server running `codex-app-server`.
 - Review note: do not provide a public demo SSH server; reviewers can inspect setup and connect to their own reachable host if available.
-- Latest external build: `1.0 (36)` / `d9c424d8-3135-4a39-9195-cab5122aff82`, submitted on `2026-06-05` for internal and external TestFlight from `master` `045bdf3`.
+- Latest external build: `1.0 (37)` / `a85f41ca-02fa-4ee0-a2a6-7f42d634878b`, submitted on `2026-06-06` for internal and external TestFlight from `master` `5f97a21`.
 
 Enable or refresh the public link:
 

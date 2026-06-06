@@ -35,6 +35,21 @@
 - [x] T5. Publish the uploaded build to external TestFlight testers.
 - [x] T6. Record version/build/build ID and final release status.
 
+## asc TestFlight submissions (internal + external build 37) — 2026-06-06
+
+- Executed from `master` at `5f97a21` after `origin/master` was pulled, the regression fix was cherry-picked from `codex/fix-steer-now-worktree`, and `master` was pushed.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 37.
+  - BUILD_ID: `a85f41ca-02fa-4ee0-a2a6-7f42d634878b`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-37.ipa` (17,826,111 bytes).
+  - Run record: `.asc/runs/testflight-20260606T002449Z-0fdbdd12.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+- External workflow: `asc workflow run testflight_external BUILD_ID:a85f41ca-02fa-4ee0-a2a6-7f42d634878b EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+  - Run record: `.asc/runs/testflight_external-20260606T002814Z-fbd54de3.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+- Public TestFlight link remains `https://testflight.apple.com/join/zmqueV6P`.
+- Validation note: Android focused regression tests passed and the iOS simulator build/preflight passed; the focused iOS XCTest fixture still has request-order noise and was not used as a release blocker for this shipment.
+
 ## asc TestFlight submissions (internal + external build 36) — 2026-06-05
 
 - Executed from `master` at `045bdf3` after `origin/master` was pulled and the release commit was pushed.
