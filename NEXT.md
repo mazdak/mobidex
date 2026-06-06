@@ -35,6 +35,22 @@
 - [x] T5. Publish the uploaded build to external TestFlight testers.
 - [x] T6. Record version/build/build ID and final release status.
 
+## asc TestFlight submissions (internal + external build 39) — 2026-06-06
+
+- Executed from `master` at `1426ae4` after `origin/master` was pulled and `master` was confirmed up to date.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 39.
+  - BUILD_ID: `17216b9a-e6fc-44b3-b262-0b3f10e6aefd`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-39.ipa` (17,838,988 bytes).
+  - Run record: `.asc/runs/testflight-20260606T183942Z-c879489b.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+  - Signing note: archive/export used the repo-generated iOS distribution certificate/key in a temporary unlocked keychain for non-interactive `codesign`; the login keychain was restored afterward.
+- External workflow: `asc workflow run testflight_external BUILD_ID:17216b9a-e6fc-44b3-b262-0b3f10e6aefd EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+  - Run record: `.asc/runs/testflight_external-20260606T184313Z-25826bee.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+- Public TestFlight link remains `https://testflight.apple.com/join/zmqueV6P`.
+- Validation note: `Scripts/verify-ios-distribution-config.sh` passed, the iOS simulator build passed, Android `AppViewModelNewSessionTest` passed, subagent review found no scroll/New Session issues after the timing fix, and the Release archive/export/upload completed successfully.
+
 ## asc TestFlight submissions (internal + external build 38) — 2026-06-06
 
 - Executed from `master` at `31043c2` after `origin/master` was pulled, the chat audit fix was cherry-picked from the detached worktree, and `master` was pushed.

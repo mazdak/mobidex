@@ -1,3 +1,27 @@
+# Mission: Ship Scroll Anchoring Fix To TestFlight
+
+**Mission statement:** Upload the current `master` scroll anchoring/New Session regression fix to internal and external TestFlight.
+
+**Done criteria:**
+- `master` is clean, pushed, and pulled from `origin/master` before the build.
+- Distribution preflight passes.
+- Internal TestFlight workflow uploads the next build and adds it to `Internal Testers`.
+- External TestFlight workflow submits the same build to `External Testers`.
+- `NEXT.md` and `ASC.md` record the final build number, build ID, run records, and status.
+
+**Guardrails / Constraints:**
+- Build only from up-to-date `master`.
+- Use the existing `.asc` workflows.
+- Preserve the normal login keychain after temporary signing setup is no longer needed.
+
+**Critical learnings:**
+- Release commit is `1426ae4` (`fix(chat): preserve manual scroll position`).
+- `origin/master` was pulled with `--ff-only --autostash` after the mission tracker edit; remote was already up to date.
+- Distribution preflight passed, internal TestFlight build `1.0 (39)` uploaded successfully with BUILD_ID `17216b9a-e6fc-44b3-b262-0b3f10e6aefd`, and external TestFlight submission to `External Testers` completed.
+- Temporary signing keychain setup was required again for non-interactive archive signing and was removed after the workflows completed.
+
+---
+
 # Mission: Fix Chat Scroll Anchoring And Worktree Session Regression
 
 **Mission statement:** Stop incoming chat updates from stealing scroll position when the user is reading earlier messages, and restore reliable New Session in new worktree behavior.
