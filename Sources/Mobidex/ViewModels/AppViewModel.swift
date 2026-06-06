@@ -166,6 +166,7 @@ private enum AppViewModelError: LocalizedError {
     case missingProject
     case newSessionBlocked
     case newSessionConnectionFailed(String)
+    case noActiveTurnToSteer
     case operationTimedOut(String)
 
     var errorDescription: String? {
@@ -178,6 +179,8 @@ private enum AppViewModelError: LocalizedError {
             "Finish the current session action before starting a new session."
         case .newSessionConnectionFailed(let message):
             message
+        case .noActiveTurnToSteer:
+            "There is no active turn to steer."
         case .operationTimedOut(let message):
             message
         }
@@ -1538,30 +1541,52 @@ final class AppViewModel: ObservableObject {
 
     func steerQueuedTurnInputNow(_ id: UUID) async {
         guard let appServer, let selectedThreadID,
-              selectedThread?.status.isActive == true,
-              let activeTurnID,
               var queue = queuedTurnInputsByThreadID[selectedThreadID],
               let index = queue.firstIndex(where: { $0.id == id })
         else {
             statusMessage = "There is no active turn to steer."
             return
         }
-        let item = queue.remove(at: index)
-        queuedTurnInputsByThreadID[selectedThreadID] = queue
-        refreshQueuedTurnInputCount()
+        let item = queue[index]
         let scope = currentThreadLoadScope
         var localEchoID: String?
+        var removedFromQueue = false
         let sent = await runOperation(.sending, status: "Steering active turn") {
-            guard currentThreadLoadScope == scope, self.selectedThreadID == selectedThreadID else { return }
+            guard currentThreadLoadScope == scope, self.selectedThreadID == selectedThreadID else {
+                throw AppViewModelError.selectionChanged
+            }
+            beginSelectedThreadLoad(threadID: selectedThreadID)
+            defer {
+                endSelectedThreadLoad(threadID: selectedThreadID, scope: scope)
+            }
+            let thread = try await appServer.readThread(threadID: selectedThreadID)
+            guard currentThreadLoadScope == scope, self.selectedThreadID == selectedThreadID else {
+                throw AppViewModelError.selectionChanged
+            }
+            hydrateConversation(from: thread)
+            guard let activeTurnID = Self.activeTurnID(in: thread) else {
+                throw AppViewModelError.noActiveTurnToSteer
+            }
+            queue.removeAll { $0.id == id }
+            if queue.isEmpty {
+                queuedTurnInputsByThreadID.removeValue(forKey: selectedThreadID)
+            } else {
+                queuedTurnInputsByThreadID[selectedThreadID] = queue
+            }
+            removedFromQueue = true
+            refreshQueuedTurnInputCount()
             localEchoID = appendLocalUserEcho(input: item.input, turnID: activeTurnID)
             try await appServer.steer(threadID: selectedThreadID, expectedTurnID: activeTurnID, input: item.input)
+            statusMessage = "Steered active turn."
             await refreshThreadListAfterEvent()
         }
         if !sent {
             if let localEchoID {
                 removeLocalUserEcho(id: localEchoID)
             }
-            prependQueuedInput(item, threadID: selectedThreadID)
+            if removedFromQueue {
+                prependQueuedInput(item, threadID: selectedThreadID)
+            }
         }
     }
 
@@ -1925,7 +1950,12 @@ final class AppViewModel: ObservableObject {
         guard let selectedThread, selectedThread.status.isActive else {
             return nil
         }
-        return selectedThread.turns.last(where: { $0.status == "inProgress" })?.id ?? selectedThread.turns.last?.id
+        return Self.activeTurnID(in: selectedThread)
+    }
+
+    private static func activeTurnID(in thread: CodexThread) -> String? {
+        guard thread.status.isActive else { return nil }
+        return thread.turns.last(where: { $0.status == "inProgress" })?.id ?? thread.turns.last?.id
     }
 
     private var isSessionMutationInFlight: Bool {

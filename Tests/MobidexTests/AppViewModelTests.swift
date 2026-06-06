@@ -782,7 +782,8 @@ final class AppViewModelTests: XCTestCase {
         let viewModel = AppViewModel(
             repository: repository,
             credentialStore: credentials,
-            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport)),
+            activeTurnRefreshIntervalNanoseconds: 60_000_000_000
         )
 
         try await connectWithSingleOpenSession(in: viewModel, transport: transport)
@@ -810,7 +811,8 @@ final class AppViewModelTests: XCTestCase {
         let viewModel = AppViewModel(
             repository: repository,
             credentialStore: credentials,
-            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport)),
+            activeTurnRefreshIntervalNanoseconds: 60_000_000_000
         )
 
         let connectTask = Task { await viewModel.connectSelectedServer() }
@@ -4223,7 +4225,8 @@ final class AppViewModelTests: XCTestCase {
         let viewModel = AppViewModel(
             repository: repository,
             credentialStore: credentials,
-            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport)),
+            activeTurnRefreshIntervalNanoseconds: 60_000_000_000
         )
 
         let connectTask = Task { await viewModel.connectSelectedServer() }
@@ -6433,7 +6436,11 @@ private func waitForRequest(method: String, in transport: MockCodexLineTransport
         }
         try await Task.sleep(nanoseconds: 10_000_000)
     }
-    return try XCTUnwrap(nil as CapturedRequest?, "Timed out waiting for \(method).")
+    let observed = transport.sentLinesSnapshot
+        .dropFirst(cursor)
+        .compactMap(methodName)
+        .joined(separator: ", ")
+    return try XCTUnwrap(nil as CapturedRequest?, "Timed out waiting for \(method). Observed after cursor: [\(observed)]")
 }
 
 private enum TestTaskTimeout: Error {

@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
@@ -138,7 +139,7 @@ class AppViewModelNewSessionTest {
         var completed = false
         model.startNewSession(NewSessionLocation.ProjectDirectory) { completed = it }
         transport.awaitMethod("thread/start")
-        advanceUntilIdle()
+        runCurrent()
 
         model.openThread(existing)
         advanceUntilIdle()

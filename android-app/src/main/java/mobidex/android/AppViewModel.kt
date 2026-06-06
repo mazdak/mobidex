@@ -125,8 +125,15 @@ data class MobidexUiState(
         get() = connectionState != ServerConnectionState.Connecting && selectedServer != null && selectedProject != null && !isBusy && !isStartingNewSession
 
     val activeTurnID: String?
-        get() = selectedThread?.turns?.lastOrNull { it.status == "inProgress" }?.id
+        get() = selectedThread?.let { activeTurnID(it) }
 }
+
+private fun activeTurnID(thread: CodexThread): String? =
+    if (thread.status.isActive) {
+        thread.turns.lastOrNull { it.status == "inProgress" }?.id ?: thread.turns.lastOrNull()?.id
+    } else {
+        null
+    }
 
 enum class NewSessionLocation {
     CodexWorktree,
@@ -1314,14 +1321,24 @@ class AppViewModel(
                     requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
                     val sessionCwd = when (location) {
                         NewSessionLocation.CodexWorktree -> {
+                            _state.update { it.copy(statusMessage = "Creating worktree") }
                             val credential = credentialStore.loadCredential(server.id)
                             requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
-                            sshService.createCodexWorktree(cwd, server, credential)
+                            withNewSessionOperationTimeout("Creating the worktree timed out after 30 seconds.") {
+                                sshService.createCodexWorktree(cwd, server, credential)
+                            }
                         }
                         NewSessionLocation.ProjectDirectory -> cwd
                     }
                     requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
-                    val thread = client.startThread(sessionCwd)
+                    _state.update { it.copy(statusMessage = "Creating session") }
+                    val thread = if (location == NewSessionLocation.CodexWorktree) {
+                        withNewSessionOperationTimeout("Creating the session timed out after 30 seconds.") {
+                            client.startThread(sessionCwd)
+                        }
+                    } else {
+                        client.startThread(sessionCwd)
+                    }
                     val adopted = hydrateConversationIfCurrent(
                         thread,
                         requestServerID,
@@ -1555,26 +1572,41 @@ class AppViewModel(
 
     fun steerQueuedTurnInputNow(id: String) {
         viewModelScope.launch {
-            val threadID = _state.value.selectedThreadID ?: return@launch
-            val activeTurnID = _state.value.activeTurnID ?: return@launch
+            val initialState = _state.value
+            val threadID = initialState.selectedThreadID ?: return@launch
+            val requestServerID = initialState.selectedServerID
+            val requestProjectID = initialState.selectedProjectID
             val queue = queuedTurnInputsByThreadID[threadID] ?: return@launch
             val index = queue.indexOfFirst { it.id == id }
             if (index < 0) return@launch
-            val item = queue.removeAt(index)
-            refreshQueuedTurnInputs()
+            val item = queue[index]
+            var removedFromQueue = false
+            var localEchoID: String? = null
             try {
                 val client = appServer ?: error("Connect to the server before steering.")
-                val localEchoID = appendLocalUserEcho(threadID, activeTurnID, item.input)
-                try {
-                    client.steer(threadID, activeTurnID, item.input)
-                } catch (error: Exception) {
-                    localEchoID?.let { removeLocalUserEcho(threadID, it) }
-                    throw error
+                val thread = client.readThread(threadID)
+                if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, threadID)) {
+                    error("The selected session scope changed before the action could finish.")
                 }
+                hydrateConversation(thread)
+                val activeTurnID = activeTurnID(thread) ?: error("There is no active turn to steer.")
+                val currentQueue = queuedTurnInputsByThreadID[threadID] ?: return@launch
+                val currentIndex = currentQueue.indexOfFirst { it.id == id }
+                if (currentIndex < 0) return@launch
+                currentQueue.removeAt(currentIndex)
+                if (currentQueue.isEmpty()) queuedTurnInputsByThreadID.remove(threadID)
+                removedFromQueue = true
+                refreshQueuedTurnInputs()
+                localEchoID = appendLocalUserEcho(threadID, activeTurnID, item.input)
+                client.steer(threadID, activeTurnID, item.input)
+                _state.update { it.copy(statusMessage = "Steered active turn.") }
                 refreshThreads()
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
-                queue.add(index.coerceAtMost(queue.size), item)
+                localEchoID?.let { removeLocalUserEcho(threadID, it) }
+                if (removedFromQueue) {
+                    queuedTurnInputsByThreadID.getOrPut(threadID) { mutableListOf() }.add(index.coerceAtMost(queuedTurnInputsByThreadID[threadID]?.size ?: 0), item)
+                }
                 refreshQueuedTurnInputs()
                 _state.update { it.copy(statusMessage = error.message) }
             }
@@ -2816,12 +2848,20 @@ private fun String.isImageAttachmentPath(): Boolean =
 
 private const val MACOS_PRIVACY_WARNING_DISMISSED_KEY = "dismissedMacOSPrivacyWarning"
 private const val REMOTE_DIRECTORY_BROWSE_TIMEOUT_MILLIS = 20_000L
+private const val NEW_SESSION_OPERATION_TIMEOUT_MILLIS = 30_000L
 
 private suspend fun <T> withRemoteDirectoryBrowseTimeout(block: suspend () -> T): T =
     try {
         withTimeout(REMOTE_DIRECTORY_BROWSE_TIMEOUT_MILLIS) { block() }
     } catch (error: TimeoutCancellationException) {
         throw IllegalStateException("Remote folder browsing timed out after 20 seconds.", error)
+    }
+
+private suspend fun <T> withNewSessionOperationTimeout(message: String, block: suspend () -> T): T =
+    try {
+        withTimeout(NEW_SESSION_OPERATION_TIMEOUT_MILLIS) { block() }
+    } catch (error: TimeoutCancellationException) {
+        throw IllegalStateException(message, error)
     }
 
 private fun String.sanitizedAttachmentName(): String {

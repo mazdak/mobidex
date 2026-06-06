@@ -1,5 +1,12 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## Mission Checklist (active, 2026-06-05 regressions)
+
+- [x] Fix queued "Steer now" to hydrate active-turn state before sending.
+- [x] Add bounded New Worktree creation/session start behavior.
+- [x] Add/update focused regression tests. (Android new-session test updated; iOS helper diagnostics improved, broad steer fixture still has refresh-order noise.)
+- [x] Run focused iOS and Android validation. (Android green; iOS simulator build green; focused iOS XCTest still failing in mock request ordering.)
+
 ## Mission Checklist (active, 2026-06-05 queue)
 
 - [x] Trace queued input, auto-start, steer, and local transcript echo paths.

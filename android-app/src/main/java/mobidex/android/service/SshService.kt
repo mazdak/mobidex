@@ -117,7 +117,23 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
                 base="${'$'}HOME/.codex/worktrees/${'$'}token"
                 target="${'$'}base/${'$'}name"
                 mkdir -p "${'$'}base"
-                if ! git -C "${'$'}root" worktree add --detach "${'$'}target" HEAD >"${'$'}log" 2>&1; then
+                GIT_TERMINAL_PROMPT=0 git -C "${'$'}root" worktree add --detach "${'$'}target" HEAD >"${'$'}log" 2>&1 &
+                worktree_pid=${'$'}!
+                elapsed=0
+                while kill -0 "${'$'}worktree_pid" 2>/dev/null; do
+                  if [ "${'$'}elapsed" -ge 25 ]; then
+                    kill "${'$'}worktree_pid" 2>/dev/null || true
+                    wait "${'$'}worktree_pid" 2>/dev/null || true
+                    printf 'git worktree add timed out after 25 seconds. ' >&2
+                    cat "${'$'}log" >&2
+                    rm -rf "${'$'}target"
+                    rmdir "${'$'}base" 2>/dev/null || true
+                    exit 124
+                  fi
+                  sleep 1
+                  elapsed=${'$'}((elapsed + 1))
+                done
+                if ! wait "${'$'}worktree_pid"; then
                   printf 'git worktree add failed: ' >&2
                   cat "${'$'}log" >&2
                   rm -rf "${'$'}target"

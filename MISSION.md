@@ -1,3 +1,20 @@
+# Mission: Fix Steer Now and New Worktree Regressions
+
+**Mission statement:** Restore queued "Steer now" and "Start in New Worktree" behavior after the queue/navigation release.
+
+**Done criteria:**
+- "Steer now" resolves the current active turn before sending and does not boomerang the item back into the queue on stale local state.
+- The steered queued input appears immediately in the transcript and reconciles without duplicates.
+- "Start in New Worktree" either creates the worktree/session or fails quickly with a visible error instead of hanging.
+- iOS and Android stay symmetric where they share these paths.
+
+**Critical learnings:**
+- The queued steer path trusted the locally cached active turn ID; a stale selected thread could make the RPC fail after the item was already removed.
+- Android had no new-session timeout around worktree creation or `thread/start`.
+- Remote `git worktree add` needs its own shell watchdog because client-side cancellation is not always enough when SSH execs stall.
+
+---
+
 # Mission: Fix Queued Turn Reliability
 
 **Mission statement:** Make queued follow-ups leave the queue when picked up, survive reconnect/background churn, and show steer submissions immediately in the transcript without duplicates.
