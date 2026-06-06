@@ -1,3 +1,29 @@
+# Mission: Ship Retained Chat Display Fix To TestFlight
+
+**Mission statement:** Upload the current `master` retained chat display fix to internal and external TestFlight.
+
+**Done criteria:**
+- `master` is clean, pushed, and pulled from `origin/master` before the build.
+- Distribution preflight passes.
+- Internal TestFlight workflow uploads the next build and adds it to `Internal Testers`.
+- External TestFlight workflow submits the same build to `External Testers`.
+- Release records capture the build number, build ID, run records, and status.
+
+**Guardrails / Constraints:**
+- Build only from up-to-date `master`.
+- Use the existing `.asc` workflows.
+- Restore normal keychain state after temporary signing setup.
+
+**Critical learnings:**
+- Release commit is `1a6beb7` (`fix(chat): retain display during refresh`).
+- `origin/master` was pulled with `--ff-only --autostash`; remote was already up to date.
+- Distribution preflight passed before the archive.
+- Internal TestFlight build `1.0 (40)` uploaded successfully with BUILD_ID `17a08b68-1ebe-4590-b124-de2568db7173`.
+- External TestFlight submission to `External Testers` completed for the same build.
+- Temporary signing keychain setup was required for non-interactive archive signing and was removed after the workflows completed.
+
+---
+
 # Mission: Decouple Chat Display From Refresh Jitter
 
 **Mission statement:** Stop incoming messages and selected-thread refreshes from clearing or jittering the visible chat while the user is reading, by separating retained display content from transient load state.
