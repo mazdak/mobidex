@@ -890,7 +890,11 @@ class AppViewModel(
                         ) {
                             current
                         } else {
-                            val sorted = sortedThreadsPreservingSelectedThread(loaded, current)
+                            val sorted = sortedThreadsPreservingSelectedThread(
+                                loadedThreads = loaded,
+                                state = current,
+                                preserveMissingSelectedThread = true,
+                            )
                             val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
                                 selectedThreadIDToHydrate = selectedID
@@ -978,7 +982,11 @@ class AppViewModel(
                         ) {
                             current
                         } else {
-                            val sorted = sortedThreadsPreservingSelectedThread(loaded, current)
+                            val sorted = sortedThreadsPreservingSelectedThread(
+                                loadedThreads = loaded,
+                                state = current,
+                                preserveMissingSelectedThread = false,
+                            )
                             cacheThreads(cacheKey, sorted)
                             val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
@@ -1110,11 +1118,15 @@ class AppViewModel(
         )
     }
 
-    private fun sortedThreadsPreservingSelectedThread(loadedThreads: List<CodexThread>, state: MobidexUiState): List<CodexThread> {
+    private fun sortedThreadsPreservingSelectedThread(
+        loadedThreads: List<CodexThread>,
+        state: MobidexUiState,
+        preserveMissingSelectedThread: Boolean,
+    ): List<CodexThread> {
         val selectedID = state.selectedThreadID
         val selectedThread = state.selectedThread
         val threads = if (
-            loadedThreads.isNotEmpty() &&
+            preserveMissingSelectedThread &&
             selectedID != null &&
             selectedThread?.id == selectedID &&
             loadedThreads.none { it.id == selectedID } &&
@@ -2206,7 +2218,7 @@ class AppViewModel(
             }
             "thread/started" -> params.obj("thread")?.let {
                 val thread = parseThread(it)
-                if (threadMatchesCurrentScope(thread)) {
+                if (threadMatchesCurrentScope(thread) && (_state.value.selectedThreadID == null || _state.value.selectedThreadID == thread.id)) {
                     hydrateConversation(thread)
                 }
                 refreshThreads()

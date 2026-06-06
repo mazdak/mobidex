@@ -2296,7 +2296,11 @@ final class AppViewModel: ObservableObject {
               currentThreadLoadScope == scope else {
             return
         }
-        let prioritizedThreads = sortedThreadsPreservingSelectedThread(loadedThreads, scope: scope)
+        let prioritizedThreads = sortedThreadsPreservingSelectedThread(
+            loadedThreads,
+            scope: scope,
+            preserveMissingSelectedThread: true
+        )
         threads = prioritizedThreads
         loadCompleteThreadListAfterInitialSessionRefresh(
             scope: scope,
@@ -2377,7 +2381,11 @@ final class AppViewModel: ObservableObject {
                       currentThreadLoadScope == scope else {
                     return
                 }
-                let sorted = sortedThreadsPreservingSelectedThread(loadedThreads, scope: scope)
+                let sorted = sortedThreadsPreservingSelectedThread(
+                    loadedThreads,
+                    scope: scope,
+                    preserveMissingSelectedThread: false
+                )
                 threads = sorted
                 cacheThreadList(sorted, scope: scope)
                 selectThreadAfterCompleteListLoad(
@@ -2541,8 +2549,12 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    private func sortedThreadsPreservingSelectedThread(_ loadedThreads: [CodexThread], scope: ThreadLoadScope) -> [CodexThread] {
-        guard !loadedThreads.isEmpty,
+    private func sortedThreadsPreservingSelectedThread(
+        _ loadedThreads: [CodexThread],
+        scope: ThreadLoadScope,
+        preserveMissingSelectedThread: Bool
+    ) -> [CodexThread] {
+        guard preserveMissingSelectedThread,
               let selectedThreadID,
               !loadedThreads.contains(where: { $0.id == selectedThreadID }),
               let selectedThread,

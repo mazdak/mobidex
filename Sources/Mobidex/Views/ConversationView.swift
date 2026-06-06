@@ -261,7 +261,7 @@ struct ConversationView: View {
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        if model.isSelectedThreadLoading {
+                        if model.isSelectedThreadLoading && model.conversationSections.isEmpty && model.pendingApprovals.isEmpty {
                             timelineLoadingRow
                                 .id("conversationLoading")
                         }

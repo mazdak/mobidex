@@ -1,3 +1,28 @@
+# Mission: Decouple Chat Display From Refresh Jitter
+
+**Mission statement:** Stop incoming messages and selected-thread refreshes from clearing or jittering the visible chat while the user is reading, by separating retained display content from transient load state.
+
+**Done criteria:**
+- Incoming thread updates do not flash the timeline empty or bounce scroll while data is rehydrating.
+- Existing visible sections remain on screen during refresh/reload unless the user changes selected server/project/thread.
+- Loading indicators are overlays/inline status, not replacements for retained chat content.
+- iOS and Android refresh/display behavior are checked for the same backing-store problem.
+- Focused review and validation run before landing.
+
+**Guardrails / Constraints:**
+- Work from up-to-date `master`.
+- Do not hide true empty states for genuinely empty/new sessions.
+- Do not clear user-visible chat content just to signal a background load.
+
+**Critical learnings:**
+- `master` is up to date at `cc63239` after build 39 release records.
+- Both clients still have direct display-clearing paths (`publishConversationSections([])` / `conversationSections = emptyList()`) mixed into refresh/load flows.
+- Partial session-list refreshes must preserve the selected thread snapshot; only the complete follow-up list is allowed to prove that a selected thread disappeared and clear/fallback.
+- iOS selected-thread loading status must not be inserted into an already populated timeline because even a harmless status row changes content height and scroll anchoring.
+- Android `thread/started` events should hydrate the conversation only when there is no selected thread or the event is for the selected thread; project-scope membership alone is not enough.
+
+---
+
 # Mission: Ship Scroll Anchoring Fix To TestFlight
 
 **Mission statement:** Upload the current `master` scroll anchoring/New Session regression fix to internal and external TestFlight.
