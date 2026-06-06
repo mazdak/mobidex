@@ -16,6 +16,9 @@
 
 **Critical learnings:**
 - `HEAD`, `master`, and `origin/master` started aligned at `d73adde`; the chat audit changes were uncommitted in a detached worktree.
+- Release commit `31043c2` is pushed to `origin/master`; TestFlight build `1.0 (38)` uploaded successfully with BUILD_ID `8a078787-1bc2-4b25-9944-dfdc84373b1f`.
+- The first archive attempts failed because non-interactive `codesign` could not access private keys in `login.keychain-db` (`errSecInternalComponent`). Importing `.asc/signing/generated` certificate/key material into a temporary unlocked keychain and making it the default keychain allowed archive/export to complete.
+- Internal TestFlight completed and external TestFlight submission to `External Testers` completed on 2026-06-06.
 
 ---
 

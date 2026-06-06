@@ -35,6 +35,22 @@
 - [x] T5. Publish the uploaded build to external TestFlight testers.
 - [x] T6. Record version/build/build ID and final release status.
 
+## asc TestFlight submissions (internal + external build 38) — 2026-06-06
+
+- Executed from `master` at `31043c2` after `origin/master` was pulled, the chat audit fix was cherry-picked from the detached worktree, and `master` was pushed.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 38.
+  - BUILD_ID: `8a078787-1bc2-4b25-9944-dfdc84373b1f`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-38.ipa` (17,838,166 bytes).
+  - Run record: `.asc/runs/testflight-20260606T135337Z-6fd3f368.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+  - Signing note: archive/export succeeded after importing the repo-generated iOS distribution certificate/key into a temporary unlocked keychain and making that keychain available to non-interactive `codesign`.
+- External workflow: `asc workflow run testflight_external BUILD_ID:8a078787-1bc2-4b25-9944-dfdc84373b1f EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+  - Run record: `.asc/runs/testflight_external-20260606T142627Z-fdd22557.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+- Public TestFlight link remains `https://testflight.apple.com/join/zmqueV6P`.
+- Validation note: `Scripts/verify-ios-distribution-config.sh` passed, the iOS simulator build passed, subagent review found no chat-fix issues, and the Release archive/export/upload completed successfully.
+
 ## asc TestFlight submissions (internal + external build 37) — 2026-06-06
 
 - Executed from `master` at `5f97a21` after `origin/master` was pulled, the regression fix was cherry-picked from `codex/fix-steer-now-worktree`, and `master` was pushed.
