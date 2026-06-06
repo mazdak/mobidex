@@ -1228,9 +1228,8 @@ private fun NewSessionMenuButton(
     onStartInProjectDirectory: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var showingChoice by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { showingChoice = true }, enabled = enabled) {
+        IconButton(onClick = onStart, enabled = enabled) {
             Icon(Icons.Default.Add, contentDescription = "New Session")
         }
         IconButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.size(28.dp).align(Alignment.BottomEnd)) {
@@ -1252,29 +1251,6 @@ private fun NewSessionMenuButton(
                 },
             )
         }
-    }
-    if (showingChoice) {
-        AlertDialog(
-            onDismissRequest = { showingChoice = false },
-            title = { Text("Start New Session") },
-            text = { Text("New worktree keeps changes isolated from the project directory.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showingChoice = false
-                    onStart()
-                }) {
-                    Text("Start in New Worktree")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showingChoice = false
-                    onStartInProjectDirectory()
-                }) {
-                    Text("Project Directory")
-                }
-            },
-        )
     }
 }
 
@@ -1329,7 +1305,7 @@ private fun ChatTimeline(
             isNearBottom = near
             if (near) {
                 shouldFollowTail = true
-            } else if (!programmaticScrollInProgress) {
+            } else if (listState.isScrollInProgress && !programmaticScrollInProgress) {
                 shouldFollowTail = false
             }
         }
@@ -1546,14 +1522,12 @@ private fun MessageAttachmentTile(attachment: DisplayAttachment, modifier: Modif
     }
 }
 
-private fun LazyListState.isNearTimelineBottom(bufferItems: Int = 2, bufferPixels: Int = 96): Boolean {
+private fun LazyListState.isNearTimelineBottom(bufferPixels: Int = 96): Boolean {
     val info = layoutInfo
     if (info.totalItemsCount == 0) return true
     val lastVisible = info.visibleItemsInfo.lastOrNull() ?: return false
     val lastIndex = info.totalItemsCount - 1
-    if (lastVisible.index < lastIndex) {
-        return lastVisible.index >= lastIndex - bufferItems
-    }
+    if (lastVisible.index < lastIndex) return false
     return lastVisible.offset + lastVisible.size <= info.viewportEndOffset + bufferPixels
 }
 

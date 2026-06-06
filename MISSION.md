@@ -1,3 +1,30 @@
+# Mission: Fix Chat Scroll Anchoring And Worktree Session Regression
+
+**Mission statement:** Stop incoming chat updates from stealing scroll position when the user is reading earlier messages, and restore reliable New Session in new worktree behavior.
+
+**Done criteria:**
+- Incoming messages only auto-scroll when the user is already at or near the bottom.
+- The down-arrow remains the explicit way to jump to the newest loaded message.
+- New Session in a new worktree works again or fails quickly with a clear error.
+- Check other local worktrees for unmerged relevant fixes before coding.
+- Run focused review and verification for the changed paths.
+
+**Guardrails / Constraints:**
+- Work from up-to-date `master`.
+- Do not discard changes in sibling worktrees.
+- Fix iOS and Android together when the same behavior exists on both clients.
+
+**Critical learnings:**
+- `master` is up to date at `1b7a4e5`; the earlier worktree-start fix is present as `5f97a21`.
+- The `codex/fix-steer-now-worktree` worktree has an older duplicate fix commit and is behind `master`; it is not carrying a newer unmerged fix.
+- The Grok worktree has uncommitted docs/todo files, but no unique code commits ahead of `master`.
+- iOS only disabled chat auto-follow when the user dragged during an active stream; scrolling up while idle left auto-follow armed, so the next incoming active update could pull the viewport back down.
+- Android treated being within two list items of the tail as "near bottom", so reading one or two messages above the latest still allowed incoming messages to auto-scroll.
+- iOS compact chat only exposed the New Session toolbar button when a thread was selected; project-empty detail screens had no direct way to start the worktree session path.
+- Android's primary New Session plus opened a choice dialog instead of performing the default new-worktree action; the dropdown still exposes both locations.
+
+---
+
 # Mission: Ship Chat Audit Fix To TestFlight
 
 **Mission statement:** Commit the chat-screen performance/scroll fixes, build from up-to-date `master`, upload the next TestFlight build, and distribute it to internal and external testers.

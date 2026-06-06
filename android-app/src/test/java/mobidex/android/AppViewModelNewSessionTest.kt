@@ -86,6 +86,26 @@ class AppViewModelNewSessionTest {
     }
 
     @Test
+    fun startNewSessionDefaultsToWorktreeAndStartsThreadThere() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app")
+        val server = server(project)
+        val transport = ScriptedAppServerTransport()
+        val ssh = FakeSshService(transport)
+        val model = viewModel(server, ssh)
+        advanceUntilIdle()
+
+        var completed = false
+        model.startNewSession { completed = it }
+        waitUntil { completed }
+
+        assertTrue(completed, "state=${model.state.value}, methods=${transport.sentMethods}")
+        assertEquals(listOf("/srv/app"), ssh.createdWorktreeProjectPaths)
+        assertEquals(listOf<String?>("/srv/app-worktree"), transport.startThreadCwds)
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+        assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)
+    }
+
+    @Test
     fun selectingCurrentProjectShowsSessionListWithoutOpeningCachedThread() = runTest(dispatcher) {
         val project = ProjectRecord(path = "/srv/app")
         val server = server(project)
@@ -256,6 +276,7 @@ private class FakeSshService(
     private val openFailure: Throwable? = null,
 ) : MobidexSshService {
     var openAppServerCount = 0
+    val createdWorktreeProjectPaths = mutableListOf<String>()
 
     override suspend fun testConnection(server: ServerRecord, credential: SSHCredential) = Unit
     override suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject> = emptyList()
@@ -265,7 +286,10 @@ private class FakeSshService(
         error("Directory creation is not used by these tests.")
     override suspend fun ensureDirectory(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =
         error("Directory creation is not used by these tests.")
-    override suspend fun createCodexWorktree(projectPath: String, server: ServerRecord, credential: SSHCredential): String = "$projectPath-worktree"
+    override suspend fun createCodexWorktree(projectPath: String, server: ServerRecord, credential: SSHCredential): String {
+        createdWorktreeProjectPaths += projectPath
+        return "$projectPath-worktree"
+    }
     override suspend fun stageLocalFiles(localPaths: List<String>, server: ServerRecord, credential: SSHCredential): List<String> = emptyList()
     override suspend fun openAppServer(server: ServerRecord, credential: SSHCredential): CodexAppServerClient {
         openAppServerCount += 1
@@ -285,6 +309,7 @@ private class ScriptedAppServerTransport(
     private val inbound = Channel<String>(Channel.UNLIMITED)
     private val observedMethods = mutableMapOf<String, CompletableDeferred<Unit>>()
     val sentMethods = mutableListOf<String>()
+    val startThreadCwds = mutableListOf<String?>()
 
     override val inboundLines: Flow<String> = inbound.receiveAsFlow()
 
@@ -297,7 +322,9 @@ private class ScriptedAppServerTransport(
         when (method) {
             "thread/start" -> {
                 startThreadGate?.await()
-                respond(id, buildJsonObject { put("thread", threadJson("thread-new", "/srv/app")) })
+                val cwd = request["params"]?.jsonObject?.get("cwd")?.jsonPrimitive?.contentOrNull
+                startThreadCwds += cwd
+                respond(id, buildJsonObject { put("thread", threadJson("thread-new", cwd ?: "/srv/app")) })
             }
             "thread/list" -> respond(id, buildJsonObject { put("data", JsonArray(listOf(threadJson("thread-new", "/srv/app")))) })
             "thread/resume", "thread/read" -> {

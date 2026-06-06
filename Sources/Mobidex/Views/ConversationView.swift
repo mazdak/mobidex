@@ -77,7 +77,7 @@ struct ConversationView: View {
         .navigationTitle(model.selectedThread?.title ?? model.selectedProject?.displayName ?? "Conversation")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if horizontalSizeClass == .compact, model.selectedThread != nil, model.selectedProject != nil {
+            if horizontalSizeClass == .compact, model.selectedProject != nil {
                 ToolbarItem(placement: .topBarTrailing) {
                     conversationNewSessionButton
                 }
@@ -302,7 +302,7 @@ struct ConversationView: View {
                     case .tracking, .interacting:
                         programmaticBottomScrollSettling = false
                         userIsDraggingTimeline = true
-                        if isStreaming {
+                        if !isTimelineNearBottom {
                             autoFollowStreaming = false
                         }
                     case .decelerating:
@@ -505,7 +505,7 @@ struct ConversationView: View {
         }
         if nextIsNearBottom {
             autoFollowStreaming = true
-        } else if isStreaming && userIsDraggingTimeline {
+        } else if userIsDraggingTimeline {
             autoFollowStreaming = false
         }
     }
