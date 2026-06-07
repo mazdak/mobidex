@@ -70,10 +70,10 @@ if [[ -z "$SMOKE_MODE" ]]; then
 fi
 
 case "$SMOKE_MODE" in
-  turn | connection | control | approval | seed)
+  turn | connection | control | approval | seed | terminal)
     ;;
   *)
-    echo "Unsupported MOBIDEX_SMOKE_MODE: $SMOKE_MODE. Use turn, connection, control, approval, or seed." >&2
+    echo "Unsupported MOBIDEX_SMOKE_MODE: $SMOKE_MODE. Use turn, connection, control, approval, seed, or terminal." >&2
     exit 1
     ;;
 esac
@@ -120,6 +120,10 @@ SDK=iphonesimulator CONFIGURATION=Debug "$ROOT_DIR/Scripts/verify-ios-build.sh" 
 
 if [[ ! -d "$APP_PATH" ]]; then
   echo "App bundle not found: $APP_PATH" >&2
+  exit 1
+fi
+if [[ ! -f "$APP_PATH/index-ios.html" ]]; then
+  echo "Terminal iOS web entry is missing from the app bundle: $APP_PATH/index-ios.html" >&2
   exit 1
 fi
 
@@ -179,6 +183,7 @@ SSHD_CONFIG="$WORK_DIR/sshd_config"
 PASSWORD_SERVER="$WORK_DIR/password_ssh_server.py"
 FAKE_CODEX_SERVER="$WORK_DIR/fake_codex_app_server.py"
 SMOKE_CWD="$WORK_DIR/project"
+SMOKE_SERVER_ID="${MOBIDEX_SMOKE_SERVER_ID:-$(uuidgen)}"
 if [[ -n "${MOBIDEX_SMOKE_CODEX_HOME:-}" ]]; then
   SMOKE_CODEX_HOME="$MOBIDEX_SMOKE_CODEX_HOME"
   SMOKE_CODEX_HOME_OWNED=0
@@ -882,10 +887,8 @@ launch_env=(
   "SIMCTL_CHILD_MOBIDEX_SMOKE_EXECUTION_PATH=$EXECUTION_PATH"
   "SIMCTL_CHILD_MOBIDEX_SMOKE_EXPECTED_TEXT=$EXPECTED_TEXT"
   "SIMCTL_CHILD_MOBIDEX_SMOKE_TIMEOUT=$TIMEOUT"
+  "SIMCTL_CHILD_MOBIDEX_SMOKE_SERVER_ID=$SMOKE_SERVER_ID"
 )
-if [[ -n "${MOBIDEX_SMOKE_SERVER_ID:-}" ]]; then
-  launch_env+=("SIMCTL_CHILD_MOBIDEX_SMOKE_SERVER_ID=$MOBIDEX_SMOKE_SERVER_ID")
-fi
 if [[ "$SMOKE_MODE" == "approval" || "$SMOKE_MODE" == "control" ]]; then
   launch_env+=("SIMCTL_CHILD_MOBIDEX_SMOKE_PROMOTE_DETAIL=1")
 fi

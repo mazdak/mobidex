@@ -94,6 +94,62 @@ enum MobidexLaunchSmoke {
                 return
             }
 
+            if config.mode == "terminal" {
+                let expectedText = config.expectedText ?? "mobidex-terminal-smoke"
+                currentStage = "opening-terminal"
+                try writeResult(.running(stage: "opening-terminal", message: nil))
+                let terminal = try await model.openTerminalSession(columns: 80, rows: 24)
+                let capture = TerminalSmokeCapture()
+                let reader = Task {
+                    do {
+                        for try await data in terminal.output {
+                            await capture.append(data)
+                        }
+                    } catch {
+                        await capture.fail(error)
+                    }
+                }
+                defer {
+                    reader.cancel()
+                    Task { await terminal.close() }
+                }
+
+                currentStage = "writing-terminal-command"
+                try writeResult(.running(stage: "writing-terminal-command", message: nil))
+                try await terminal.write(Data("printf '%s\\r\\n' \(expectedText.shellQuotedForSmokeCommand())\r".utf8))
+
+                currentStage = "waiting-for-terminal-output"
+                try writeResult(.running(stage: "waiting-for-terminal-output", message: nil))
+                let deadline = Date().addingTimeInterval(config.timeout)
+                var foundOutput = false
+                while Date() < deadline {
+                    if let error = await capture.errorMessage {
+                        throw SmokeError.failed("Terminal output stream failed: \(error)")
+                    }
+                    if await capture.contains(expectedText) {
+                        foundOutput = true
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                guard foundOutput else {
+                    let preview = await capture.preview()
+                    throw SmokeError.failed("Timed out waiting for terminal output. Captured: \(preview)")
+                }
+
+                try writeResult(.success(
+                    message: "In-app SSH terminal smoke succeeded.",
+                    mode: config.mode,
+                    authMethod: config.authMethod.rawValue,
+                    sessionCount: model.threads.count,
+                    conversationSectionCount: model.conversationSections.count,
+                    assistantSectionCount: model.conversationSections.filter { $0.kind == .assistant }.count,
+                    expectedTextFound: true,
+                    selectedThreadLoaded: model.selectedThread != nil
+                ))
+                return
+            }
+
             currentStage = "connecting"
             try writeResult(.running(stage: "connecting", message: nil))
             await model.connectSelectedServer()
@@ -414,8 +470,8 @@ private struct SmokeConfig {
         }
 
         let parsedMode = environment["MOBIDEX_SMOKE_MODE"]?.nonEmpty ?? (parsedAuthMethod == .password ? "connection" : "turn")
-        guard parsedMode == "turn" || parsedMode == "connection" || parsedMode == "control" || parsedMode == "approval" || parsedMode == "seed" || parsedMode == "new-session" || parsedMode == "join" || parsedMode == "browse-directories" || parsedMode == "add-discovered-project" else {
-            throw SmokeError.failed("Unsupported MOBIDEX_SMOKE_MODE. Use turn, connection, control, approval, seed, new-session, join, browse-directories, or add-discovered-project.")
+        guard parsedMode == "turn" || parsedMode == "connection" || parsedMode == "control" || parsedMode == "approval" || parsedMode == "seed" || parsedMode == "new-session" || parsedMode == "join" || parsedMode == "browse-directories" || parsedMode == "add-discovered-project" || parsedMode == "terminal" else {
+            throw SmokeError.failed("Unsupported MOBIDEX_SMOKE_MODE. Use turn, connection, control, approval, seed, terminal, new-session, join, browse-directories, or add-discovered-project.")
         }
         let parsedNewSessionLocation: NewSessionLocation
         switch environment["MOBIDEX_SMOKE_NEW_SESSION_LOCATION"]?.nonEmpty ?? "project-directory" {
@@ -551,6 +607,34 @@ private struct SmokeResult: Encodable {
     }
 }
 
+private actor TerminalSmokeCapture {
+    private(set) var errorMessage: String?
+    private var output = ""
+
+    func append(_ data: Data) {
+        output.append(String(decoding: data, as: UTF8.self))
+        if output.count > 8_000 {
+            output = String(output.suffix(8_000))
+        }
+    }
+
+    func fail(_ error: Error) {
+        errorMessage = error.localizedDescription
+    }
+
+    func contains(_ text: String) -> Bool {
+        output.contains(text)
+    }
+
+    func preview() -> String {
+        output
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .suffix(1_000)
+            .description
+    }
+}
+
 private enum SmokeError: LocalizedError {
     case failed(String)
 
@@ -564,5 +648,9 @@ private enum SmokeError: LocalizedError {
 private extension String {
     var nonEmpty: String? {
         isEmpty ? nil : self
+    }
+
+    func shellQuotedForSmokeCommand() -> String {
+        "'\(replacingOccurrences(of: "'", with: "'\"'\"'"))'"
     }
 }

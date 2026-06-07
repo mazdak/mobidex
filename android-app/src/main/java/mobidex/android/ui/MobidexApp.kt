@@ -704,14 +704,6 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
         }
     }
 
-    fun sendThroughTerminalBridge(text: String) {
-        if (!terminalReady) {
-            send(text)
-            return
-        }
-        evaluateTerminal("window.mobidexTerminal?.send(${JSONObject.quote(text)})")
-    }
-
     LaunchedEffect(state.selectedServer?.id, state.selectedProject?.id, state.selectedThreadID) {
         pendingOutput.clear()
         terminalStatus = TerminalStatus.Opening
@@ -835,9 +827,9 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            OutlinedButton(onClick = { sendThroughTerminalBridge("\u0003") }, enabled = terminal != null) { Text("Ctrl-C") }
-            OutlinedButton(onClick = { sendThroughTerminalBridge("\u001B") }, enabled = terminal != null) { Text("Esc") }
-            OutlinedButton(onClick = { sendThroughTerminalBridge("\t") }, enabled = terminal != null) { Text("Tab") }
+            OutlinedButton(onClick = { send("\u0003") }, enabled = terminal != null) { Text("Ctrl-C") }
+            OutlinedButton(onClick = { send("\u001B") }, enabled = terminal != null) { Text("Esc") }
+            OutlinedButton(onClick = { send("\t") }, enabled = terminal != null) { Text("Tab") }
             OutlinedButton(onClick = { evaluateTerminal("window.mobidexTerminal?.clear()") }) { Text("Clear") }
         }
         Row(
@@ -861,7 +853,7 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
                     if (input.isEmpty()) return@Button
                     val submitted = input
                     input = ""
-                    sendThroughTerminalBridge("$submitted\n")
+                    send("$submitted\r")
                 },
                 enabled = input.isNotEmpty() && terminal != null,
             ) {

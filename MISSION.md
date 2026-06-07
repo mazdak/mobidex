@@ -1,3 +1,35 @@
+# Mission: Ship Terminal Feedback Fix To TestFlight
+
+**Mission statement:** Upload the current `master` terminal feedback fix to internal and external TestFlight.
+
+**Done criteria:**
+- `master` is clean, pushed, and pulled from `origin/master` before the build.
+- Distribution preflight passes.
+- Internal TestFlight workflow uploads the next build and adds it to `Internal Testers`.
+- External TestFlight workflow submits the same build to `External Testers`.
+- Release records capture the build number, build ID, run records, and status.
+
+**Guardrails / Constraints:**
+- Build only from up-to-date `master`.
+- Use the existing `.asc` workflows.
+- Restore normal keychain state after temporary signing setup.
+
+**Critical learnings:**
+- Release commit is `0a305a1` (`fix(terminal): show connection state before shell output`).
+- `origin/master` was pulled with `--ff-only --autostash`; remote was already up to date.
+- Distribution preflight passed before the archive.
+- Internal TestFlight build `1.0 (41)` uploaded successfully with BUILD_ID `116d13c1-978a-409a-b72e-df595ee79109`.
+- External TestFlight submission to `External Testers` completed for the same build.
+- Temporary signing keychain setup was required for non-interactive archive signing and was removed after the workflows completed.
+- Build `1.0 (41)` is insufficient: it adds visible status but does not change terminal input delivery.
+- `MOBIDEX_SMOKE_MODE=terminal` now uses an isolated server id per run so repeated disposable SSH servers do not trip real host-key pinning.
+- `MOBIDEX_SMOKE_MODE=terminal` passed against the disposable SSH server after the direct-write fix, proving the app-level PTY open/write/read service path works.
+- The concrete iOS black-screen root cause is the terminal WebView asset lookup: `TerminalView` looked for `TerminalWeb/index-ios.html`, but Xcode copies the terminal resources flat into `Mobidex.app/index-ios.html`; the built app has no `TerminalWeb/` directory, so the WebView never booted.
+- Native buttons/text field also routed native -> JavaScript -> native before writing to the PTY; build `1.0 (41)` never changed that path. Direct PTY writes remove that fragile loop.
+- After the asset-loader correction, `MOBIDEX_SMOKE_MODE=terminal`, Android `:android-app:compileDebugKotlin`, and whitespace checks passed.
+
+---
+
 # Mission: Restore Terminal Screen Feedback
 
 **Mission statement:** Fix the terminal screen so opening it visibly shows connection/progress state and an interactive prompt/cursor instead of a silent black screen.

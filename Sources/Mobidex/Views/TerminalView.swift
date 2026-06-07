@@ -93,7 +93,7 @@ struct TerminalView: View {
 
     private func terminalControl(_ title: String, text: String) -> some View {
         Button(title) {
-            sendThroughTerminalBridge(text)
+            send(Data(text.utf8))
         }
         .buttonStyle(.bordered)
         .disabled(terminal == nil)
@@ -131,15 +131,7 @@ struct TerminalView: View {
         guard !input.isEmpty else { return }
         let line = input
         input = ""
-        sendThroughTerminalBridge("\(line)\n")
-    }
-
-    private func sendThroughTerminalBridge(_ text: String) {
-        guard terminalReady else {
-            send(Data(text.utf8))
-            return
-        }
-        evaluateTerminalJavaScript("window.mobidexTerminal?.send(\(text.javaScriptStringLiteral()))")
+        send(Data("\(line)\r".utf8))
     }
 
     private func send(_ data: Data) {
@@ -269,7 +261,7 @@ private struct TerminalWebView: UIViewRepresentable {
         webView.scrollView.backgroundColor = .black
         webView.scrollView.keyboardDismissMode = .interactive
 
-        if let html = Bundle.main.url(forResource: "index-ios", withExtension: "html", subdirectory: "TerminalWeb") {
+        if let html = Bundle.main.url(forResource: "index-ios", withExtension: "html") {
             webView.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
         } else {
             onError("Terminal web assets are missing from the app bundle.")
