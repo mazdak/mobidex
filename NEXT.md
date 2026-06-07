@@ -35,6 +35,22 @@
 - [x] T5. Publish the uploaded build to external TestFlight testers.
 - [x] T6. Record version/build/build ID and final release status.
 
+## asc TestFlight submissions (internal + external build 41) — 2026-06-07
+
+- Executed from `master` at `0a305a1` after `origin/master` was pulled and `master` was confirmed up to date.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 41.
+  - BUILD_ID: `116d13c1-978a-409a-b72e-df595ee79109`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-41.ipa` (17,850,731 bytes).
+  - Run record: `.asc/runs/testflight-20260607T122534Z-df442369.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+  - Signing note: archive/export used the repo-generated iOS distribution certificate/key in a temporary unlocked keychain for non-interactive `codesign`; the login keychain was restored afterward.
+- External workflow: `asc workflow run testflight_external BUILD_ID:116d13c1-978a-409a-b72e-df595ee79109 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+  - Run record: `.asc/runs/testflight_external-20260607T122903Z-c47ab8f1.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+- Public TestFlight link remains `https://testflight.apple.com/join/zmqueV6P`.
+- Validation note: `Scripts/verify-ios-distribution-config.sh` passed, Android `:android-app:compileDebugKotlin` passed, the iOS simulator build passed, and the Release archive/export/upload completed successfully. Build 41 improved status visibility but did not resolve the terminal WebView/input failure.
+
 ## asc TestFlight submissions (internal + external build 40) — 2026-06-06
 
 - Executed from `master` at `1a6beb7` after `origin/master` was pulled and `master` was confirmed up to date.
