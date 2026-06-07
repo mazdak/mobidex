@@ -8,33 +8,42 @@ struct TerminalView: View {
     @State private var terminal: RemoteTerminalSession?
     @State private var webView: WKWebView?
     @State private var terminalReady = false
-    @State private var pendingOutput: [String] = ["Opening terminal...\n".base64EncodedForJavaScript()]
+    @State private var pendingOutput: [String] = []
+    @State private var terminalStatus: TerminalStatus? = .opening
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                TerminalWebView(
-                    onReady: {
-                        terminalReady = true
-                        flushPendingOutput()
-                    },
-                    onInput: { data in
-                        send(Data(data.utf8))
-                    },
-                    onResize: { columns, rows in
-                        resize(columns: columns, rows: rows)
-                    },
-                    onError: { message in
-                        appendSystemLine(message)
-                    },
-                    onWebViewReady: { view in
-                        webView = view
-                        if terminalReady {
+                ZStack(alignment: .topLeading) {
+                    TerminalWebView(
+                        onReady: {
+                            terminalReady = true
                             flushPendingOutput()
+                        },
+                        onInput: { data in
+                            send(Data(data.utf8))
+                        },
+                        onResize: { columns, rows in
+                            resize(columns: columns, rows: rows)
+                        },
+                        onError: { message in
+                            showTerminalError(message)
+                        },
+                        onWebViewReady: { view in
+                            webView = view
+                            if terminalReady {
+                                flushPendingOutput()
+                            }
                         }
+                    )
+                    .background(Color.black)
+
+                    if let terminalStatus {
+                        TerminalStatusBadge(status: terminalStatus)
+                            .padding(12)
+                            .transition(.opacity)
                     }
-                )
-                .background(Color.black)
+                }
 
                 VStack(spacing: 8) {
                     HStack(spacing: 8) {
@@ -91,9 +100,11 @@ struct TerminalView: View {
     }
 
     private func openTerminal() async {
+        terminalStatus = .opening
         do {
             let session = try await model.openTerminalSession(columns: 80, rows: 24)
             terminal = session
+            terminalStatus = .connectedWaiting
             defer {
                 terminal = nil
                 Task { await session.close() }
@@ -101,15 +112,18 @@ struct TerminalView: View {
             clearOpeningLine()
             do {
                 for try await data in session.output {
+                    if terminalStatus == .connectedWaiting {
+                        terminalStatus = nil
+                    }
                     writeToTerminal(data.base64EncodedString())
                 }
             } catch {
                 guard !Task.isCancelled else { return }
-                appendSystemLine(error.localizedDescription)
+                showTerminalError(error.localizedDescription)
             }
         } catch {
             guard !Task.isCancelled else { return }
-            appendSystemLine(error.localizedDescription)
+            showTerminalError(error.localizedDescription)
         }
     }
 
@@ -157,6 +171,11 @@ struct TerminalView: View {
         writeToTerminal("\n\(line)\n".data(using: .utf8)?.base64EncodedString() ?? "")
     }
 
+    private func showTerminalError(_ message: String) {
+        terminalStatus = .failed(message)
+        appendSystemLine(message)
+    }
+
     private func writeToTerminal(_ base64: String) {
         guard terminalReady else {
             pendingOutput.append(base64)
@@ -177,6 +196,52 @@ struct TerminalView: View {
 
     private func evaluateTerminalJavaScript(_ script: String) {
         webView?.evaluateJavaScript(script)
+    }
+}
+
+private enum TerminalStatus: Equatable {
+    case opening
+    case connectedWaiting
+    case failed(String)
+
+    var title: String {
+        switch self {
+        case .opening:
+            "Opening terminal"
+        case .connectedWaiting:
+            "Connected"
+        case .failed:
+            "Terminal failed"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .opening:
+            "Connecting to the selected server..."
+        case .connectedWaiting:
+            "Waiting for shell output. Press Enter if the prompt is quiet."
+        case .failed(let message):
+            message
+        }
+    }
+}
+
+private struct TerminalStatusBadge: View {
+    let status: TerminalStatus
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(status.title)
+                .font(.system(.caption, design: .monospaced).weight(.semibold))
+            Text(status.detail)
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 

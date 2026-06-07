@@ -1,3 +1,27 @@
+# Mission: Restore Terminal Screen Feedback
+
+**Mission statement:** Fix the terminal screen so opening it visibly shows connection/progress state and an interactive prompt/cursor instead of a silent black screen.
+
+**Done criteria:**
+- Terminal open path exposes clear connection status before the PTY produces output.
+- A connected terminal visibly shows that it is connected and ready even if the remote shell has not printed a prompt yet.
+- Failed or stalled terminal opens surface a user-visible error instead of leaving a blank black view.
+- iOS and Android terminal paths are checked for the same failure mode.
+- Focused review and validation run before landing.
+
+**Guardrails / Constraints:**
+- Work from up-to-date `master`.
+- Keep terminal UX simple and explicit; do not fake command output as a shell prompt.
+- Do not touch unrelated chat/session behavior.
+
+**Critical learnings:**
+- `origin/master` was pulled with `--ff-only`; remote was already up to date.
+- Both iOS and Android cleared the only visible "Opening terminal" feedback as soon as the PTY session object opened, before any shell bytes arrived.
+- Fix keeps terminal status in native UI: opening, connected/waiting for shell output, and error; connected status clears on the first real output chunk.
+- The fix does not write fake shell prompts or connection text into the remote terminal stream.
+
+---
+
 # Mission: Ship Retained Chat Display Fix To TestFlight
 
 **Mission statement:** Upload the current `master` retained chat display fix to internal and external TestFlight.

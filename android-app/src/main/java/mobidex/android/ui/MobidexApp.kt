@@ -661,8 +661,9 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
     var input by remember { mutableStateOf("") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var terminalReady by remember { mutableStateOf(false) }
-    val pendingOutput = remember { mutableStateListOf(base64TerminalChunk("Opening terminal...\n")) }
+    val pendingOutput = remember { mutableStateListOf<String>() }
     var terminal by remember { mutableStateOf<RemoteTerminalSession?>(null) }
+    var terminalStatus by remember { mutableStateOf<TerminalStatus?>(TerminalStatus.Opening) }
 
     fun evaluateTerminal(script: String) {
         webView?.post {
@@ -680,6 +681,11 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
 
     fun appendSystemLine(line: String) {
         writeToTerminal(base64TerminalChunk("\n$line\n"))
+    }
+
+    fun showTerminalError(message: String) {
+        terminalStatus = TerminalStatus.Failed(message)
+        appendSystemLine(message)
     }
 
     fun clearOpeningLine() {
@@ -708,20 +714,24 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
 
     LaunchedEffect(state.selectedServer?.id, state.selectedProject?.id, state.selectedThreadID) {
         pendingOutput.clear()
-        pendingOutput.add(base64TerminalChunk("Opening terminal...\n"))
+        terminalStatus = TerminalStatus.Opening
         var activeSession: RemoteTerminalSession? = null
         try {
             val session = model.openTerminalSession(columns = 80, rows = 24)
             activeSession = session
             terminal = session
+            terminalStatus = TerminalStatus.ConnectedWaiting
             clearOpeningLine()
             session.output.collect { chunk ->
+                if (terminalStatus == TerminalStatus.ConnectedWaiting) {
+                    terminalStatus = null
+                }
                 writeToTerminal(base64TerminalChunk(chunk))
             }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
-            appendSystemLine(error.message ?: "Terminal failed.")
+            showTerminalError(error.message ?: "Terminal failed.")
         } finally {
             withContext(NonCancellable) {
                 activeSession?.close()
@@ -746,65 +756,77 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
             }
             TextButton(onClick = onClose) { Text("Close") }
         }
-        AndroidView(
-            factory = { context ->
-                val assetLoader = WebViewAssetLoader.Builder()
-                    .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
-                    .build()
-                WebView(context).apply {
-                    layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    setBackgroundColor(android.graphics.Color.BLACK)
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
-                            assetLoader.shouldInterceptRequest(request.url)
-                    }
-                    settings.javaScriptEnabled = true
-                    settings.allowFileAccess = false
-                    settings.allowContentAccess = false
-                    addJavascriptInterface(
-                        TerminalAndroidBridge { rawMessage ->
-                            post {
-                                val message = runCatching { JSONObject(rawMessage) }.getOrNull() ?: return@post
-                                when (message.optString("type")) {
-                                    "ready" -> {
-                                        terminalReady = true
-                                        val queued = pendingOutput.toList()
-                                        pendingOutput.clear()
-                                        queued.forEach { writeToTerminal(it) }
-                                        evaluateTerminal("window.mobidexTerminal?.focus()")
-                                    }
-                                    "input" -> send(message.optString("data"))
-                                    "resize" -> {
-                                        val columns = message.optInt("cols").takeIf { it > 0 } ?: return@post
-                                        val rows = message.optInt("rows").takeIf { it > 0 } ?: return@post
-                                        val session = terminal ?: return@post
-                                        scope.launch {
-                                            runCatching { session.resize(columns, rows) }
-                                        }
-                                    }
-                                    "error" -> appendSystemLine(message.optString("message", "Terminal failed."))
-                                }
-                            }
-                        },
-                        "MobidexAndroid",
-                    )
-                    webView = this
-                    loadUrl("https://appassets.androidplatform.net/assets/terminal/index.html")
-                }
-            },
-            update = { webView = it },
-            onRelease = { released ->
-                if (webView === released) {
-                    webView = null
-                }
-                released.removeJavascriptInterface("MobidexAndroid")
-                released.stopLoading()
-                released.destroy()
-            },
+        Box(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-        )
+        ) {
+            AndroidView(
+                factory = { context ->
+                    val assetLoader = WebViewAssetLoader.Builder()
+                        .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
+                        .build()
+                    WebView(context).apply {
+                        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                        setBackgroundColor(android.graphics.Color.BLACK)
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
+                                assetLoader.shouldInterceptRequest(request.url)
+                        }
+                        settings.javaScriptEnabled = true
+                        settings.allowFileAccess = false
+                        settings.allowContentAccess = false
+                        addJavascriptInterface(
+                            TerminalAndroidBridge { rawMessage ->
+                                post {
+                                    val message = runCatching { JSONObject(rawMessage) }.getOrNull() ?: return@post
+                                    when (message.optString("type")) {
+                                        "ready" -> {
+                                            terminalReady = true
+                                            val queued = pendingOutput.toList()
+                                            pendingOutput.clear()
+                                            queued.forEach { writeToTerminal(it) }
+                                            evaluateTerminal("window.mobidexTerminal?.focus()")
+                                        }
+                                        "input" -> send(message.optString("data"))
+                                        "resize" -> {
+                                            val columns = message.optInt("cols").takeIf { it > 0 } ?: return@post
+                                            val rows = message.optInt("rows").takeIf { it > 0 } ?: return@post
+                                            val session = terminal ?: return@post
+                                            scope.launch {
+                                                runCatching { session.resize(columns, rows) }
+                                            }
+                                        }
+                                        "error" -> showTerminalError(message.optString("message", "Terminal failed."))
+                                    }
+                                }
+                            },
+                            "MobidexAndroid",
+                        )
+                        webView = this
+                        loadUrl("https://appassets.androidplatform.net/assets/terminal/index.html")
+                    }
+                },
+                update = { webView = it },
+                onRelease = { released ->
+                    if (webView === released) {
+                        webView = null
+                    }
+                    released.removeJavascriptInterface("MobidexAndroid")
+                    released.stopLoading()
+                    released.destroy()
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            terminalStatus?.let { status ->
+                TerminalStatusBadge(
+                    status = status,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(12.dp),
+                )
+            }
+        }
         FlowRow(
             Modifier
                 .fillMaxWidth()
@@ -858,6 +880,41 @@ private class TerminalAndroidBridge(private val onMessage: (String) -> Unit) {
 
 private fun base64TerminalChunk(text: String): String =
     Base64.encodeToString(text.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+
+private sealed interface TerminalStatus {
+    val title: String
+    val detail: String
+
+    data object Opening : TerminalStatus {
+        override val title: String = "Opening terminal"
+        override val detail: String = "Connecting to the selected server..."
+    }
+
+    data object ConnectedWaiting : TerminalStatus {
+        override val title: String = "Connected"
+        override val detail: String = "Waiting for shell output. Press Enter if the prompt is quiet."
+    }
+
+    data class Failed(private val message: String) : TerminalStatus {
+        override val title: String = "Terminal failed"
+        override val detail: String = message
+    }
+}
+
+@Composable
+private fun TerminalStatusBadge(status: TerminalStatus, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        tonalElevation = 6.dp,
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(status.title, style = MaterialTheme.typography.labelMedium, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
+            Text(status.detail, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 @Composable
 private fun ProjectList(
