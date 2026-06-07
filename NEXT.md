@@ -35,7 +35,23 @@
 - [x] T5. Publish the uploaded build to external TestFlight testers.
 - [x] T6. Record version/build/build ID and final release status.
 
-## asc TestFlight submissions (internal + external build 41) — 2026-06-07
+## asc TestFlight submissions (internal + external build 42) - 2026-06-07
+
+- Executed from `master` at `44fa349` after `origin/master` was pulled and `master` was confirmed up to date.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 42.
+  - BUILD_ID: `9b6a6eec-d785-4dfc-8c5d-2d57846c42ff`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-42.ipa` (17,857,922 bytes).
+  - Run record: `.asc/runs/testflight-20260607T124634Z-1497cd79.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+  - Signing note: archive/export used the repo-generated iOS distribution certificate/key in a temporary unlocked keychain for non-interactive `codesign`; the login keychain was restored afterward.
+- External workflow: `asc workflow run testflight_external BUILD_ID:9b6a6eec-d785-4dfc-8c5d-2d57846c42ff EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+  - Run record: `.asc/runs/testflight_external-20260607T124937Z-4e8679a0.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+- Public TestFlight link remains `https://testflight.apple.com/join/zmqueV6P`.
+- Validation note: `Scripts/verify-ios-distribution-config.sh` passed, `MOBIDEX_SMOKE_MODE=terminal` passed with the iOS web entry bundle assertion, Android `:android-app:compileDebugKotlin` passed, whitespace checks passed, and the Release archive/export/upload completed successfully. Root cause fixed: iOS loaded terminal HTML from a nonexistent `TerminalWeb/` bundle subdirectory while Xcode copied the files flat at the app bundle root.
+
+## asc TestFlight submissions (internal + external build 41) - 2026-06-07
 
 - Executed from `master` at `0a305a1` after `origin/master` was pulled and `master` was confirmed up to date.
 - Internal workflow: `asc workflow run testflight VERSION:1.0`

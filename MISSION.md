@@ -22,6 +22,9 @@
 - External TestFlight submission to `External Testers` completed for the same build.
 - Temporary signing keychain setup was required for non-interactive archive signing and was removed after the workflows completed.
 - Build `1.0 (41)` is insufficient: it adds visible status but does not change terminal input delivery.
+- Actual terminal fix release commit is `44fa349` (`fix(terminal): restore ios web terminal input`).
+- Internal TestFlight build `1.0 (42)` uploaded successfully with BUILD_ID `9b6a6eec-d785-4dfc-8c5d-2d57846c42ff`.
+- External TestFlight submission to `External Testers` completed for build `1.0 (42)`.
 - `MOBIDEX_SMOKE_MODE=terminal` now uses an isolated server id per run so repeated disposable SSH servers do not trip real host-key pinning.
 - `MOBIDEX_SMOKE_MODE=terminal` passed against the disposable SSH server after the direct-write fix, proving the app-level PTY open/write/read service path works.
 - The concrete iOS black-screen root cause is the terminal WebView asset lookup: `TerminalView` looked for `TerminalWeb/index-ios.html`, but Xcode copies the terminal resources flat into `Mobidex.app/index-ios.html`; the built app has no `TerminalWeb/` directory, so the WebView never booted.
