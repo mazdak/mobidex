@@ -1174,12 +1174,14 @@ class AppViewModel(
     }
 
     private fun cacheThreads(cacheKey: ThreadScopeCacheKey, threads: List<CodexThread>) {
+        // Remove-then-put keeps LinkedHashMap iteration order == write recency for eviction.
+        threadListCache.remove(cacheKey)
         threadListCache[cacheKey] = CachedThreadList(
             threads = threads,
             selectedThreadID = _state.value.selectedThreadID,
             fetchedAtEpochSeconds = Instant.now().epochSecond,
         )
-        threadListCache.evictOldestBeyond(MAX_CACHED_THREAD_LISTS) { it.fetchedAtEpochSeconds }
+        threadListCache.evictOldestBeyond(MAX_CACHED_THREAD_LISTS, protect = cacheKey)
     }
 
     private fun sortedThreadsPreservingSelectedThread(
@@ -1219,14 +1221,17 @@ class AppViewModel(
     }
 
     private fun cacheThreadDetail(serverID: String?, thread: CodexThread) {
-        threadDetailCache[ThreadDetailCacheKey(serverID, thread.id)] = CachedThreadDetail(
+        val key = ThreadDetailCacheKey(serverID, thread.id)
+        // Each entry retains a full conversation; without a cap a day of browsing sessions
+        // accumulates tens-to-hundreds of MB (audit D2). Remove-then-put keeps iteration
+        // order == write recency; streaming flushes rewrite the selected session's entry
+        // continuously, so it always stays newest.
+        threadDetailCache.remove(key)
+        threadDetailCache[key] = CachedThreadDetail(
             thread = thread,
             fetchedAtEpochSeconds = Instant.now().epochSecond,
         )
-        // Each entry retains a full conversation; without a cap a day of browsing sessions
-        // accumulates tens-to-hundreds of MB (audit D2). Write-recency keeps the selected
-        // session fresh because streaming flushes rewrite its entry continuously.
-        threadDetailCache.evictOldestBeyond(MAX_CACHED_THREAD_DETAILS) { it.fetchedAtEpochSeconds }
+        threadDetailCache.evictOldestBeyond(MAX_CACHED_THREAD_DETAILS, protect = key)
     }
 
     private fun cacheCurrentSelectedThreadDetail() {
@@ -3144,11 +3149,15 @@ private const val STREAMED_SECTIONS_FLUSH_WINDOW_MILLIS = 50L
 private const val MAX_CACHED_THREAD_DETAILS = 8 // mirrors the iOS detail-cache cap
 private const val MAX_CACHED_THREAD_LISTS = 16
 
-/** Evicts oldest entries (by [ageOf], ascending) until the map is within [cap]. */
-internal fun <K, V> MutableMap<K, V>.evictOldestBeyond(cap: Int, ageOf: (V) -> Long) {
+/**
+ * Evicts in iteration order until the map is within [cap], never evicting [protect].
+ * Callers re-insert keys on write (remove-then-put), making a LinkedHashMap-backed
+ * mutableMapOf's iteration order equal write recency — deterministic, no timestamp ties.
+ */
+internal fun <K, V> MutableMap<K, V>.evictOldestBeyond(cap: Int, protect: K) {
     while (size > cap) {
-        val oldest = entries.minByOrNull { ageOf(it.value) } ?: return
-        remove(oldest.key)
+        val oldest = keys.firstOrNull { it != protect } ?: return
+        remove(oldest)
     }
 }
 private const val REMOTE_DIRECTORY_BROWSE_TIMEOUT_MILLIS = 20_000L

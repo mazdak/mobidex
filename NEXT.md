@@ -9,7 +9,9 @@
 - [ ] I5. iOS debug-path teardown: closeConnection tears down debugAcpClient/collector; events stream drained/bounded; debug items coalesced via the accumulator path.
 - [ ] I6. Android D2: LRU-cap thread detail/list caches (full CodexThreads retained forever today).
 - [ ] I7. Android debug-path teardown (disconnectInternal closes debug holders; _debugAcpItems coalesced); terminal pendingOutput bounded; WS upgrade header read without per-byte full-buffer copies.
-- [ ] I8. Codex review passes + triage; full validation; merge + push.
+- [x] I8. Two codex passes: default `codex review --base master` found no regressions (re-ran shared tests + iOS build itself); targeted `codex exec` pass found 1 Medium (AttachmentThumbnail could show a stale image after path reuse — fixed with path-tagged state) and 1 Low (timestamp-tie eviction ambiguity — fixed with remove-then-put insertion-order recency + protected key), and verified the other 7 areas clean (incl. Citadel offset-write semantics, tmp deletion timing vs queued sends, WS cap allocation ordering). All fixed; shared/Android/iOS validation green; simulator at the documented 27-error AppViewModelTests baseline (0 elsewhere). Note: the first implementation attempt via two background agents died silently to user-message interruptions with zero edits — Phase 3 was then implemented directly in-session; `codex review` also commandeers MISSION.md as its own scratch tracker (restored from git afterwards). Merged + pushed.
+
+Phase 3 implementation notes: items I1–I7 all landed (WS 64MB caps + singleton id-counter removal; iOS streamed uploads w/ 1GB guard + chunked base64 fallback; thumbnail NSCache; staged-tmp cleanup on send/remove; list-cache TTL prune + 16-entry cap; debug teardown w/ events drain + coalescing; Android LRU caps 8/16; dead Android debug path deleted; bounded terminal pre-ready buffer; rolling-window upgrade-header read).
 
 ## Mission Checklist (active, 2026-06-11: whole-app memory/perf/concurrency audit)
 

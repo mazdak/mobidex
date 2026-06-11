@@ -1317,11 +1317,19 @@ private struct AttachmentThumbnail: View {
     let path: String
     let size: CGSize
 
-    @State private var thumbnail: UIImage?
+    // Path-tagged so a reused view can never show the previous path's image.
+    @State private var loadedThumbnail: (path: String, image: UIImage)?
+
+    private var displayImage: UIImage? {
+        if let loadedThumbnail, loadedThumbnail.path == path {
+            return loadedThumbnail.image
+        }
+        return AttachmentThumbnailCache.cached(path)
+    }
 
     var body: some View {
         Group {
-            if let image = thumbnail ?? AttachmentThumbnailCache.cached(path) {
+            if let image = displayImage {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -1339,8 +1347,7 @@ private struct AttachmentThumbnail: View {
         .clipped()
         .task(id: path) {
             guard AttachmentDisplay.isImagePath(path),
-                  thumbnail == nil,
-                  AttachmentThumbnailCache.cached(path) == nil,
+                  displayImage == nil,
                   FileManager.default.fileExists(atPath: path)
             else { return }
             let targetPath = path
@@ -1348,8 +1355,8 @@ private struct AttachmentThumbnail: View {
             let image = await Task.detached(priority: .userInitiated) {
                 AttachmentThumbnailCache.makeThumbnail(path: targetPath, maxPixelSize: 240)
             }.value
-            if path == targetPath {
-                thumbnail = image
+            if let image {
+                loadedThumbnail = (path: targetPath, image: image)
             }
         }
     }
