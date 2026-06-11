@@ -62,8 +62,11 @@ import mobidex.android.service.parseTokenUsage
 import mobidex.android.service.parseTurn
 import mobidex.android.service.parseTurnError
 import mobidex.android.service.string
+import mobidex.android.service.toJsonElement
 import mobidex.android.service.toSharedJsonValue
 import mobidex.android.service.turnOptions
+import mobidex.shared.AcpProtocolCore
+import mobidex.shared.appendingAcpSessionItem
 import mobidex.shared.CodexAccessMode
 import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
@@ -738,7 +741,11 @@ class AppViewModel(
                 acpClient = client
 
                 client.initialize()
+                // ACP spec requires an absolute cwd on session/new; fall back to the server's
+                // execution path when no project is selected, and fail fast when neither is set.
                 val cwd = _state.value.selectedProject?.path
+                    ?: server.executionPath.takeIf { it.isNotBlank() }
+                    ?: error("Select a project (or set the server's execution path) before connecting an ACP agent.")
                 val sid = client.createSession(cwd = cwd, title = server.displayName)
                 acpSessionId = sid
 
@@ -751,15 +758,50 @@ class AppViewModel(
                 }
 
                 acpJob = launch {
-                    client.sessionItems.collect { item ->
-                        _acpSessionItems.update { list -> list + item }
-                        // Drive the *main* conversationSections (used by ConversationSection / UI)
-                        // using the proven shared projection. Satisfies the UI translation gate.
-                        _state.update { s ->
+                    launch {
+                        client.sessionItems.collect { item ->
+                            // Coalesce streamed deltas / resolve tool cards before projecting.
+                            _acpSessionItems.update { list -> list.appendingAcpSessionItem(item) }
+                            // Drive the *main* conversationSections (used by ConversationSection / UI)
+                            // using the proven shared projection. Satisfies the UI translation gate.
+                            _state.update { s ->
+                                if (_state.value.selectedServerID == server.id) {
+                                    s.copy(conversationSections = CodexSessionProjection.sections(_acpSessionItems.value))
+                                } else {
+                                    s
+                                }
+                            }
+                        }
+                    }
+                    launch {
+                        client.serverRequests.collect { request ->
+                            if (request.method != AcpProtocolCore.PERMISSION_REQUEST_METHOD) return@collect
+                            val permission = AcpProtocolCore.parsePermissionRequest(request.params)
+                            _state.update {
+                                it.copy(
+                                    pendingApprovals = it.pendingApprovals + PendingApproval(
+                                        id = "acp-${request.id}",
+                                        requestId = request.id.toJsonElement(),
+                                        method = request.method,
+                                        params = request.params?.toJsonElement(),
+                                        title = permission.title ?: "Permission required",
+                                        detail = permission.detail ?: "",
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    launch {
+                        client.disconnects.collect { message ->
                             if (_state.value.selectedServerID == server.id) {
-                                s.copy(conversationSections = CodexSessionProjection.sections(_acpSessionItems.value))
-                            } else {
-                                s
+                                _state.update {
+                                    it.copy(
+                                        connectionState = ServerConnectionState.Failed,
+                                        pendingApprovals = emptyList(),
+                                        failureMessage = message,
+                                        statusMessage = message,
+                                    )
+                                }
                             }
                         }
                     }
@@ -1702,6 +1744,23 @@ class AppViewModel(
 
     fun interruptActiveTurn() {
         viewModelScope.launch {
+            acpClient?.let { client ->
+                val sid = acpSessionId ?: return@launch
+                runBusy("Interrupting") {
+                    client.cancel(sid)
+                    // Spec: answer in-flight permission requests with the cancelled outcome.
+                    _state.value.pendingApprovals.forEach { approval ->
+                        runCatching {
+                            client.respondToServerRequest(
+                                approval.requestId.toSharedJsonValue(),
+                                AcpProtocolCore.permissionCancelledResult(),
+                            )
+                        }
+                    }
+                    _state.update { it.copy(pendingApprovals = emptyList()) }
+                }
+                return@launch
+            }
             val state = _state.value
             val thread = state.selectedThread ?: return@launch
             val turnID = state.activeTurnID ?: return@launch
@@ -1714,10 +1773,14 @@ class AppViewModel(
     fun respond(approval: PendingApproval, accept: Boolean) {
         viewModelScope.launch {
             runBusy(if (accept) "Approving" else "Declining") {
-                if (acpClient != null) {
-                    // ACP approvals surface via AgentEvent in the sessionItems stream (mapper path).
-                    // Full respondToApproval plumbing is future; for now just clear the pending entry
-                    // so the UI list (if any) updates. The rich chat already shows the request as AgentEvent.
+                acpClient?.let { client ->
+                    // ACP permission round-trip: answer session/request_permission with the spec
+                    // outcome shape, picking the agent-advertised option that matches accept/decline.
+                    val params = approval.params?.toSharedJsonValue()
+                    val optionId = AcpProtocolCore.choosePermissionOptionId(params, accept)
+                    val result = optionId?.let { AcpProtocolCore.permissionSelectedResult(it) }
+                        ?: AcpProtocolCore.permissionCancelledResult()
+                    client.respondToServerRequest(approval.requestId.toSharedJsonValue(), result)
                     _state.update { it.copy(pendingApprovals = it.pendingApprovals.filterNot { pending -> pending.id == approval.id }) }
                     return@runBusy
                 }

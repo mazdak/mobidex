@@ -1,109 +1,156 @@
 package mobidex.android.service
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.longOrNull
+import mobidex.shared.AcpProtocolCore
 import mobidex.shared.CodexSessionItem
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Focused smoke for AcpGrokClient + the shared mapper (toCodexSessionItem / toCodexSessionItems).
- * Uses a minimal mock CodexLineTransport that replays canned ACP JSON-RPC lines.
- * Verifies that Grok/ACP chunks flow out as the *exact* existing CodexSessionItem kinds
- * the UI already renders (Reasoning for thoughts, AgentMessage, ToolCall, Plan, AgentEvent).
+ * Focused smoke for AcpGrokClient + the shared mapper against spec-shaped ACP traffic
+ * (the wire format both `grok agent stdio` and `claude-code-acp` emit).
  *
- * No real SSH or grok binary required. Exercises the critical "properly translated to right UI elements"
- * path added per explicit user request.
+ * Uses a scripted CodexLineTransport that answers requests like a spec agent:
+ * - initialize -> result with authMethods
+ * - first session/new -> auth_required (-32000), exercising the authenticate-and-retry path
+ * - second session/new -> sessionId, then streams spec `session/update` notifications and a
+ *   `session/request_permission` server request
+ *
+ * Verifies chunks flow out as the existing CodexSessionItem kinds the UI renders, that the
+ * permission request surfaces on [AcpGrokClient.serverRequests], and that answering it writes
+ * the spec outcome shape back to the transport. No real SSH or agent binary required.
  */
 class AcpGrokClientSmokeTest {
 
-    private val cannedAcpLines = listOf(
-        // initialize result (ack)
-        """{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"0.1"}}""",
-        // session/new result with sessionId
-        """{"jsonrpc":"2.0","id":2,"result":{"sessionId":"sess-smoke-001"}}""",
-        // session/update: thought chunk (should become Reasoning, collapsed)
-        """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-smoke-001","chunk":{"type":"agent_thought_chunk","delta":"Thinking about the best way to implement the feature..."}}}""",
-        // session/update: agent message
-        """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-smoke-001","chunk":{"type":"agent_message_chunk","delta":"Here is the plan for the ACP integration."}}}""",
-        // session/update: tool call
-        """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-smoke-001","chunk":{"type":"tool_call","id":"tc-1","name":"read_file","args":{"path":"src/App.kt"},"status":"running"}}}""",
-        // session/update: plan
-        """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-smoke-001","chunk":{"type":"plan","title":"ACP Sketch","content":"1. Raw transport\n2. Client + mapper\n3. Wiring"}}}""",
-        // session/update: approval request (surfaces as AgentEvent)
-        """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"sess-smoke-001","chunk":{"type":"approval_request","id":"ap-42","title":"Run command?","detail":"git status"}}}""",
-    )
-
     @Test
-    fun smoke_acpClientWithMockTransport_emitsMappedCodexSessionItems() = runBlocking {
-        val mockTransport = CannedLinesTransport(cannedAcpLines)
-        val client = AcpGrokClient(mockTransport)
+    fun smoke_specAgentRoundTrip_emitsMappedItemsAndAnswersPermission() = runBlocking {
+        val transport = ScriptedAcpAgentTransport()
+        val client = AcpGrokClient(transport)
 
-        // Drive only the parts that don't require exact response ID matching for this smoke.
-        // The inbound canned notifications (with session/update chunks) will still be classified + mapped.
         client.initialize()
+        val sid = client.createSession(cwd = "/work/project", title = "smoke")
+        assertEquals("sess-smoke-001", sid)
+        assertTrue(
+            "auth_required should trigger authenticate before the session/new retry",
+            transport.sentMethods.contains("authenticate")
+        )
 
-        // Collect the mapped items that the UI will receive (the core value of the chunk)
         val collected = mutableListOf<CodexSessionItem>()
+        val permission = async {
+            withTimeout(1_500) { awaitFirstServerRequest(client) }
+        }
         withTimeout(1_500) {
-            var seenThought = false
-            var seenMessage = false
-            var seenTool = false
-            var seenPlan = false
-            var seenApproval = false
-
             try {
                 client.sessionItems.collect { item ->
                     collected += item
-                    when (item) {
-                        is CodexSessionItem.Reasoning -> seenThought = true
-                        is CodexSessionItem.AgentMessage -> seenMessage = true
-                        is CodexSessionItem.ToolCall -> seenTool = true
-                        is CodexSessionItem.Plan -> seenPlan = true
-                        is CodexSessionItem.AgentEvent -> if (item.label.contains("approval", ignoreCase = true)) seenApproval = true
-                        else -> {}
-                    }
-                    if (seenThought && seenMessage && seenTool && seenPlan && seenApproval) {
-                        throw CancellationException("enough items for smoke")
-                    }
+                    val toolCompleted = collected.filterIsInstance<CodexSessionItem.ToolCall>().any { it.status == "completed" }
+                    val done = collected.any { it is CodexSessionItem.Reasoning } &&
+                        collected.any { it is CodexSessionItem.AgentMessage } &&
+                        collected.any { it is CodexSessionItem.Plan } &&
+                        toolCompleted
+                    if (done) throw CancellationException("enough items for smoke")
                 }
             } catch (_: CancellationException) {
                 // expected drain
             }
         }
 
+        // The permission request surfaced as a server request (not a chat item).
+        val request = permission.await()
+        assertEquals(AcpProtocolCore.PERMISSION_REQUEST_METHOD, request.method)
+        val optionId = AcpProtocolCore.choosePermissionOptionId(request.params, accept = true)
+        assertEquals("allow", optionId)
+        client.respondToServerRequest(request.id, AcpProtocolCore.permissionSelectedResult(optionId!!))
+        val outcomeLine = transport.sentLines.last()
+        assertTrue("permission answer should carry the spec outcome shape", outcomeLine.contains("\"outcome\":\"selected\""))
+        assertTrue(outcomeLine.contains("\"optionId\":\"allow\""))
+
         client.close()
 
-        // Core assertions — these prove the mapper + client path works end-to-end for the UI
-        assertTrue("Should have received at least one Reasoning (from thought_chunk)", collected.any { it is CodexSessionItem.Reasoning })
-        assertTrue("Should have received an AgentMessage", collected.any { it is CodexSessionItem.AgentMessage })
-        assertTrue("Should have received a ToolCall", collected.any { it is CodexSessionItem.ToolCall })
-        assertTrue("Should have received a Plan", collected.any { it is CodexSessionItem.Plan })
-        assertTrue("Should have received an AgentEvent for approval", collected.any { it is CodexSessionItem.AgentEvent && it.label.contains("approval", ignoreCase = true) })
-
-        // Bonus: the thought content made it through
-        val reasoning = collected.filterIsInstance<CodexSessionItem.Reasoning>().firstOrNull()
-        assertTrue("Reasoning should contain the thought delta", reasoning?.content?.any { it.contains("Thinking about the best way") } == true)
+        // Mapper assertions — spec chunks → existing UI item kinds.
+        val reasoning = collected.filterIsInstance<CodexSessionItem.Reasoning>().first()
+        assertTrue(reasoning.content.any { it.contains("Thinking about") })
+        val message = collected.filterIsInstance<CodexSessionItem.AgentMessage>().first()
+        assertTrue(message.text.contains("Here is the plan"))
+        val toolCalls = collected.filterIsInstance<CodexSessionItem.ToolCall>()
+        assertTrue("tool_call and tool_call_update share the stable toolCallId", toolCalls.all { it.id == "tc-1" })
+        assertTrue(toolCalls.any { it.status == "completed" && it.detail?.contains("file contents") == true })
+        val plan = collected.filterIsInstance<CodexSessionItem.Plan>().first()
+        assertTrue(plan.text.contains("[pending] Wire the client"))
     }
 
-    private class CannedLinesTransport(private val lines: List<String>) : CodexLineTransport {
+    private suspend fun awaitFirstServerRequest(client: AcpGrokClient): AcpServerRequest {
+        var result: AcpServerRequest? = null
+        try {
+            client.serverRequests.collect { request ->
+                result = request
+                throw CancellationException("got server request")
+            }
+        } catch (_: CancellationException) {
+            // expected drain
+        }
+        return result ?: error("no server request received")
+    }
+
+    /** Replies to outbound requests like a spec ACP agent and streams canned spec updates. */
+    private class ScriptedAcpAgentTransport : CodexLineTransport {
         private val ch = Channel<String>(Channel.UNLIMITED)
+        val sentLines = mutableListOf<String>()
+        val sentMethods = mutableListOf<String>()
+        private var sessionNewCount = 0
 
         override val inboundLines: Flow<String> = ch.receiveAsFlow()
 
-        init {
-            // Pump all canned lines immediately so the client's readLoop sees the session/update
-            // notifications (and mapper) regardless of sendLine timing or ID correlation in the smoke.
-            lines.forEach { ch.trySend(it) }
-            ch.close()
+        override suspend fun sendLine(line: String) {
+            sentLines += line
+            val obj = AppJson.parseToJsonElement(line).jsonObject
+            val method = obj["method"]?.jsonPrimitive?.contentOrNull ?: return
+            sentMethods += method
+            val id = obj["id"]?.jsonPrimitive?.longOrNull ?: return
+            when (method) {
+                "initialize" -> respond(
+                    """{"jsonrpc":"2.0","id":$id,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[{"id":"grok.com","name":"Grok"}]}}"""
+                )
+                "session/new" -> {
+                    sessionNewCount += 1
+                    if (sessionNewCount == 1) {
+                        respond("""{"jsonrpc":"2.0","id":$id,"error":{"code":-32000,"message":"Authentication required"}}""")
+                    } else {
+                        respond("""{"jsonrpc":"2.0","id":$id,"result":{"sessionId":"sess-smoke-001"}}""")
+                        streamSpecUpdates()
+                    }
+                }
+                // Spec agents answer void methods with an explicit null result.
+                "authenticate" -> respond("""{"jsonrpc":"2.0","id":$id,"result":null}""")
+            }
         }
 
-        override suspend fun sendLine(line: String) {
-            // No-op for this canned replay smoke; inbound data is pre-pumped.
+        private fun streamSpecUpdates() {
+            val sid = "sess-smoke-001"
+            listOf(
+                """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$sid","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Thinking about the best way to implement the feature..."}}}}""",
+                """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$sid","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Here is the plan for the ACP integration."}}}}""",
+                """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$sid","update":{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"Read App.kt","kind":"read","status":"pending","rawInput":{"path":"src/App.kt"}}}}""",
+                """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$sid","update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"file contents"}}]}}}""",
+                """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$sid","update":{"sessionUpdate":"plan","entries":[{"content":"Wire the client","priority":"high","status":"pending"}]}}}""",
+                """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"$sid","update":{"sessionUpdate":"available_commands_update","availableCommands":[]}}}""",
+                """{"jsonrpc":"2.0","id":99,"method":"session/request_permission","params":{"sessionId":"$sid","toolCall":{"toolCallId":"tc-2","title":"Run `git status`"},"options":[{"optionId":"allow","name":"Allow","kind":"allow_once"},{"optionId":"deny","name":"Deny","kind":"reject_once"}]}}""",
+            ).forEach { ch.trySend(it) }
+        }
+
+        private fun respond(line: String) {
+            ch.trySend(line)
         }
 
         override suspend fun close() {

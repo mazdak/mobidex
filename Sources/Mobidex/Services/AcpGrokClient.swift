@@ -27,11 +27,14 @@ actor AcpGrokClient {
     private var isClosed = false
     private var readTask: Task<Void, Never>?
     private var currentSessionId: String?
+    private var authMethodIds: [String] = []
 
     private let eventContinuation: AsyncStream<CodexAppServerEvent>.Continuation
     private let itemContinuation: AsyncStream<CodexThreadItem>.Continuation
 
-    init(transport: CodexLineTransport, requestTimeoutSeconds: Double = 30) {
+    // Generous default: a cold `npx @zed-industries/claude-code-acp` may download the package
+    // on the host before answering initialize.
+    init(transport: CodexLineTransport, requestTimeoutSeconds: Double = 120) {
         self.transport = transport
         self.requestTimeoutSeconds = max(1, Int(ceil(requestTimeoutSeconds)))
         self.requestTimeoutNanoseconds = UInt64(self.requestTimeoutSeconds) * 1_000_000_000
@@ -51,20 +54,32 @@ actor AcpGrokClient {
 
     func initialize() async throws {
         guard !isClosed else { throw CodexAppServerClientError.disconnected }
-        _ = try await request(
+        let result = try await request(
             method: "initialize",
             params: SharedKMPBridge.acpInitializeParams()
         )
-        // ACP convention: after successful initialize result, client sends "initialized" notification
-        try await sendNotification(method: "initialized", params: nil)
+        // Remember the advertised auth methods for the auth_required retry in createSession.
+        // (No "initialized" notification: ACP has none; spec agents log a decode error for it.)
+        authMethodIds = SharedKMPBridge.acpAuthMethodIds(initializeResult: result)
     }
 
+    /// Creates a new ACP session. When the agent answers auth_required (some agents, e.g. grok,
+    /// require an explicit `authenticate` even when logged in on the host), authenticates with the
+    /// first advertised method and retries once.
     func createSession(cwd: String? = nil, title: String? = nil) async throws -> String {
         guard !isClosed else { throw CodexAppServerClientError.disconnected }
-        let result = try await request(
-            method: "session/new",
-            params: SharedKMPBridge.acpSessionNewParams(cwd: cwd, title: title)
-        )
+        let params = SharedKMPBridge.acpSessionNewParams(cwd: cwd, title: title)
+        let result: JSONValue
+        do {
+            result = try await request(method: "session/new", params: params)
+        } catch let error as CodexAppServerClientError {
+            guard case .appServer(let info) = error,
+                  info.code == SharedKMPBridge.acpAuthRequiredErrorCode,
+                  let methodId = authMethodIds.first
+            else { throw error }
+            _ = try await request(method: "authenticate", params: SharedKMPBridge.acpAuthenticateParams(methodId: methodId))
+            result = try await request(method: "session/new", params: params)
+        }
         // ACP typically returns { "sessionId": "..." } or the id directly; be tolerant
         let sid: String = {
             if case .object(let obj) = result, case .string(let s)? = obj["sessionId"] { return s }
@@ -87,20 +102,17 @@ actor AcpGrokClient {
         // Do not await a result for the prompt itself in basic ACP; updates come asynchronously
     }
 
-    func interrupt(sessionId: String) async throws {
+    /// Spec cancellation: `session/cancel` notification (the agent answers the prompt with stopReason=cancelled).
+    func cancel(sessionId: String) async throws {
         guard !isClosed else { throw CodexAppServerClientError.disconnected }
-        _ = try await request(
-            method: "session/interrupt",
-            params: SharedKMPBridge.acpSessionInterruptParams(sessionId: sessionId)
-        )
+        try await sendNotification(method: "session/cancel", params: SharedKMPBridge.acpSessionCancelParams(sessionId: sessionId))
     }
 
-    func respondToApproval(requestId: JSONValue, approved: Bool) async throws {
-        // For ACP approval round-trips (surfaced as AgentEvent via mapper)
+    /// Answers an agent -> client request (e.g. a `session/request_permission` outcome).
+    func respondToServerRequest(id: JSONValue, result: JSONValue) async throws {
         try ensureOpenAndStartReadLoop()
-        let result: JSONValue = approved ? .bool(true) : .bool(false)
         do {
-            try await transport.sendLine(SharedKMPBridge.resultLine(core: rpcCore, id: requestId, result: result))
+            try await transport.sendLine(SharedKMPBridge.resultLine(core: rpcCore, id: id, result: result))
         } catch {
             let clientError = clientFacingError(error)
             await disconnect(error: clientError, message: clientError.localizedDescription, notify: true)
@@ -193,7 +205,11 @@ actor AcpGrokClient {
                     error: envelope.error.map { CodexRPCErrorInfo(code: Int($0.code), message: $0.message) }
                 )) {
                 case .errorResponse(let id, let error):
-                    resolve(id: id, result: .failure(CodexAppServerClientError.appServer(error)))
+                    let readable = CodexRPCErrorInfo(
+                        code: error.code,
+                        message: SharedKMPBridge.acpReadableError(code: error.code, message: error.message)
+                    )
+                    resolve(id: id, result: .failure(CodexAppServerClientError.appServer(readable)))
                 case .resultResponse(let id, let result):
                     resolve(id: id, result: .success(result))
                 case .serverRequest(let id, let method, let params):
@@ -204,8 +220,6 @@ actor AcpGrokClient {
                     let items = SharedKMPBridge.acpClassificationToSessionItems(classification)
                     for item in items {
                         itemContinuation.yield(item)
-                        // Also surface a lightweight event for any legacy listeners
-                        eventContinuation.yield(.notification(method: "session/update", params: nil))
                     }
                 case nil:
                     continue

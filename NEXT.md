@@ -1,5 +1,16 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## Mission Checklist (active, 2026-06-10: Claude ACP support + TestFlight)
+
+- [x] C1. Verify Grok `agent stdio` wire format vs ACP spec. (Verified live against grok 0.2.22: grok is strictly spec-shaped — array prompts, required cwd+mcpServers, session/cancel, update.sessionUpdate, no `initialized` notification, and `authenticate` required before session/new. Spec compliance is safe for Grok and required for Claude.)
+- [x] C2. shared-core: spec-compliant requests (initialize protocolVersion/clientCapabilities, session/new cwd+mcpServers, content-block prompts, session/cancel, authenticate) + spec session/update parsing (update.sessionUpdate, tool_call_update, plan entries, unknown-variant→no UI item) + permission request parse/choose/outcome builders + readableError(auth_required) + appendingAcpSessionItem streaming accumulator. AcpProtocolCoreTest 22/22 green.
+- [x] C3. iOS: events consumer surfaces session/request_permission as PendingApproval cards; respond() round-trips spec outcome; auth retry in createSession; session/cancel for interrupt; readable auth_required errors; bridge mirrors ToolCallUpdate mapping + appendingAcpThreadItem accumulator; cwd falls back to executionPath. verify-ios-build green.
+- [x] C4. Android: parity (serverRequests Flow + respondToServerRequest, auth retry, fire-and-forget prompt, session/cancel, accumulator in collector, permission round-trip in respond()). compileDebugKotlin + reworked AcpGrokClientSmokeTest green (spec wire shapes, auth retry, permission outcome).
+- [x] C5. Subagent review of full delta (VERDICT: FAIL with 1 P1 + 7 P2; all findings fixed): P1 `"result":null` void responses (authenticate!) stalled iOS pending requests — fixed in shared classifyInbound (id-only → resultResponse(Null), serverRequest checked first) + regression tests; P2s fixed: Android request timeout (120s, matching new iOS default for cold `npx` runs), cwd fail-fast on both platforms, status-less tool_call_update no longer regresses completed cards, per-item event spam removed from iOS readLoop, Android disconnects flow → Failed state + approval clear (iOS parity), cancel now answers in-flight permission requests with cancelled outcome on both platforms, Android failAllPending single-lock.
+- [x] C6. Validation after fixes: shared-core AcpProtocolCoreTest 25/25, Android compileDebugKotlin + AcpGrokClientSmokeTest (authenticate answered with spec `"result":null`) green, verify-ios-build green.
+- [ ] C7. Merge to `master`, pull `origin/master`, push.
+- [ ] C8. TestFlight: distribution preflight, `asc workflow run testflight VERSION:1.0` (internal), `testflight_external` for the same build, record build number/ID/run records.
+
 ## Mission Checklist (active, 2026-06-05 regressions)
 
 - [x] Fix queued "Steer now" to hydrate active-turn state before sending.

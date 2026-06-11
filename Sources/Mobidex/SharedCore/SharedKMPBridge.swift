@@ -169,6 +169,7 @@ enum SharedKMPBridge {
     typealias SharedAcpContentChunkAgentMessageChunk = MobidexShared.AcpContentChunkAgentMessageChunk
     typealias SharedAcpContentChunkAgentThoughtChunk = MobidexShared.AcpContentChunkAgentThoughtChunk
     typealias SharedAcpContentChunkToolCall = MobidexShared.AcpContentChunkToolCall
+    typealias SharedAcpContentChunkToolCallUpdate = MobidexShared.AcpContentChunkToolCallUpdate
     typealias SharedAcpContentChunkPlan = MobidexShared.AcpContentChunkPlan
     typealias SharedAcpContentChunkApprovalRequest = MobidexShared.AcpContentChunkApprovalRequest
     typealias SharedAcpContentChunkOther = MobidexShared.AcpContentChunkOther
@@ -178,10 +179,18 @@ enum SharedKMPBridge {
             id: 0,
             clientName: clientName,
             clientTitle: clientTitle,
-            clientVersion: clientVersion,
-            capabilities: [:]
+            clientVersion: clientVersion
         )
         return params(from: req)
+    }
+
+    /// Auth method ids advertised in an `initialize` result (`authMethods[].id`).
+    static func acpAuthMethodIds(initializeResult: JSONValue?) -> [String] {
+        MobidexShared.AcpProtocolCoreKt.acpAuthMethodIds(initializeResult: initializeResult.map(toSharedJSONValue))
+    }
+
+    static func acpAuthenticateParams(methodId: String) -> JSONValue? {
+        params(from: MobidexShared.AcpRpcRequests.shared.authenticate(id: 0, methodId: methodId))
     }
 
     static func acpSessionNewParams(cwd: String?, title: String?) -> JSONValue? {
@@ -199,9 +208,44 @@ enum SharedKMPBridge {
         return params(from: req)
     }
 
-    static func acpSessionInterruptParams(sessionId: String) -> JSONValue? {
-        let req = MobidexShared.AcpRpcRequests.shared.sessionInterrupt(id: 0, sessionId: sessionId)
-        return params(from: req)
+    /// Params for the spec `session/cancel` notification.
+    static func acpSessionCancelParams(sessionId: String) -> JSONValue {
+        toJSONValue(MobidexShared.AcpRpcRequests.shared.sessionCancelParams(sessionId: sessionId))
+    }
+
+    /// Displayable summary for a `session/request_permission` request.
+    static func acpPermissionSummary(params: JSONValue?) -> (title: String, detail: String) {
+        let parsed = MobidexShared.AcpProtocolCore.shared.parsePermissionRequest(params: params.map(toSharedJSONValue))
+        return (title: parsed.title ?? "Permission required", detail: parsed.detail ?? "")
+    }
+
+    /// Spec outcome result for a permission request: selects the agent-advertised option that
+    /// matches accept/decline, falling back to the cancelled outcome when none matches.
+    static func acpPermissionResponse(params: JSONValue?, accept: Bool) -> JSONValue {
+        let core = MobidexShared.AcpProtocolCore.shared
+        let sharedParams = params.map(toSharedJSONValue)
+        if let optionId = core.choosePermissionOptionId(params: sharedParams, accept: accept) {
+            return toJSONValue(core.permissionSelectedResult(optionId: optionId))
+        }
+        return toJSONValue(core.permissionCancelledResult())
+    }
+
+    /// Spec cancelled outcome for an unanswered permission request (sent when a turn is cancelled).
+    static func acpPermissionCancelledResult() -> JSONValue {
+        toJSONValue(MobidexShared.AcpProtocolCore.shared.permissionCancelledResult())
+    }
+
+    /// Human-readable ACP error text (turns auth_required into host-login guidance).
+    static func acpReadableError(code: Int, message: String) -> String {
+        MobidexShared.AcpProtocolCore.shared.readableError(code: Int32(code), message: message)
+    }
+
+    static var acpAuthRequiredErrorCode: Int {
+        Int(MobidexShared.AcpProtocolCore.shared.AUTH_REQUIRED_ERROR_CODE)
+    }
+
+    static var acpPermissionRequestMethod: String {
+        MobidexShared.AcpProtocolCore.shared.PERMISSION_REQUEST_METHOD
     }
 
     static func makeAcpProtocolCore() -> SharedAcpProtocolCore {
@@ -252,36 +296,96 @@ enum SharedKMPBridge {
     }
 
     private static func acpChunkToThreadItem(_ chunk: SharedAcpContentChunk) -> CodexThreadItem? {
-        // Mirror the KMP mapper logic exactly for the 5 critical kinds (agent message, thought, tool, plan, approval)
+        // Mirror the KMP mapper (toCodexSessionItem + toCodexSessionItems): same item kinds and the
+        // same stable per-kind ids so appendingAcpThreadItem can coalesce deltas and resolve tool cards.
         if let m = chunk as? SharedAcpContentChunkAgentMessageChunk {
             let text = m.delta
             guard !text.isEmpty else { return nil }
-            return .agentMessage(id: "acp-\(UUID().uuidString.prefix(8))", text: text)
+            return .agentMessage(id: "acp-message", text: text)
         }
         if let t = chunk as? SharedAcpContentChunkAgentThoughtChunk {
             let content = t.delta
             let summaryList = t.summary.map { [$0] } ?? []
             let contentList = content.isEmpty ? [] : [content]
             guard !summaryList.isEmpty || !contentList.isEmpty else { return nil }
-            return .reasoning(id: "acp-\(UUID().uuidString.prefix(8))", summary: summaryList, content: contentList)
+            return .reasoning(id: "acp-thought", summary: summaryList, content: contentList)
         }
         if let tc = chunk as? SharedAcpContentChunkToolCall {
             let label = tc.name ?? "tool"
-            let detail = tc.args != nil ? String(describing: tc.args!) : tc.status
-            return .toolCall(id: "acp-\(UUID().uuidString.prefix(8))", label: label, status: tc.status ?? "running", detail: detail)
+            let detail = tc.args.map { MobidexShared.JsonValueCodec.shared.encode(value: $0) } ?? tc.status
+            return .toolCall(id: tc.toolCallId ?? "acp-tool", label: label, status: tc.status ?? "running", detail: detail)
+        }
+        if let tu = chunk as? SharedAcpContentChunkToolCallUpdate {
+            // Empty status = "this update did not carry a status"; the accumulator keeps the
+            // existing card's status in that case instead of regressing a completed card.
+            return .toolCall(id: tu.toolCallId ?? "acp-tool", label: tu.name ?? "tool", status: tu.status ?? "", detail: tu.output)
         }
         if let p = chunk as? SharedAcpContentChunkPlan {
             let text = [p.title, p.content].compactMap { $0 }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
-            return .plan(id: "acp-\(UUID().uuidString.prefix(8))", text: text)
+            return .plan(id: "acp-plan", text: text)
         }
         if let a = chunk as? SharedAcpContentChunkApprovalRequest {
             let label = a.title ?? "Approval required"
             let detail = a.detail
             return .agentEvent(id: "acp-\(UUID().uuidString.prefix(8))", label: label, status: "pending", detail: detail)
         }
-        // Other / unknown tolerated (no crash, no UI item)
+        // Other / unknown variants (available_commands_update, current_mode_update, ...) tolerated: no UI item.
         return nil
+    }
+
+    /// Mirror of the KMP `appendingAcpSessionItem` streaming accumulator:
+    /// - consecutive agentMessage / reasoning deltas merge into the previous item (one bubble per turn)
+    /// - toolCall items update-in-place by id (tool_call_update resolves the original card)
+    /// - plan items replace the previous plan with the same id
+    /// - anything else appends
+    static func appendingAcpThreadItem(_ items: [CodexThreadItem], _ item: CodexThreadItem) -> [CodexThreadItem] {
+        switch item {
+        case .agentMessage(let id, let text):
+            if case .agentMessage(let lastID, let lastText) = items.last, lastID == id {
+                return items.dropLast() + [.agentMessage(id: id, text: lastText + text)]
+            }
+        case .reasoning(let id, let summary, let content):
+            if case .reasoning(let lastID, let lastSummary, let lastContent) = items.last, lastID == id {
+                let mergedText = (lastContent + content).joined()
+                var mergedSummary = lastSummary
+                for entry in summary where !mergedSummary.contains(entry) {
+                    mergedSummary.append(entry)
+                }
+                return items.dropLast() + [
+                    .reasoning(id: id, summary: mergedSummary, content: mergedText.isEmpty ? [] : [mergedText])
+                ]
+            }
+        case .toolCall(let id, let label, let status, let detail):
+            if let index = items.lastIndex(where: { existing in
+                if case .toolCall(let existingID, _, _, _) = existing { return existingID == id }
+                return false
+            }), case .toolCall(_, let existingLabel, let existingStatus, let existingDetail) = items[index] {
+                var merged = items
+                merged[index] = .toolCall(
+                    id: id,
+                    label: label == "tool" ? existingLabel : label,
+                    status: status.isEmpty ? existingStatus : status,
+                    detail: detail ?? existingDetail
+                )
+                return merged
+            }
+            if status.isEmpty {
+                return items + [.toolCall(id: id, label: label, status: "running", detail: detail)]
+            }
+        case .plan(let id, _):
+            if let index = items.lastIndex(where: { existing in
+                if case .plan(let existingID, _) = existing { return existingID == id }
+                return false
+            }) {
+                var merged = items
+                merged[index] = item
+                return merged
+            }
+        default:
+            break
+        }
+        return items + [item]
     }
 
     static func parseWebSocketFrame(buffer: Data) throws -> SharedWebSocketFrameParseResult? {

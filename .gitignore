@@ -18,3 +18,4 @@ android-app/build/
 shared-core/build/
 terminal-web/dist/
 terminal-web/node_modules/
+local.properties

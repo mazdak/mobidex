@@ -4,12 +4,17 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonElement
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.serialization.json.JsonObject
@@ -19,38 +24,65 @@ import kotlinx.serialization.json.jsonPrimitive
 import mobidex.shared.AcpProtocolCore
 import mobidex.shared.AcpRpcInboundEnvelope
 import mobidex.shared.AcpRpcRequests
-import mobidex.shared.CodexRpcRequest
 import mobidex.shared.CodexSessionItem
 import mobidex.shared.JsonValue
+import mobidex.shared.acpAuthMethodIds
 import mobidex.shared.encodeJsonLine
 import mobidex.shared.toCodexSessionItems
 
+/** An agent -> client JSON-RPC request (e.g. `session/request_permission`) awaiting a response. */
+data class AcpServerRequest(
+    val id: JsonValue,
+    val method: String,
+    val params: JsonValue?,
+)
+
+/** JSON-RPC error from the agent, with the code preserved for auth_required handling. */
+class AcpRpcException(val code: Int, message: String) : Exception(message)
+
 /**
- * Thin ACP client for driving Grok agents (via `grok agent stdio` or equivalent) over a raw line transport.
+ * Thin ACP client for driving spec-compliant stdio agents (`grok agent stdio`,
+ * `npx @zed-industries/claude-code-acp`, ...) over a raw line transport.
  *
- * Designed for the Android/Kotlin side of the Mobidex ACP sketch.
- * - Uses CodexLineTransport (obtained via SshService.openRawExec + RemoteAcpCommand.stdioCommand)
- * - Leverages shared AcpProtocolCore for request building, inbound classification, and the critical
- *   chunk-to-CodexSessionItem mapper (so Grok thoughts render as Reasoning, messages as AgentMessage,
- *   tools/approvals/plans via existing ConversationSection UI with zero duplication).
- * - Minimal surface for initialize / session lifecycle / prompt.
- *
- * This is intentionally a sketch implementation: correlation + streaming via the shared mapper.
- * Later iterations can factor more into shared-core (AcpClientCore) and add iOS parity + approval flows.
+ * - Uses CodexLineTransport (obtained via SshService.openRawExec + RemoteAcpCommand.shellCommand)
+ * - Leverages shared AcpProtocolCore for request building, inbound classification, and the
+ *   chunk-to-CodexSessionItem mapper (so agent thoughts render as Reasoning, messages as
+ *   AgentMessage, tools/plans via the existing ConversationSection UI with zero duplication).
+ * - Authenticates on demand: when session/new fails with auth_required, retries once after
+ *   `authenticate` with the first method the agent advertised (grok requires this even when
+ *   logged in on the host).
+ * - Surfaces agent -> client requests (permission prompts) on [serverRequests] for the
+ *   ViewModel to answer via [respondToServerRequest].
  */
 class AcpGrokClient(
     private val transport: CodexLineTransport,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val itemsChannel = Channel<CodexSessionItem>(Channel.BUFFERED)
+    private val serverRequestChannel = Channel<AcpServerRequest>(Channel.BUFFERED)
     private val pending = mutableMapOf<Long, CompletableDeferred<JsonElement>>()
     private val pendingMutex = Mutex()
     private var closed = false
     private var currentSessionId: String? = null
     private val idCounter = AtomicLong(1)
+    private var authMethodIds: List<String> = emptyList()
 
-    /** Emits mapped CodexSessionItem instances (AgentMessage, Reasoning for thoughts, ToolCall, Plan, AgentEvent for approvals, etc.). */
+    private companion object {
+        // Generous: a cold `npx @zed-industries/claude-code-acp` may download the package
+        // on the host before answering initialize.
+        const val REQUEST_TIMEOUT_MS = 120_000L
+    }
+
+    /** Emits mapped CodexSessionItem instances (AgentMessage, Reasoning for thoughts, ToolCall, Plan, ...). */
     val sessionItems: Flow<CodexSessionItem> = itemsChannel.receiveAsFlow()
+
+    /** Emits agent -> client requests (permission prompts) that must be answered via [respondToServerRequest]. */
+    val serverRequests: Flow<AcpServerRequest> = serverRequestChannel.receiveAsFlow()
+
+    private val _disconnects = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    /** Emits once when the transport ends or fails after a successful start (parity with the iOS events stream). */
+    val disconnects: SharedFlow<String> = _disconnects.asSharedFlow()
 
     init {
         scope.launch { readLoop() }
@@ -58,38 +90,46 @@ class AcpGrokClient(
 
     suspend fun initialize() {
         check(!closed) { "ACP client is closed." }
-        val req = AcpRpcRequests.initialize(id = nextId())
-        // Fire the request; for sketch we don't strictly await the initialize result before proceeding.
-        transport.sendLine(req.encodeJsonLine())
-        // Many ACP servers also expect a client "initialized" notification after receiving the result.
-        // We keep it simple here; real impl can await the response first.
+        val result = sendRequestAndAwait(AcpRpcRequests.initialize(id = nextId()))
+        authMethodIds = acpAuthMethodIds(result.toSharedJsonValue())
     }
 
     /**
-     * Creates a new ACP session and returns its sessionId.
-     * The result from `session/new` is expected to contain a "sessionId" (or "id") field.
+     * Creates a new ACP session and returns its sessionId. When the agent answers auth_required,
+     * authenticates with its first advertised method and retries once.
      */
     suspend fun createSession(cwd: String? = null, title: String? = null): String {
         check(!closed) { "ACP client is closed." }
-        val req = AcpRpcRequests.sessionNew(id = nextId(), cwd = cwd, title = title)
-        val result = sendRequestAndAwait(req)
+        val result = try {
+            sendRequestAndAwait(AcpRpcRequests.sessionNew(id = nextId(), cwd = cwd, title = title))
+        } catch (error: AcpRpcException) {
+            val methodId = authMethodIds.firstOrNull()
+            if (error.code != AcpProtocolCore.AUTH_REQUIRED_ERROR_CODE || methodId == null) throw error
+            sendRequestAndAwait(AcpRpcRequests.authenticate(id = nextId(), methodId = methodId))
+            sendRequestAndAwait(AcpRpcRequests.sessionNew(id = nextId(), cwd = cwd, title = title))
+        }
         val sid = extractSessionId(result) ?: error("session/new did not return a sessionId in result: $result")
         currentSessionId = sid
         return sid
     }
 
+    /** Fire-and-forget: the prompt result (stopReason) only arrives when the whole turn ends. */
     suspend fun sendPrompt(sessionId: String, text: String) {
         check(!closed) { "ACP client is closed." }
         val req = AcpRpcRequests.sessionPrompt(id = nextId(), sessionId = sessionId, prompt = text)
-        // For streaming agents, the prompt request itself often returns quickly (or with an ack),
-        // while content arrives via session/update notifications.
-        sendRequestAndAwait(req) // best-effort await; many impls return immediately
+        transport.sendLine(req.encodeJsonLine())
     }
 
-    suspend fun interrupt(sessionId: String) {
+    /** Spec cancellation: `session/cancel` notification (the agent answers the prompt with stopReason=cancelled). */
+    suspend fun cancel(sessionId: String) {
         check(!closed) { "ACP client is closed." }
-        val req = AcpRpcRequests.sessionInterrupt(id = nextId(), sessionId = sessionId)
-        transport.sendLine(req.encodeJsonLine())
+        transport.sendLine(AcpProtocolCore.notificationLine("session/cancel", AcpRpcRequests.sessionCancelParams(sessionId)))
+    }
+
+    /** Answers an agent -> client request (e.g. a permission prompt outcome). */
+    suspend fun respondToServerRequest(id: JsonValue, result: JsonValue) {
+        check(!closed) { "ACP client is closed." }
+        transport.sendLine(AcpProtocolCore.resultLine(id, result))
     }
 
     suspend fun close() {
@@ -98,6 +138,7 @@ class AcpGrokClient(
         failAllPending(IllegalStateException("ACP client closed."))
         transport.close()
         itemsChannel.close()
+        serverRequestChannel.close()
     }
 
     private fun nextId(): Long = idCounter.getAndIncrement() // monotonic to avoid collisions on rapid initialize + session/new (codex review P2)
@@ -114,7 +155,12 @@ class AcpGrokClient(
             waiter.completeExceptionally(e)
             throw e
         }
-        return waiter.await()
+        try {
+            return withTimeout(REQUEST_TIMEOUT_MS) { waiter.await() }
+        } catch (e: TimeoutCancellationException) {
+            pendingMutex.withLock { pending.remove(req.id) }
+            throw IllegalStateException("ACP request ${req.method} timed out after ${REQUEST_TIMEOUT_MS / 1000}s.", e)
+        }
     }
 
     private suspend fun readLoop() {
@@ -128,8 +174,9 @@ class AcpGrokClient(
                 when (classification.kind) {
                     "errorResponse" -> {
                         val id = classification.numericId ?: return@collect
-                        val err = classification.error?.message ?: "ACP error"
-                        pendingMutex.withLock { pending.remove(id) }?.completeExceptionally(IllegalStateException(err))
+                        val code = classification.error?.code ?: 0
+                        val err = AcpProtocolCore.readableError(code, classification.error?.message ?: "ACP error")
+                        pendingMutex.withLock { pending.remove(id) }?.completeExceptionally(AcpRpcException(code, err))
                     }
                     "resultResponse" -> {
                         val id = classification.numericId ?: return@collect
@@ -137,27 +184,18 @@ class AcpGrokClient(
                         pendingMutex.withLock { pending.remove(id) }?.complete(resultEl)
                     }
                     "sessionUpdate" -> {
-                        // This is the key path: Grok chunks → existing UI model via the mapper added for the user's requirement.
-                        val items = classification.toCodexSessionItems()
-                        items.forEach { item ->
+                        // The key path: agent chunks → existing UI model via the shared mapper.
+                        classification.toCodexSessionItems().forEach { item ->
                             itemsChannel.trySend(item)
                         }
                     }
                     "serverRequest" -> {
-                        // ACP interactive approval / permission request.
-                        // For sketch: surface as a generic AgentEvent so the existing UI can show it.
-                        // Real impl will later call back with approval response using resultLine.
-                        val detail = classification.params?.let { JsonValueCodec.encode(it) } // reuse if available, else toString
-                        val ev = CodexSessionItem.AgentEvent(
-                            id = "acp-approval-${System.currentTimeMillis()}",
-                            label = classification.method ?: "approvalRequest",
-                            status = "pending",
-                            detail = detail,
-                        )
-                        itemsChannel.trySend(ev)
+                        val id = classification.id ?: return@collect
+                        val method = classification.method ?: return@collect
+                        serverRequestChannel.trySend(AcpServerRequest(id = id, method = method, params = classification.params))
                     }
                     else -> {
-                        // Ignore other notifications for minimal sketch.
+                        // Ignore other notifications (vendor extensions, stopReason-less acks, ...).
                     }
                 }
             }
@@ -167,9 +205,10 @@ class AcpGrokClient(
         }
     }
 
-    private fun disconnect(message: String) {
+    private suspend fun disconnect(message: String) {
         closed = true
         failAllPending(IllegalStateException(message))
+        _disconnects.tryEmit(message)
         itemsChannel.trySend(
             CodexSessionItem.AgentEvent(
                 id = "acp-disconnect-${System.currentTimeMillis()}",
@@ -179,11 +218,11 @@ class AcpGrokClient(
             )
         )
         itemsChannel.close()
+        serverRequestChannel.close()
     }
 
-    private fun failAllPending(error: Throwable) {
-        // Shutdown path: use a cheap synchronized snapshot instead of suspending Mutex.withLock.
-        val toFail = synchronized(pending) {
+    private suspend fun failAllPending(error: Throwable) {
+        val toFail = pendingMutex.withLock {
             val snapshot = pending.toMap()
             pending.clear()
             snapshot
@@ -212,9 +251,4 @@ class AcpGrokClient(
                 )
             },
         )
-}
-
-// Small helper to avoid pulling in extra shared codec if not public.
-private object JsonValueCodec {
-    fun encode(v: JsonValue): String = v.toString() // sufficient for sketch logging/detail
 }

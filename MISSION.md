@@ -1,3 +1,27 @@
+# Mission: Claude ACP Support + TestFlight
+
+**Mission statement:** Make the ACP path work with Claude via `@zed-industries/claude-code-acp` (spec-compliant requests, `tool_call_update`/unknown-variant handling, `session/request_permission` round-trip, `auth_required` surfacing), then cut a new internal+external TestFlight build.
+
+**Done criteria:**
+- Outbound ACP requests are spec-compliant (`initialize` with `protocolVersion`+`clientCapabilities`, `session/new` with `cwd`+`mcpServers`, `session/prompt` with content blocks, spec cancellation) without breaking the Grok path.
+- Inbound `session/update` handles spec-shaped updates (`update.sessionUpdate` discriminator) including `tool_call_update`, and tolerates unknown variants without erroring.
+- `session/request_permission` is answered: approval card surfaces in chat, user choice round-trips as `{outcome: {outcome: "selected", optionId}}` on both iOS and Android.
+- `auth_required` (-32000) surfaces as a readable error telling the user to authenticate on the host.
+- Shared, Android, and iOS validation green; subagent review per chunk.
+- TestFlight build cut from up-to-date `master` via existing `.asc` workflows (internal + external), recorded in NEXT.md.
+
+**Guardrails / Constraints:**
+- Zero changes to Codex paths (launch, WS, UI projection internals).
+- SSH remains the trust boundary; no agent keys on the phone.
+- Fix both clients (iOS + Android) for every behavior change.
+- Build TestFlight only from up-to-date `master`; restore keychain state after signing.
+
+**Critical learnings:**
+- Verified live (grok 0.2.22 binary probe): grok `agent stdio` uses the official ACP Rust crate and is strictly spec-shaped — `prompt` must be a content-block array, `session/new` requires `cwd`+`mcpServers`, cancellation is the `session/cancel` notification (`session/interrupt` → method-not-found), `session/update` uses `update.sessionUpdate`, and the LSP-style `initialized` notification is not part of ACP (grok logs a decode error). Strict spec compliance helps Grok, not just Claude.
+- Grok requires an explicit `authenticate` (`{methodId:"grok.com"}`) after `initialize` before `session/new`, even when logged in on the host. Generic handling: on `session/new` auth_required (-32000), call `authenticate` with the first advertised method and retry once.
+
+---
+
 # Mission: Ship Terminal Feedback Fix To TestFlight
 
 **Mission statement:** Upload the current `master` terminal feedback fix to internal and external TestFlight.

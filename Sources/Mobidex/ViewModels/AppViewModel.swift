@@ -168,6 +168,7 @@ private enum AppViewModelError: LocalizedError {
     case newSessionConnectionFailed(String)
     case noActiveTurnToSteer
     case operationTimedOut(String)
+    case missingAcpWorkingDirectory
 
     var errorDescription: String? {
         switch self {
@@ -183,6 +184,8 @@ private enum AppViewModelError: LocalizedError {
             "There is no active turn to steer."
         case .operationTimedOut(let message):
             message
+        case .missingAcpWorkingDirectory:
+            "Select a project (or set the server's execution path) before connecting an ACP agent."
         }
     }
 }
@@ -366,6 +369,7 @@ final class AppViewModel: ObservableObject {
     // Zero changes to any Codex paths. Reuses AcpGrokClient actor + mapper + raw-exec + (post-simplification) auth model.
     private var acpClient: AcpGrokClient?
     private var acpCollectorTask: Task<Void, Never>?
+    private var acpEventsTask: Task<Void, Never>?
     private var acpItems: [CodexThreadItem] = []
     private var acpSessionId: String?
 
@@ -1000,6 +1004,7 @@ final class AppViewModel: ObservableObject {
 
         // Cancel prior production ACP session for this server if project changed or we are restarting.
         acpCollectorTask?.cancel()
+        acpEventsTask?.cancel()
         if let prior = acpClient {
             await prior.close()
         }
@@ -1017,7 +1022,12 @@ final class AppViewModel: ObservableObject {
             acpClient = client
 
             try await client.initialize()
-            let sid = try await client.createSession(cwd: projectPath, title: server.displayName)
+            // ACP spec requires an absolute cwd on session/new; fall back to the server's
+            // execution path when no project is selected, and fail fast when neither is set.
+            guard let cwd = projectPath ?? (server.executionPath.isEmpty ? nil : server.executionPath) else {
+                throw AppViewModelError.missingAcpWorkingDirectory
+            }
+            let sid = try await client.createSession(cwd: cwd, title: server.displayName)
             acpSessionId = sid
 
             statusMessage = "ACP agent session connected."
@@ -1026,12 +1036,48 @@ final class AppViewModel: ObservableObject {
                 guard let self else { return }
                 for await item in client.sessionItems {
                     await MainActor.run {
-                        self.acpItems.append(item)
+                        // Coalesce streamed deltas / resolve tool cards before projecting.
+                        self.acpItems = SharedKMPBridge.appendingAcpThreadItem(self.acpItems, item)
                         // Drive the normal ConversationView with the proven mapper (identical to debug preview).
                         self.publishConversationSections(SharedKMPBridge.conversationSections(from: self.acpItems))
                     }
                 }
             }
+
+            // Permission round-trip: surface session/request_permission as the same approval cards
+            // Codex uses; respond(to:accept:) answers via the spec outcome shape.
+            acpEventsTask = Task { [weak self] in
+                guard let self else { return }
+                for await event in client.events {
+                    await MainActor.run {
+                        self.handleAcpEvent(event)
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleAcpEvent(_ event: CodexAppServerEvent) {
+        switch event {
+        case .serverRequest(let id, let method, let params):
+            guard method == SharedKMPBridge.acpPermissionRequestMethod else { return }
+            let summary = SharedKMPBridge.acpPermissionSummary(params: params)
+            pendingApprovals.append(PendingApproval(
+                id: "acp-\(id)-\(pendingApprovals.count)",
+                requestID: id,
+                method: method,
+                params: params,
+                title: summary.title,
+                detail: summary.detail
+            ))
+        case .disconnected(let message):
+            statusMessage = message
+            pendingApprovals = []
+            if connectionState == .connected {
+                connectionState = .failed(message)
+            }
+        case .notification:
+            break
         }
     }
 
@@ -1881,6 +1927,20 @@ final class AppViewModel: ObservableObject {
     }
 
     func interruptActiveTurn() async {
+        if let acpClient, let acpSessionId {
+            await runOperation(.interrupting, status: "Interrupting") {
+                try await acpClient.cancel(sessionId: acpSessionId)
+                // Spec: answer in-flight permission requests with the cancelled outcome.
+                for approval in pendingApprovals {
+                    try? await acpClient.respondToServerRequest(
+                        id: approval.requestID,
+                        result: SharedKMPBridge.acpPermissionCancelledResult()
+                    )
+                }
+                pendingApprovals = []
+            }
+            return
+        }
         guard let appServer, let selectedThread, let activeTurnID else {
             return
         }
@@ -1891,9 +1951,11 @@ final class AppViewModel: ObservableObject {
 
     func respond(to approval: PendingApproval, accept: Bool) async {
         await runOperation(.respondingToApproval, status: accept ? "Approving" : "Declining") {
-            if acpClient != nil {
-                // ACP approvals surface as AgentEvent items via the stream/mapper (no separate pending list roundtrip yet).
-                // Clear any pending entry for UI consistency; full bidirectional approval is future work.
+            if let acpClient {
+                // ACP permission round-trip: answer session/request_permission with the spec
+                // outcome shape, picking the agent-advertised option that matches accept/decline.
+                let result = SharedKMPBridge.acpPermissionResponse(params: approval.params, accept: accept)
+                try await acpClient.respondToServerRequest(id: approval.requestID, result: result)
                 pendingApprovals.removeAll { $0.id == approval.id }
                 return
             }
@@ -1925,6 +1987,8 @@ final class AppViewModel: ObservableObject {
         eventTask = nil
         acpCollectorTask?.cancel()
         acpCollectorTask = nil
+        acpEventsTask?.cancel()
+        acpEventsTask = nil
         if let c = acpClient { Task { await c.close() } }
         acpClient = nil
         acpSessionId = nil
