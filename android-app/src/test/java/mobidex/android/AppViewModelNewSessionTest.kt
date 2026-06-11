@@ -16,6 +16,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
@@ -43,8 +44,10 @@ import mobidex.android.model.ServerConnectionState
 import mobidex.android.model.ServerRecord
 import mobidex.android.service.CodexAppServerClient
 import mobidex.android.service.CodexLineTransport
+import mobidex.android.model.conversationSections
 import mobidex.android.service.MobidexSshService
 import mobidex.android.service.RemoteTerminalSession
+import mobidex.shared.ConversationSectionKind
 import mobidex.shared.RemoteDirectoryListing
 import mobidex.shared.RemoteProject
 import org.junit.runner.RunWith
@@ -190,15 +193,22 @@ class AppViewModelNewSessionTest {
         model.openThread(current)
         waitUntil { model.state.value.selectedThreadID == "thread-current" }
         assertEquals("thread-current", model.state.value.selectedThreadID)
+        // Drain the open-session refresh so its trailing "Projects synced." status can't
+        // race past the blocked-open message asserted below.
+        waitUntil { !model.state.value.isBusy }
         val resumeCountBeforeBlockedOpen = transport.sentMethods.count { it == "thread/resume" }
 
         var completed = false
         model.sendComposerInput("Do work", emptyList()) { completed = it }
         transport.awaitMethod("turn/start")
-        advanceUntilIdle()
+        // Bounded advance, not advanceUntilIdle: idling fast-forwards 120s of virtual time,
+        // which can expire an in-flight RPC whose response still rides a real IO thread.
+        advanceTimeBy(1_000)
+        runCurrent()
 
         model.openThread(other)
-        advanceUntilIdle()
+        advanceTimeBy(1_000)
+        runCurrent()
         assertEquals("thread-current", model.state.value.selectedThreadID)
         assertEquals("Wait for the current session action to finish before opening another session.", model.state.value.statusMessage)
 
@@ -209,6 +219,75 @@ class AppViewModelNewSessionTest {
         assertEquals(resumeCountBeforeBlockedOpen, transport.sentMethods.count { it == "thread/resume" })
     }
 
+    @Test
+    fun streamedDeltasKeepConversationSectionsEqualToFullProjection() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app")
+        val server = server(project)
+        val transport = ScriptedAppServerTransport()
+        val model = viewModel(server, FakeSshService(transport))
+        advanceUntilIdle()
+
+        var completed = false
+        model.startNewSession(NewSessionLocation.ProjectDirectory) { completed = it }
+        waitUntil { completed }
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+
+        transport.notify(
+            "turn/started",
+            buildJsonObject {
+                put("threadId", JsonPrimitive("thread-new"))
+                put("turn", buildJsonObject {
+                    put("id", JsonPrimitive("turn-1"))
+                    put("status", JsonPrimitive("inProgress"))
+                    put("items", JsonArray(emptyList()))
+                })
+            },
+        )
+        transport.notify(
+            "item/started",
+            buildJsonObject {
+                put("threadId", JsonPrimitive("thread-new"))
+                put("item", buildJsonObject {
+                    put("type", JsonPrimitive("agentMessage"))
+                    put("id", JsonPrimitive("item-1"))
+                    put("text", JsonPrimitive("Hel"))
+                })
+            },
+        )
+        transport.notify(
+            "item/agentMessage/delta",
+            buildJsonObject {
+                put("threadId", JsonPrimitive("thread-new"))
+                put("itemId", JsonPrimitive("item-1"))
+                put("delta", JsonPrimitive("lo"))
+            },
+        )
+        transport.notify(
+            "item/agentMessage/delta",
+            buildJsonObject {
+                put("threadId", JsonPrimitive("thread-new"))
+                put("itemId", JsonPrimitive("item-1"))
+                put("delta", JsonPrimitive(" world"))
+            },
+        )
+        // Events arrive via the client's real IO read loop; wait for the conflated flush
+        // to publish the fully accumulated section instead of advancing virtual time once.
+        waitUntil(timeoutMillis = 10_000) {
+            model.state.value.conversationSections.any {
+                it.kind == ConversationSectionKind.Assistant && it.body == "Hello world"
+            }
+        }
+
+        val state = model.state.value
+        val assistantBodies = state.conversationSections
+            .filter { it.kind == ConversationSectionKind.Assistant }
+            .map { it.body }
+        assertEquals(listOf("Hello world"), assistantBodies)
+        // Invariant: the published (incremental + conflated) sections always equal the
+        // full projection of the selected thread.
+        assertEquals(state.selectedThread?.conversationSections().orEmpty(), state.conversationSections)
+    }
+
     private fun viewModel(server: ServerRecord, ssh: FakeSshService): AppViewModel =
         AppViewModel(
             context = ApplicationProvider.getApplicationContext<Context>(),
@@ -216,6 +295,8 @@ class AppViewModelNewSessionTest {
             credentialStore = FakeCredentialStore(),
             hostKeyStore = FakeHostKeyStore(),
             sshService = ssh,
+            // Keep off-main parse/projection hops in the test scheduler's virtual time.
+            projectionDispatcher = dispatcher,
         )
 
     private fun server(project: ProjectRecord): ServerRecord =
@@ -347,6 +428,18 @@ private class ScriptedAppServerTransport(
 
     suspend fun awaitMethod(method: String) {
         observedMethods.getOrPut(method) { CompletableDeferred() }.await()
+    }
+
+    suspend fun notify(method: String, params: JsonObject) {
+        inbound.send(
+            JsonObject(
+                mapOf(
+                    "jsonrpc" to JsonPrimitive("2.0"),
+                    "method" to JsonPrimitive(method),
+                    "params" to params,
+                )
+            ).toString()
+        )
     }
 
     override suspend fun close() {

@@ -1,11 +1,34 @@
 import MobidexShared
 import SwiftUI
 
+/// Parsed-document cache keyed by the raw markdown string. Markdown views are constructed on
+/// every body evaluation of their parent (the `State(initialValue:)` value is discarded for
+/// existing rows but the parse still runs), so unchanged rows must resolve to a cache hit
+/// instead of re-running the KMP parser.
+enum MarkdownDocumentCache {
+    // NSCache is documented thread-safe; the compiler just can't see that.
+    nonisolated(unsafe) private static let cache: NSCache<NSString, MobidexShared.MarkdownDocument> = {
+        let cache = NSCache<NSString, MobidexShared.MarkdownDocument>()
+        cache.countLimit = 256
+        return cache
+    }()
+
+    static func document(for markdown: String) -> MobidexShared.MarkdownDocument {
+        let key = markdown as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
+        let document = MobidexShared.MarkdownDocumentParser.shared.parse(markdown: markdown)
+        cache.setObject(document, forKey: key)
+        return document
+    }
+}
+
 struct SharedMarkdownView: View {
     private let document: MobidexShared.MarkdownDocument
 
     init(markdown: String) {
-        document = MobidexShared.MarkdownDocumentParser.shared.parse(markdown: markdown)
+        document = MarkdownDocumentCache.document(for: markdown)
     }
 
     var body: some View {

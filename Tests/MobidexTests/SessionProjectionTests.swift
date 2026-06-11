@@ -138,4 +138,60 @@ final class SessionProjectionTests: XCTestCase {
         XCTAssertNil(ConversationInlineMarkdownParser.url(from: "/Users/mazdak/Code/qlaw/worker.rs"))
         XCTAssertEqual(ConversationInlineMarkdownParser.url(from: "https://example.com")?.scheme, "https")
     }
+
+    // MARK: - ConversationSectionAccumulator invariant
+    // After any operation sequence, accumulator.sections must equal the full projection of the
+    // same item list — including the #n dedup suffixes.
+
+    func testAccumulatorAppendAndUpdateMatchFullProjectionIncludingDedupSuffixes() {
+        var items: [CodexThreadItem] = []
+        let accumulator = ConversationSectionAccumulator()
+
+        func appendBoth(_ item: CodexThreadItem) {
+            items.append(item)
+            accumulator.append(item)
+        }
+
+        appendBoth(.userMessage(id: "item-1", text: "Run tests"))
+        appendBoth(.agentMessage(id: "item-2", text: "On it"))
+        appendBoth(.agentMessage(id: "item-2", text: "duplicate id"))
+        appendBoth(.toolCall(id: "item-2", label: "tool", status: "inProgress", detail: nil))
+        XCTAssertEqual(accumulator.sections, CodexSessionProjection.sections(from: items))
+        XCTAssertEqual(accumulator.sections.map(\.id), ["item-1", "item-2", "item-2#2", "item-2#3"])
+
+        // Streaming update re-projects in place and preserves the allocated (suffixed) id.
+        items[2] = .agentMessage(id: "item-2", text: "duplicate id grew")
+        XCTAssertTrue(accumulator.updateAt(2, with: items[2]))
+        XCTAssertEqual(accumulator.sections, CodexSessionProjection.sections(from: items))
+
+        XCTAssertFalse(accumulator.updateAt(99, with: items[2]))
+    }
+
+    func testAccumulatorResetAdoptsPrebuiltProjectionAndReplaysIdAllocation() {
+        let items: [CodexThreadItem] = [
+            .userMessage(id: "item-1", text: "Hello"),
+            .agentMessage(id: "item-1", text: "duplicate id"),
+            .command(id: "item-2", command: "bun test", cwd: "/srv", status: "completed", output: "ok"),
+        ]
+        let prebuilt = CodexSessionProjection.sections(from: items)
+        let accumulator = ConversationSectionAccumulator()
+        accumulator.reset(items: items, prebuilt: prebuilt)
+        XCTAssertEqual(accumulator.sections, prebuilt)
+
+        // Allocation state was replayed: the next duplicate id keeps suffixing where the
+        // full projection would.
+        var extended = items
+        let appended = CodexThreadItem.plan(id: "item-1", text: "step")
+        extended.append(appended)
+        accumulator.append(appended)
+        XCTAssertEqual(accumulator.sections, CodexSessionProjection.sections(from: extended))
+        XCTAssertEqual(accumulator.sections.last?.id, "item-1#3")
+
+        // Mismatched prebuilt is rejected in favor of a fresh projection.
+        accumulator.reset(items: items, prebuilt: Array(prebuilt.dropLast()))
+        XCTAssertEqual(accumulator.sections, prebuilt)
+
+        accumulator.reset(items: [])
+        XCTAssertTrue(accumulator.sections.isEmpty)
+    }
 }

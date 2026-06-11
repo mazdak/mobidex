@@ -545,6 +545,15 @@ enum SharedKMPBridge {
             .map(toConversationSection)
     }
 
+    /// Single-item projection for live/incremental updates: one item crosses the KMP bridge
+    /// instead of the whole conversation per streamed delta. `id` is the caller-allocated
+    /// stable section id (see ConversationSectionAccumulator).
+    static func conversationSection(from item: CodexThreadItem, id: String) -> ConversationSection {
+        toConversationSection(
+            MobidexShared.CodexSessionProjection.shared.liveSection(item: toSharedSessionItem(item), id: id)
+        )
+    }
+
     static func jsonFields(from options: CodexTurnOptions) -> [String: JSONValue] {
         toSharedTurnOptions(options).jsonFields.mapValues(toJSONValue)
     }

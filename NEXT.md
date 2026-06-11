@@ -6,7 +6,25 @@
 - [x] E2. Consolidated, ranked report committed as AUDIT.md (1×P0, ~14×P1, P2 backlog, cleared list, 3-phase fix plan).
 - [x] E3. User selected Phase 1 (stability) — tracked below as F-checklist. Phases 2–3 remain parked.
 
-## Mission Checklist (active, 2026-06-11: ACP model switching from chat UI)
+## Mission Checklist (active, 2026-06-11: audit Phase 2 — streaming performance)
+
+Design: incremental projection with a correctness invariant — after any op sequence, the
+accumulator's sections must equal `CodexSessionProjection.sections(items)` exactly (ids incl.
+dedup suffixes + content). Hot deltas take the incremental path; anything unmappable falls
+back to full re-projection. Publishes conflate to a ~50ms tick during streaming. Residual
+B2 note: with B1 fixed, per-delta item-text concat is O(message) per delta (~MB/s worst
+case) — acceptable; revisit builders only if measurement disagrees.
+
+- [x] H1. shared-core: `ConversationSectionAccumulator` (reset(items, prebuilt?) / append / updateAt / updateLast, id allocation mirroring uniquelyIdentified) + `liveSection(item, id)`; invariant + dedup tests (5/5).
+- [x] H2. Android B1/B6: Codex delta handlers + ACP collector drive the accumulator incrementally (full-rebuild fallback for structural ops); hydration/turn-completed parse + projection off-main (injectable projectionDispatcher, default Dispatchers.Default); conflated _state publishes (~50ms tick + trailing flush, cacheThreadDetail behind the flush). Validation: shared 37, Android 33 (incl. new ConversationSectionAccumulatorSyncTest 8 + VM streaming-invariant test); NewSessionTest suite 15/15 + full suite 3/3 after deflaking pre-existing advanceUntilIdle 120s-timeout race.
+- [x] H3. Android B7: raw-exec reader uses BufferedReader.readLine (kills quadratic pending-buffer rescan on MB-scale ACP lines); preserves skip-empty-lines, trySendBlocking stop-on-failure, close semantics.
+- [x] H4. iOS B1: Swift accumulator mirror (exact uniquelyIdentified parity, tested) over bridged sections; single-item bridge conversion per delta via `conversationSection(from:id:)`; all delta handlers + ACP collector wired with full-reset fallbacks; conflated publish (leading-edge immediate + 50ms trailing) with didChange/follow-token/cacheThreadDetail behind the flush; hydration/turn boundaries flush immediately.
+- [x] H5. iOS B3: `MarkdownDocumentCache` (NSCache, 256 entries) keyed by body — `MarkdownText` and `SharedMarkdownView` both stop re-parsing on body re-evaluation.
+- [x] H6. iOS B4: statusMessage skipped for item/* + delta + terminalInteraction notifications; `ConversationSectionView` Equatable on section+isLive (closure excluded) + `.equatable()`.
+- [x] H7. iOS B5: per-frame CGFloat @State removed; derived booleans written only on change.
+- [ ] H8. Validation green on combined tree (shared full jvmTest, Android full unit suite, iOS build + simulator at known-flake baseline with new projection tests passing). Codex reviews + triage pending.
+
+## Mission Checklist (complete, 2026-06-11: ACP model switching from chat UI)
 
 - [x] G1. shared-core: `AcpModelInfo`/`AcpSessionModels` + `acpSessionModels()` parsing of session/new `models`; `sessionSetModel` builder; tests (27 total green).
 - [x] G2. Android: `AcpClient.createSession` → `AcpSession(sessionId, models)` + `setModel()`; `acpModels` in UI state with `setAcpModel()`; `AcpModelSelector` dropdown atop ChatTimeline; smoke covers parse + `session/set_model` wire shape.

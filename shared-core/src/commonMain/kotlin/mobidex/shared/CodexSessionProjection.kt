@@ -232,4 +232,71 @@ object CodexSessionProjection {
                 body = "Unsupported app-server item in turn $turnId.",
             )
         }
+
+    /**
+     * Single-item projection for live/incremental updates; the caller supplies the stable
+     * (already-deduplicated) section id so streaming updates never change row identity.
+     */
+    fun liveSection(item: CodexSessionItem, id: String): ConversationSection =
+        section(item, "live").copy(id = id)
+}
+
+/**
+ * Incremental companion to [CodexSessionProjection.sections]: maintains the projected section
+ * list so streaming deltas cost O(changed item) instead of O(entire conversation) per update.
+ *
+ * Invariant: after any sequence of operations, [sections] equals
+ * `CodexSessionProjection.sections(items)` for the same item list — including the `#n`
+ * dedup suffixes, which [allocate] mirrors from `uniquelyIdentified` exactly. Callers that
+ * hit an operation they cannot map incrementally should fall back to [reset].
+ */
+class ConversationSectionAccumulator {
+    private val emittedIds = mutableSetOf<String>()
+    private val countsById = mutableMapOf<String, Int>()
+    private val mutableSections = mutableListOf<ConversationSection>()
+
+    val sections: List<ConversationSection> get() = mutableSections
+
+    /**
+     * Rebuilds from scratch. When [prebuilt] is supplied (e.g. a thread-derived projection),
+     * it is adopted verbatim and only the id-allocation state is replayed from the items —
+     * valid because every section's pre-dedup id is its item's id.
+     */
+    fun reset(items: List<CodexSessionItem>, prebuilt: List<ConversationSection>? = null) {
+        emittedIds.clear()
+        countsById.clear()
+        mutableSections.clear()
+        if (prebuilt != null && prebuilt.size == items.size) {
+            items.forEach { allocate(it.id) }
+            mutableSections.addAll(prebuilt)
+        } else {
+            items.forEach { append(it) }
+        }
+    }
+
+    fun append(item: CodexSessionItem) {
+        mutableSections.add(CodexSessionProjection.liveSection(item, allocate(item.id)))
+    }
+
+    /** Re-projects one item in place, preserving the section's allocated id. Returns false when out of range. */
+    fun updateAt(index: Int, item: CodexSessionItem): Boolean {
+        val existing = mutableSections.getOrNull(index) ?: return false
+        mutableSections[index] = CodexSessionProjection.liveSection(item, existing.id)
+        return true
+    }
+
+    fun updateLast(item: CodexSessionItem): Boolean = updateAt(mutableSections.lastIndex, item)
+
+    // Mirrors CodexSessionProjection.uniquelyIdentified's suffixing exactly.
+    private fun allocate(baseId: String): String {
+        if (emittedIds.add(baseId)) return baseId
+        var count = (countsById[baseId] ?: 1) + 1
+        var next = "$baseId#$count"
+        while (!emittedIds.add(next)) {
+            count += 1
+            next = "$baseId#$count"
+        }
+        countsById[baseId] = count
+        return next
+    }
 }

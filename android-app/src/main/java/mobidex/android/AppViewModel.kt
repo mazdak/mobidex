@@ -10,6 +10,7 @@ import java.io.File
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -44,6 +45,7 @@ import mobidex.android.model.ServerConnectionState
 import mobidex.android.model.BackendType
 import mobidex.android.model.ServerRecord
 import mobidex.android.model.conversationSections
+import mobidex.android.model.flattenedSharedItems
 import mobidex.android.model.toThreadItem
 import mobidex.android.service.AcpClient
 import mobidex.android.service.CodexAppServerClient
@@ -73,8 +75,9 @@ import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
 import mobidex.shared.CodexSessionCachePolicy
 import mobidex.shared.CodexSessionItem
-import mobidex.shared.CodexSessionProjection
 import mobidex.shared.CodexThreadSummary
+import mobidex.shared.ConversationSection
+import mobidex.shared.ConversationSectionAccumulator
 import mobidex.shared.GitDiffSnapshot
 import mobidex.shared.JsonValue
 import mobidex.shared.ProjectCatalog
@@ -212,6 +215,9 @@ class AppViewModel(
     private val credentialStore: CredentialStore,
     private val hostKeyStore: HostKeyStore,
     private val sshService: MobidexSshService,
+    // Heavy thread parse/projection work hops here (audit B6); tests inject their test
+    // dispatcher so that work stays in virtual time.
+    private val projectionDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
     private val _state = MutableStateFlow(MobidexUiState())
     val state: StateFlow<MobidexUiState> = _state.asStateFlow()
@@ -255,6 +261,20 @@ class AppViewModel(
     // the race close what they built instead of installing it.
     private var acpConnectGeneration = 0
     private val _acpSessionItems = MutableStateFlow<List<CodexSessionItem>>(emptyList())
+
+    // Incremental conversation projection (audit B1). Each accumulator mirrors exactly the
+    // item list whose projection is published (flattened visible thread items for Codex,
+    // _acpSessionItems for ACP); any update that can't be mapped to a single item resets
+    // from a full projection so published sections never drift from
+    // CodexSessionProjection.sections(items).
+    private val codexSections = ConversationSectionAccumulator()
+    private var codexSectionsThreadId: String? = null
+    private val acpSections = ConversationSectionAccumulator()
+
+    // Streamed section publishes are conflated to ~1 per 50ms with a trailing flush; the
+    // per-delta thread-detail cache write rides the same flush instead of running per delta.
+    private var sectionsFlushJob: Job? = null
+    private var pendingSectionsPublish: (() -> Unit)? = null
 
     // Counts overlapping runBusy blocks so one finishing doesn't release the gate while
     // another is still mutating session state.
@@ -724,8 +744,9 @@ class AppViewModel(
      * Production ACP launch (called from connectSelectedServer / send paths when backendType == Acp).
      * Mirrors the debug path but:
      * - Uses the production acpClient/acpJob/acpSessionId holders (co-scoped with VM)
-     * - Collector appends to _acpSessionItems and immediately publishes ConversationSection list
-     *   via the *exact same* CodexSessionProjection.sections(...) that the shared mapper + iOS preview use.
+     * - Collector appends to _acpSessionItems and publishes the ConversationSection list kept
+     *   equal to CodexSessionProjection.sections(_acpSessionItems) by the incremental
+     *   accumulator (audit B1), conflated to ~1 publish per 50ms during streaming.
      *   This makes ACP chunks (Reasoning/AgentMessage/ToolCall/Plan/AgentEvent) appear in the
      *   normal ConversationView with zero UI or Codex changes.
      * - SSH credential only (no XAI injection; exactly as Codex).
@@ -748,6 +769,8 @@ class AppViewModel(
             acpClient = null
             acpSessionId = null
             _acpSessionItems.value = emptyList()
+            acpSections.reset(emptyList())
+            pendingSectionsPublish = null
             _state.update {
                 it.copy(
                     conversationSections = emptyList(),
@@ -806,14 +829,22 @@ class AppViewModel(
                         client.sessionItems.collect { item ->
                             if (acpClient !== client) return@collect // stale session
                             // Coalesce streamed deltas / resolve tool cards before projecting.
-                            _acpSessionItems.update { list -> list.appendingAcpSessionItem(item) }
-                            // Drive the *main* conversationSections (used by ConversationSection / UI)
-                            // using the proven shared projection. Satisfies the UI translation gate.
-                            _state.update { s ->
-                                if (_state.value.selectedServerID == server.id) {
-                                    s.copy(conversationSections = CodexSessionProjection.sections(_acpSessionItems.value))
-                                } else {
-                                    s
+                            val previous = _acpSessionItems.value
+                            val next = previous.appendingAcpSessionItem(item)
+                            _acpSessionItems.value = next
+                            // Audit B1: mirror the single-item change onto the accumulator
+                            // instead of re-projecting the whole session per chunk, then
+                            // drive the *main* conversationSections through the conflated
+                            // publish. Sections stay equal to the full shared projection.
+                            acpSections.applyItemsChange(previous, next)
+                            val sections = acpSections.sections.toList()
+                            publishStreamedSections {
+                                _state.update { s ->
+                                    if (acpClient === client && s.selectedServerID == server.id) {
+                                        s.copy(conversationSections = sections)
+                                    } else {
+                                        s
+                                    }
                                 }
                             }
                         }
@@ -898,10 +929,12 @@ class AppViewModel(
                         _state.update { it.copy(statusMessage = error.message ?: "Project refresh failed after connect.") }
                     }
                     _state.value.selectedThreadID?.let { threadID ->
-                        runCatching { client.resumeThread(threadID) }
-                            .recoverCatching { client.readThread(threadID) }
-                            .getOrNull()
-                            ?.let { hydrateConversation(it) }
+                        // Audit B6: thread parse runs off-main; hydrateConversation projects off-main too.
+                        withContext(projectionDispatcher) {
+                            runCatching { client.resumeThread(threadID) }
+                                .recoverCatching { client.readThread(threadID) }
+                                .getOrNull()
+                        }?.let { hydrateConversation(it) }
                     }
                     refreshThreads(refreshGeneration = refreshGeneration)
                     refreshHandedOff = true
@@ -1259,23 +1292,24 @@ class AppViewModel(
 
     private fun restoreCachedSessionState(cacheKey: ThreadScopeCacheKey): Boolean {
         val cached = threadListCache[cacheKey] ?: return false
+        val selectedID = cachedSelectedThreadID(cached)
+        val detail = selectedID
+            ?.let { id -> threadDetailCache[ThreadDetailCacheKey(cacheKey.serverID, id)] }
+            ?.takeIf { detail ->
+                CodexSessionCachePolicy.isFresh(
+                    fetchedAtEpochSeconds = detail.fetchedAtEpochSeconds,
+                    nowEpochSeconds = Instant.now().epochSecond,
+                    ttlSeconds = CodexSessionCachePolicy.DEFAULT_THREAD_DETAIL_TTL_SECONDS,
+                )
+            }
+        val selectedThread = detail?.thread ?: selectedID?.let { id -> cached.threads.firstOrNull { it.id == id } }
+        val sections = selectedThread?.let { rebuildThreadSections(it) }.orEmpty()
         _state.update { state ->
-            val selectedID = cachedSelectedThreadID(cached)
-            val detail = selectedID
-                ?.let { id -> threadDetailCache[ThreadDetailCacheKey(cacheKey.serverID, id)] }
-                ?.takeIf { detail ->
-                    CodexSessionCachePolicy.isFresh(
-                        fetchedAtEpochSeconds = detail.fetchedAtEpochSeconds,
-                        nowEpochSeconds = Instant.now().epochSecond,
-                        ttlSeconds = CodexSessionCachePolicy.DEFAULT_THREAD_DETAIL_TTL_SECONDS,
-                    )
-                }
-            val selectedThread = detail?.thread ?: selectedID?.let { id -> cached.threads.firstOrNull { it.id == id } }
             state.copy(
                 threads = cached.threads,
                 selectedThreadID = selectedID,
                 selectedThread = selectedThread,
-                conversationSections = selectedThread?.conversationSections().orEmpty(),
+                conversationSections = sections,
                 pendingApprovals = emptyList(),
                 diffSnapshot = GitDiffSnapshot.Empty,
                 tokenUsagePercent = null,
@@ -1331,18 +1365,25 @@ class AppViewModel(
             val requestServerID = requestState.selectedServerID
             val requestProjectID = requestState.selectedProjectID
             val shouldPromoteProject = requestState.isShowingAllSessions
+            // Select synchronously (before any suspension) so a slower projection from an
+            // earlier tap can never revert a newer selection; sections follow once projected.
             _state.update {
                 it.copy(
                     selectedThreadID = thread.id,
                     selectedThread = thread,
-                    conversationSections = thread.conversationSections(),
+                    conversationSections = emptyList(),
                     diffSnapshot = GitDiffSnapshot.Empty,
                     tokenUsagePercent = null,
                 )
             }
+            // Audit B6: the tapped thread's initial projection runs off-main.
+            val projected = withContext(projectionDispatcher) { projectThreadSections(thread) }
+            if (_state.value.selectedThreadID != thread.id) return@launch // superseded by a newer tap
+            adoptThreadSections(projected)
+            _state.update { it.copy(conversationSections = projected.sections) }
             runBusy("Opening session") {
                 val client = appServer ?: return@runBusy
-                val hydrated = client.resumeThread(thread.id)
+                val hydrated = withContext(projectionDispatcher) { client.resumeThread(thread.id) }
                 hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, thread.id)
                 if (shouldPromoteProject) {
                     promoteProjectToProjectList(hydrated)
@@ -1506,9 +1547,15 @@ class AppViewModel(
                         if (textToSend.isNotBlank()) {
                             // Optimistic local echo using the same item type the mapper produces.
                             val userEcho = CodexSessionItem.UserMessage(id = "local-${System.currentTimeMillis()}", text = textToSend)
-                            _acpSessionItems.update { it + userEcho }
-                            _state.update { s ->
-                                s.copy(conversationSections = CodexSessionProjection.sections(_acpSessionItems.value))
+                            val previous = _acpSessionItems.value
+                            val next = previous + userEcho
+                            _acpSessionItems.value = next
+                            acpSections.applyItemsChange(previous, next)
+                            val sections = acpSections.sections.toList()
+                            publishStreamedSections {
+                                _state.update { s ->
+                                    if (s.selectedServerID == serverForSend.id) s.copy(conversationSections = sections) else s
+                                }
                             }
                             runCatching { acpClient?.sendPrompt(sid, textToSend) }
                                 .onFailure { e -> _state.update { it.copy(statusMessage = e.message ?: "ACP send failed") } }
@@ -1722,35 +1769,35 @@ class AppViewModel(
 
     private fun appendLocalUserEcho(threadID: String, turnID: String, input: List<CodexInputItem>): String? {
         val text = input.displayText() ?: return null
-        var insertedID: String? = null
+        val thread = _state.value.selectedThread?.takeIf { it.id == threadID } ?: return null
+        if (thread.turns.any { turn -> turn.items.any { it is CodexThreadItem.UserMessage && it.text == text } }) {
+            return null
+        }
+        val item = CodexThreadItem.UserMessage(id = "local-user-$turnID-${System.currentTimeMillis()}", text = text)
+        val nextTurns = if (thread.turns.any { it.id == turnID }) {
+            thread.turns.map { turn -> if (turn.id == turnID) turn.copy(items = turn.items + item) else turn }
+        } else {
+            thread.turns + CodexTurn(id = turnID, items = listOf(item), status = "inProgress")
+        }
+        val nextThread = thread.copy(turns = nextTurns)
+        // Structural change (item inserted): full resync keeps the accumulator drift-free.
+        val sections = rebuildThreadSections(nextThread)
         _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            if (thread.id != threadID) return@update state
-            if (thread.turns.any { turn -> turn.items.any { it is CodexThreadItem.UserMessage && it.text == text } }) {
-                return@update state
-            }
-            val item = CodexThreadItem.UserMessage(id = "local-user-$turnID-${System.currentTimeMillis()}", text = text)
-            insertedID = item.id
-            val nextTurns = if (thread.turns.any { it.id == turnID }) {
-                thread.turns.map { turn -> if (turn.id == turnID) turn.copy(items = turn.items + item) else turn }
-            } else {
-                thread.turns + CodexTurn(id = turnID, items = listOf(item), status = "inProgress")
-            }
-            val nextThread = thread.copy(turns = nextTurns)
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
+            if (state.selectedThread?.id == threadID) state.copy(selectedThread = nextThread, conversationSections = sections) else state
         }
         cacheCurrentSelectedThreadDetail()
-        return insertedID
+        return item.id
     }
 
     private fun removeLocalUserEcho(threadID: String, itemID: String) {
+        val thread = _state.value.selectedThread?.takeIf { it.id == threadID } ?: return
+        val nextThread = thread.copy(
+            turns = thread.turns.map { turn -> turn.copy(items = turn.items.filterNot { it.id == itemID }) }
+        )
+        // Structural change (item removed): full resync keeps the accumulator drift-free.
+        val sections = rebuildThreadSections(nextThread)
         _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            if (thread.id != threadID) return@update state
-            val nextThread = thread.copy(
-                turns = thread.turns.map { turn -> turn.copy(items = turn.items.filterNot { it.id == itemID }) }
-            )
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
+            if (state.selectedThread?.id == threadID) state.copy(selectedThread = nextThread, conversationSections = sections) else state
         }
         cacheCurrentSelectedThreadDetail()
     }
@@ -1925,6 +1972,8 @@ class AppViewModel(
         acpClient = null
         acpSessionId = null
         _acpSessionItems.value = emptyList()
+        acpSections.reset(emptyList())
+        pendingSectionsPublish = null
         appServer?.close()
         appServer = null
         refreshQueuedTurnInputs()
@@ -2365,30 +2414,47 @@ class AppViewModel(
                 val targetsSelectedThread = eventTargetsSelectedThread(params)
                 val turn = params.obj("turn")?.let { parseTurn(it) }
                 if (targetsSelectedThread && turn != null) {
-                    _state.update { state ->
-                        val thread = state.selectedThread ?: return@update state
+                    val thread = _state.value.selectedThread
+                    if (thread != null) {
                         val next = thread.copy(
                             status = if (method == "turn/started") thread.status.copy(type = "active") else thread.status.copy(type = "idle"),
                             turns = thread.turns.upsert(turn),
                         )
-                        state.copy(
-                            selectedThread = next,
-                            conversationSections = next.conversationSections(),
-                            statusMessage = if (method == "turn/completed" && turn.status == "failed" && turn.error != null) {
-                                turnErrorStatusMessage(turn.error.message)
-                            } else {
-                                state.statusMessage
-                            },
-                        )
+                        _state.update { state ->
+                            if (state.selectedThread !== thread) return@update state
+                            state.copy(
+                                selectedThread = next,
+                                statusMessage = if (method == "turn/completed" && turn.status == "failed" && turn.error != null) {
+                                    turnErrorStatusMessage(turn.error.message)
+                                } else {
+                                    state.statusMessage
+                                },
+                            )
+                        }
+                        // Audit B6: full projection off-main. Adopt only if nothing replaced
+                        // the thread while projecting — a racing mutation rebuilds from `next`
+                        // itself, so skipping the stale snapshot is the drift-free outcome.
+                        val projected = withContext(projectionDispatcher) { projectThreadSections(next) }
+                        if (_state.value.selectedThread === next) {
+                            adoptThreadSections(projected)
+                            _state.update { state ->
+                                if (state.selectedThread === next) state.copy(conversationSections = projected.sections) else state
+                            }
+                            cacheCurrentSelectedThreadDetail()
+                        }
                     }
-                    cacheCurrentSelectedThreadDetail()
                 } else if (method == "turn/started") {
                     return
                 }
                 if (method == "turn/completed") {
                     refreshThreads()
                     if (targetsSelectedThread) {
-                        _state.value.selectedThreadID?.let { id -> appServer?.readThread(id)?.let { hydrateConversation(it) } }
+                        val client = appServer
+                        val threadID = _state.value.selectedThreadID
+                        if (client != null && threadID != null) {
+                            // Audit B6: readThread response parsing happens off-main too.
+                            hydrateConversation(withContext(projectionDispatcher) { client.readThread(threadID) })
+                        }
                     }
                     params.string("threadId")?.let { startNextQueuedTurnIfReady(it) }
                 }
@@ -2433,16 +2499,22 @@ class AppViewModel(
         }
     }
 
-    private fun hydrateConversation(thread: CodexThread) {
+    private suspend fun hydrateConversation(thread: CodexThread) {
         sessionRefreshDetailLoadGeneration += 1
         val serverID = _state.value.selectedServerID
-        val displayThread = thread.preserveExistingUserMessages(_state.value.selectedThread)
+        val existingSelected = _state.value.selectedThread
+        // Audit B6: echo merge + full projection run off-main; only state writes stay on Main.
+        val projected = withContext(projectionDispatcher) {
+            projectThreadSections(thread.preserveExistingUserMessages(existingSelected))
+        }
+        val displayThread = projected.thread
         cacheThreadDetail(serverID, displayThread)
+        adoptThreadSections(projected)
         _state.update {
             it.copy(
                 selectedThreadID = displayThread.id,
                 selectedThread = displayThread,
-                conversationSections = displayThread.conversationSections(),
+                conversationSections = projected.sections,
                 queuedTurnInputs = queuedTurnInputsByThreadID[displayThread.id].orEmpty(),
             )
         }
@@ -2470,7 +2542,7 @@ class AppViewModel(
         }
     }
 
-    private fun hydrateConversationIfCurrent(
+    private suspend fun hydrateConversationIfCurrent(
         thread: CodexThread,
         requestServerID: String?,
         requestProjectID: String?,
@@ -2478,20 +2550,29 @@ class AppViewModel(
         clearPerThreadState: Boolean = false,
         acceptedStartedThreadID: String? = null,
     ): Boolean {
+        fun selectionMatches(state: MobidexUiState): Boolean {
+            val threadMatches = state.selectedThreadID == requestThreadID ||
+                (requestThreadID == null && acceptedStartedThreadID != null && state.selectedThreadID == acceptedStartedThreadID)
+            return state.selectedServerID == requestServerID && state.selectedProjectID == requestProjectID && threadMatches
+        }
+
+        val initial = _state.value
+        if (!selectionMatches(initial)) return false
+        // Audit B6: echo merge + full projection run off-main; selection is re-validated
+        // inside the state update after resuming on Main.
+        val projected = withContext(projectionDispatcher) {
+            projectThreadSections(thread.preserveExistingUserMessages(initial.selectedThread))
+        }
         var didHydrate = false
         _state.update { state ->
-            val selectionMatches = state.selectedThreadID == requestThreadID ||
-                (requestThreadID == null && acceptedStartedThreadID != null && state.selectedThreadID == acceptedStartedThreadID)
-            if (state.selectedServerID != requestServerID || state.selectedProjectID != requestProjectID || !selectionMatches) {
+            if (!selectionMatches(state)) {
                 state
             } else {
                 didHydrate = true
-                sessionRefreshDetailLoadGeneration += 1
-                val displayThread = thread.preserveExistingUserMessages(state.selectedThread)
                 var next = state.copy(
-                    selectedThreadID = displayThread.id,
-                    selectedThread = displayThread,
-                    conversationSections = displayThread.conversationSections(),
+                    selectedThreadID = projected.thread.id,
+                    selectedThread = projected.thread,
+                    conversationSections = projected.sections,
                 )
                 if (clearPerThreadState) {
                     next = next.copy(
@@ -2505,6 +2586,8 @@ class AppViewModel(
             }
         }
         if (didHydrate) {
+            sessionRefreshDetailLoadGeneration += 1
+            adoptThreadSections(projected)
             cacheThreadDetail(requestServerID, _state.value.selectedThread ?: thread)
             drainSelectedQueueIfReady()
         }
@@ -2628,34 +2711,103 @@ class AppViewModel(
         )
     }
 
-    private fun upsertItem(item: CodexThreadItem) {
-        _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            val turn = thread.turns.lastOrNull() ?: return@update state
-            val nextTurn = turn.copy(items = turn.items.upsert(item))
-            val nextThread = thread.copy(turns = thread.turns.upsert(nextTurn))
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
+    /**
+     * Publishes streamed conversationSections at most ~once per 50ms with a trailing flush
+     * (audit B1): the first publish in a window applies immediately so single updates stay
+     * snappy; bursts coalesce into the trailing flush. [apply] must re-validate selection
+     * itself because the flush can run after the user switched threads or servers.
+     */
+    private fun publishStreamedSections(apply: () -> Unit) {
+        if (sectionsFlushJob != null) {
+            pendingSectionsPublish = apply
+            return
         }
+        apply()
         cacheCurrentSelectedThreadDetail()
+        sectionsFlushJob = viewModelScope.launch {
+            delay(STREAMED_SECTIONS_FLUSH_WINDOW_MILLIS)
+            sectionsFlushJob = null
+            pendingSectionsPublish?.let { pending ->
+                pendingSectionsPublish = null
+                publishStreamedSections(pending)
+            }
+        }
+    }
+
+    /** Adopts a fully projected thread; any pending streamed flush predates it and is dropped. */
+    private fun adoptThreadSections(projected: ProjectedThread) {
+        pendingSectionsPublish = null
+        codexSectionsThreadId = projected.thread.id
+        codexSections.reset(projected.items, projected.sections)
+    }
+
+    /** Full projection + accumulator resync for [thread]; every fallback funnels through here. */
+    private fun rebuildThreadSections(thread: CodexThread): List<ConversationSection> {
+        val projected = projectThreadSections(thread)
+        adoptThreadSections(projected)
+        return projected.sections
+    }
+
+    /**
+     * O(changed item) projection for a streamed update to [itemId] inside [thread]. Anything
+     * the accumulator can't map unambiguously falls back to the full rebuild — different
+     * thread, structural change, duplicate item ids (legacy mapItems semantics update every
+     * duplicate), changed row identity, or Unknown items (their section body embeds the real
+     * turn id, which liveSection cannot reproduce). Correctness over speed, always.
+     */
+    private fun streamedThreadSections(thread: CodexThread, itemId: String): List<ConversationSection> {
+        if (codexSectionsThreadId == thread.id) {
+            val items = thread.flattenedSharedItems()
+            val index = items.indexOfLast { it.id == itemId }
+            if (index >= 0 && items[index] !is CodexSessionItem.Unknown && items.indexOfFirst { it.id == itemId } == index) {
+                if (items.size == codexSections.sections.size) {
+                    val allocatedId = codexSections.sections[index].id
+                    if ((allocatedId == itemId || allocatedId.startsWith("$itemId#")) && codexSections.updateAt(index, items[index])) {
+                        return codexSections.sections.toList()
+                    }
+                } else if (items.size == codexSections.sections.size + 1 && index == items.lastIndex) {
+                    codexSections.append(items[index])
+                    return codexSections.sections.toList()
+                }
+            }
+        }
+        return rebuildThreadSections(thread)
+    }
+
+    /**
+     * Applies a streamed single-item thread mutation: selectedThread updates immediately
+     * (it is the substrate the next delta builds on) while sections flow through the
+     * incremental accumulator + conflated publish.
+     */
+    private fun applyStreamedItemUpdate(nextThread: CodexThread, itemId: String) {
+        val sections = streamedThreadSections(nextThread, itemId)
+        _state.update { state ->
+            if (state.selectedThread?.id == nextThread.id) state.copy(selectedThread = nextThread) else state
+        }
+        publishStreamedSections {
+            _state.update { state ->
+                if (state.selectedThreadID == nextThread.id) state.copy(conversationSections = sections) else state
+            }
+        }
+    }
+
+    private fun upsertItem(item: CodexThreadItem) {
+        val thread = _state.value.selectedThread ?: return
+        val turn = thread.turns.lastOrNull() ?: return
+        val nextTurn = turn.copy(items = turn.items.upsert(item))
+        val nextThread = thread.copy(turns = thread.turns.upsert(nextTurn))
+        applyStreamedItemUpdate(nextThread, item.id)
     }
 
     private fun showTurnError(item: CodexThreadItem.AgentEvent, message: String, willRetry: Boolean) {
-        _state.update { state ->
-            val thread = state.selectedThread
-            val nextStatus = turnErrorStatusMessage(message, willRetry)
-            if (thread == null || thread.turns.isEmpty()) {
-                return@update state.copy(statusMessage = nextStatus)
-            }
-            val turn = thread.turns.last()
-            val nextTurn = turn.copy(items = turn.items.upsert(item))
-            val nextThread = thread.copy(turns = thread.turns.upsert(nextTurn))
-            state.copy(
-                selectedThread = nextThread,
-                conversationSections = nextThread.conversationSections(),
-                statusMessage = nextStatus,
-            )
-        }
-        cacheCurrentSelectedThreadDetail()
+        val nextStatus = turnErrorStatusMessage(message, willRetry)
+        _state.update { it.copy(statusMessage = nextStatus) }
+        val thread = _state.value.selectedThread ?: return
+        if (thread.turns.isEmpty()) return
+        val turn = thread.turns.last()
+        val nextTurn = turn.copy(items = turn.items.upsert(item))
+        val nextThread = thread.copy(turns = thread.turns.upsert(nextTurn))
+        applyStreamedItemUpdate(nextThread, item.id)
     }
 
     private fun turnErrorStatusMessage(message: String, willRetry: Boolean = false): String =
@@ -2663,66 +2815,54 @@ class AppViewModel(
 
     private fun appendTextDelta(itemID: String?, delta: String?, agent: Boolean) {
         if (itemID == null || delta == null) return
-        _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            val nextThread = thread.mapItems { item ->
-                when {
-                    agent && item is CodexThreadItem.AgentMessage && item.id == itemID -> item.copy(text = item.text + delta)
-                    !agent && item is CodexThreadItem.Plan && item.id == itemID -> item.copy(text = item.text + delta)
-                    else -> item
-                }
+        val thread = _state.value.selectedThread ?: return
+        val nextThread = thread.mapItems { item ->
+            when {
+                agent && item is CodexThreadItem.AgentMessage && item.id == itemID -> item.copy(text = item.text + delta)
+                !agent && item is CodexThreadItem.Plan && item.id == itemID -> item.copy(text = item.text + delta)
+                else -> item
             }
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
-        cacheCurrentSelectedThreadDetail()
+        applyStreamedItemUpdate(nextThread, itemID)
     }
 
     private fun appendCommandDelta(itemID: String?, delta: String?) {
         if (itemID == null || delta == null) return
-        _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            val nextThread = thread.mapItems { item ->
-                if (item is CodexThreadItem.Command && item.id == itemID) {
-                    item.copy(output = (item.output ?: "") + delta)
-                } else {
-                    item
-                }
+        val thread = _state.value.selectedThread ?: return
+        val nextThread = thread.mapItems { item ->
+            if (item is CodexThreadItem.Command && item.id == itemID) {
+                item.copy(output = (item.output ?: "") + delta)
+            } else {
+                item
             }
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
-        cacheCurrentSelectedThreadDetail()
+        applyStreamedItemUpdate(nextThread, itemID)
     }
 
     private fun appendReasoningDelta(itemID: String?, delta: String?, index: Int?, summary: Boolean) {
         if (itemID == null || delta == null) return
-        _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            val nextThread = thread.mapItems { item ->
-                if (item is CodexThreadItem.Reasoning && item.id == itemID) {
-                    if (summary) item.copy(summary = appendIndexed(item.summary, index, delta)) else item.copy(content = appendIndexed(item.content, index, delta))
-                } else {
-                    item
-                }
+        val thread = _state.value.selectedThread ?: return
+        val nextThread = thread.mapItems { item ->
+            if (item is CodexThreadItem.Reasoning && item.id == itemID) {
+                if (summary) item.copy(summary = appendIndexed(item.summary, index, delta)) else item.copy(content = appendIndexed(item.content, index, delta))
+            } else {
+                item
             }
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
-        cacheCurrentSelectedThreadDetail()
+        applyStreamedItemUpdate(nextThread, itemID)
     }
 
     private fun ensureReasoningPart(itemID: String?, index: Int?, summary: Boolean) {
         if (itemID == null || index == null) return
-        _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            val nextThread = thread.mapItems { item ->
-                if (item is CodexThreadItem.Reasoning && item.id == itemID) {
-                    if (summary) item.copy(summary = ensureIndexed(item.summary, index)) else item.copy(content = ensureIndexed(item.content, index))
-                } else {
-                    item
-                }
+        val thread = _state.value.selectedThread ?: return
+        val nextThread = thread.mapItems { item ->
+            if (item is CodexThreadItem.Reasoning && item.id == itemID) {
+                if (summary) item.copy(summary = ensureIndexed(item.summary, index)) else item.copy(content = ensureIndexed(item.content, index))
+            } else {
+                item
             }
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
-        cacheCurrentSelectedThreadDetail()
+        applyStreamedItemUpdate(nextThread, itemID)
     }
 
     private fun applyTurnPlanUpdate(turnID: String?, params: JsonElement?) {
@@ -2750,47 +2890,38 @@ class AppViewModel(
 
     private fun applyFileChangePatch(itemID: String?, changes: List<mobidex.android.model.CodexFileChange>) {
         if (itemID == null) return
-        _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            val nextThread = thread.mapItems { item ->
-                if (item is CodexThreadItem.FileChange && item.id == itemID) item.copy(changes = changes) else item
-            }
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
+        val thread = _state.value.selectedThread ?: return
+        val nextThread = thread.mapItems { item ->
+            if (item is CodexThreadItem.FileChange && item.id == itemID) item.copy(changes = changes) else item
         }
-        cacheCurrentSelectedThreadDetail()
+        applyStreamedItemUpdate(nextThread, itemID)
     }
 
     private fun appendFileChangeOutputDelta(itemID: String?, delta: String?) {
         if (itemID == null || delta == null) return
-        _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            val nextThread = thread.mapItems { item ->
-                if (item is CodexThreadItem.FileChange && item.id == itemID) {
-                    val change = item.changes.firstOrNull() ?: mobidex.android.model.CodexFileChange("Patch output", "")
-                    item.copy(changes = listOf(change.copy(diff = change.diff + delta)) + item.changes.drop(1))
-                } else {
-                    item
-                }
+        val thread = _state.value.selectedThread ?: return
+        val nextThread = thread.mapItems { item ->
+            if (item is CodexThreadItem.FileChange && item.id == itemID) {
+                val change = item.changes.firstOrNull() ?: mobidex.android.model.CodexFileChange("Patch output", "")
+                item.copy(changes = listOf(change.copy(diff = change.diff + delta)) + item.changes.drop(1))
+            } else {
+                item
             }
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
-        cacheCurrentSelectedThreadDetail()
+        applyStreamedItemUpdate(nextThread, itemID)
     }
 
     private fun appendToolProgress(itemID: String?, message: String?) {
         if (itemID == null || message.isNullOrBlank()) return
-        _state.update { state ->
-            val thread = state.selectedThread ?: return@update state
-            val nextThread = thread.mapItems { item ->
-                if (item is CodexThreadItem.ToolCall && item.id == itemID) {
-                    item.copy(detail = listOfNotNull(item.detail, message).joinToString("\n"))
-                } else {
-                    item
-                }
+        val thread = _state.value.selectedThread ?: return
+        val nextThread = thread.mapItems { item ->
+            if (item is CodexThreadItem.ToolCall && item.id == itemID) {
+                item.copy(detail = listOfNotNull(item.detail, message).joinToString("\n"))
+            } else {
+                item
             }
-            state.copy(selectedThread = nextThread, conversationSections = nextThread.conversationSections())
         }
-        cacheCurrentSelectedThreadDetail()
+        applyStreamedItemUpdate(nextThread, itemID)
     }
 
     private fun terminalInteractionText(stdin: String?): String? =
@@ -2999,6 +3130,55 @@ private fun List<CodexThreadItem>.upsert(item: CodexThreadItem): List<CodexThrea
 private fun CodexThread.mapItems(transform: (CodexThreadItem) -> CodexThreadItem): CodexThread =
     copy(turns = turns.map { turn -> turn.copy(items = turn.items.map(transform)) })
 
+/** A thread together with its flattened item list and the full projection of exactly that list. */
+private data class ProjectedThread(
+    val thread: CodexThread,
+    val items: List<CodexSessionItem>,
+    val sections: List<ConversationSection>,
+)
+
+private fun projectThreadSections(thread: CodexThread): ProjectedThread =
+    ProjectedThread(thread, thread.flattenedSharedItems(), thread.conversationSections())
+
+/**
+ * Mirrors a single items-list change onto the accumulator without re-projecting the whole
+ * list: append (size +1, unchanged prefix), single-index in-place update (size and item id
+ * unchanged), or no-op. Anything structurally ambiguous — multiple changes, removals,
+ * changed row identity, an out-of-sync accumulator — falls back to a full
+ * [ConversationSectionAccumulator.reset], because the projected sections must always equal
+ * `CodexSessionProjection.sections(next)` exactly.
+ */
+internal fun ConversationSectionAccumulator.applyItemsChange(
+    previous: List<CodexSessionItem>,
+    next: List<CodexSessionItem>,
+) {
+    if (sections.size == previous.size) {
+        if (next.size == previous.size + 1 && next.subList(0, previous.size) == previous) {
+            append(next.last())
+            return
+        }
+        if (next.size == previous.size) {
+            var changedIndex = -1
+            for (index in next.indices) {
+                if (next[index] != previous[index]) {
+                    if (changedIndex >= 0) {
+                        changedIndex = -2 // more than one index changed
+                        break
+                    }
+                    changedIndex = index
+                }
+            }
+            when {
+                changedIndex == -1 -> return // nothing changed
+                changedIndex >= 0 &&
+                    next[changedIndex].id == previous[changedIndex].id &&
+                    updateAt(changedIndex, next[changedIndex]) -> return
+            }
+        }
+    }
+    reset(next)
+}
+
 private data class CachedAttachment(val localPath: String, val mimeType: String?) {
     val isImage: Boolean
         get() = mimeType?.startsWith("image/") == true || localPath.isImageAttachmentPath()
@@ -3008,6 +3188,7 @@ private fun String.isImageAttachmentPath(): Boolean =
     substringAfterLast('.', "").lowercase() in setOf("png", "jpg", "jpeg", "gif", "heic", "webp", "tiff", "bmp")
 
 private const val MACOS_PRIVACY_WARNING_DISMISSED_KEY = "dismissedMacOSPrivacyWarning"
+private const val STREAMED_SECTIONS_FLUSH_WINDOW_MILLIS = 50L
 private const val REMOTE_DIRECTORY_BROWSE_TIMEOUT_MILLIS = 20_000L
 private const val NEW_SESSION_OPERATION_TIMEOUT_MILLIS = 30_000L
 

@@ -113,6 +113,14 @@ fun CodexThread.conversationSections(): List<ConversationSection> =
         )
     )
 
+/**
+ * The exact flattened item list whose projection [conversationSections] publishes — the
+ * incremental section accumulator (audit B1) must be synced to precisely this list or
+ * section ids drift from the full projection.
+ */
+internal fun CodexThread.flattenedSharedItems(): List<CodexSessionItem> =
+    turns.flatMap { turn -> turn.visibleItems().map { it.toSharedItem() } }
+
 fun CodexTurn.visibleItems(): List<CodexThreadItem> =
     if (status == "failed" && error != null) {
         items + error.toThreadItem(id = "turn-error-$id", willRetry = false)

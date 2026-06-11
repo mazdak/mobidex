@@ -545,27 +545,18 @@ private class SshjRawExecTransport private constructor(
         Thread {
             try {
                 val reader = command.inputStream.bufferedReader(Charsets.UTF_8)
-                var pending = ""
                 while (true) {
-                    val chunk = CharArray(8192)
-                    val read = reader.read(chunk)
-                    if (read < 0) break
-                    pending += String(chunk, 0, read)
-
-                    val lines = pending.split('\n')
-                    pending = lines.last()
-                    for (line in lines.dropLast(1)) {
-                        if (line.isNotEmpty()) {
-                            // Blocking send from the dedicated reader thread: backpressure the
-                            // socket instead of silently dropping protocol lines.
-                            if (inboundChannel.trySendBlocking(line).isFailure) {
-                                return@Thread
-                            }
+                    // readLine keeps the scan linear even for MB-scale single-line JSON
+                    // payloads (the old pending-buffer rescan was quadratic per chunk).
+                    // It strips \n and \r\n alike, which is fine for JSON-RPC lines.
+                    val line = reader.readLine() ?: break
+                    if (line.isNotEmpty()) {
+                        // Blocking send from the dedicated reader thread: backpressure the
+                        // socket instead of silently dropping protocol lines.
+                        if (inboundChannel.trySendBlocking(line).isFailure) {
+                            return@Thread
                         }
                     }
-                }
-                if (pending.isNotEmpty()) {
-                    inboundChannel.trySendBlocking(pending)
                 }
                 inboundChannel.close()
             } catch (error: Throwable) {

@@ -380,6 +380,14 @@ final class AppViewModel: ObservableObject {
     private var threadDetailCache: [ThreadDetailCacheKey: CachedThreadDetail] = [:]
     private var suppressNextConversationDetailCache = false
 
+    // Incremental conversation projection: the accumulator mirrors the visible item list
+    // (liveItems on Codex, acpItems on ACP) so streamed deltas re-project one item instead of
+    // the whole conversation, and `@Published` assignments conflate to ~50ms during streaming.
+    private let conversationAccumulator = ConversationSectionAccumulator()
+    private var conversationFlushTask: Task<Void, Never>?
+    private var lastConversationFlushAt: ContinuousClock.Instant?
+    private let conversationFlushInterval: Duration = .milliseconds(50)
+
     init(
         repository: ServerRepository,
         credentialStore: CredentialStore,
@@ -1034,6 +1042,7 @@ final class AppViewModel: ObservableObject {
         }
         acpClient = nil
         acpItems = []
+        resyncConversationAccumulator(items: acpItems)
 
         // Ownership guard: closeConnection / a newer connect bumps connectionGeneration, and a
         // stale attempt closes whatever it built instead of installing it (prevents leaked
@@ -1079,9 +1088,11 @@ final class AppViewModel: ObservableObject {
                     await MainActor.run {
                         guard self.acpClient === client else { return } // stale session
                         // Coalesce streamed deltas / resolve tool cards before projecting.
-                        self.acpItems = SharedKMPBridge.appendingAcpThreadItem(self.acpItems, item)
-                        // Drive the normal ConversationView with the proven mapper (identical to debug preview).
-                        self.publishConversationSections(SharedKMPBridge.conversationSections(from: self.acpItems))
+                        let previousItems = self.acpItems
+                        self.acpItems = SharedKMPBridge.appendingAcpThreadItem(previousItems, item)
+                        // Drive the normal ConversationView through the incremental accumulator
+                        // (same projection as before; one bridged item per chunk instead of all).
+                        self.applyAcpConversationChange(previous: previousItems, next: self.acpItems)
                     }
                 }
             }
@@ -1705,7 +1716,7 @@ final class AppViewModel: ObservableObject {
                     selectedThread = nil
                     liveItems = []
                     selectedThreadTokenUsage = nil
-                    publishConversationSections([])
+                    resetConversationSections(items: [])
                 }
             }
             refreshQueuedTurnInputCount()
@@ -1785,8 +1796,9 @@ final class AppViewModel: ObservableObject {
                 // Local user echo as CodexThreadItem (the type the Swift client + bridge expect).
                 let echo = CodexThreadItem.userMessage(id: "local-\(UUID().uuidString)", text: text)
                 await MainActor.run {
+                    let previousItems = acpItems
                     acpItems.append(echo)
-                    publishConversationSections(SharedKMPBridge.conversationSections(from: acpItems))
+                    applyAcpConversationChange(previous: previousItems, next: acpItems)
                 }
             }
             await runOperation(.sending, status: "Sending") {
@@ -2057,6 +2069,9 @@ final class AppViewModel: ObservableObject {
         acpClient = nil
         acpSessionId = nil
         acpItems = []
+        // Conversation stays visible after close; resync silently so the next incremental op
+        // cannot pair a stale accumulator with the cleared item list.
+        resyncConversationAccumulator(items: acpItems)
         cancelActiveTurnRefresh()
         await appServer?.close()
         appServer = nil
@@ -2153,7 +2168,7 @@ final class AppViewModel: ObservableObject {
             selectedThread = nil
             liveItems = []
             selectedThreadTokenUsage = nil
-            publishConversationSections([])
+            resetConversationSections(items: [])
             changedFiles = []
             diffSnapshot = .empty
             clearSelectedThreadLoads()
@@ -2168,7 +2183,7 @@ final class AppViewModel: ObservableObject {
             selectedThread = detail.thread
             liveItems = detail.liveItems
             selectedThreadTokenUsage = detail.tokenUsage
-            publishConversationSections(detail.sections)
+            resetConversationSections(items: detail.liveItems, prebuilt: detail.sections)
         } else if let summary = cachedList.threads.first(where: { $0.id == selectedThreadID }) {
             selectedThreadTokenUsage = nil
             hydrateConversation(from: summary, cacheDetail: false)
@@ -2176,7 +2191,7 @@ final class AppViewModel: ObservableObject {
             selectedThread = nil
             liveItems = []
             selectedThreadTokenUsage = nil
-            publishConversationSections([])
+            resetConversationSections(items: [])
         }
         changedFiles = []
         diffSnapshot = .empty
@@ -2444,7 +2459,7 @@ final class AppViewModel: ObservableObject {
             selectedThread = nil
             liveItems = []
             selectedThreadTokenUsage = nil
-            publishConversationSections([])
+            resetConversationSections(items: [])
             changedFiles = []
             diffSnapshot = .empty
             clearSelectedThreadLoads()
@@ -2456,7 +2471,7 @@ final class AppViewModel: ObservableObject {
             selectedThread = nil
             liveItems = []
             selectedThreadTokenUsage = nil
-            publishConversationSections([])
+            resetConversationSections(items: [])
             changedFiles = []
             diffSnapshot = .empty
             clearSelectedThreadLoads()
@@ -2468,7 +2483,7 @@ final class AppViewModel: ObservableObject {
             selectedThread = nil
             liveItems = []
             selectedThreadTokenUsage = nil
-            publishConversationSections([])
+            resetConversationSections(items: [])
             changedFiles = []
             diffSnapshot = .empty
             clearSelectedThreadLoads()
@@ -2550,7 +2565,7 @@ final class AppViewModel: ObservableObject {
                     selectedThread = nil
                     liveItems = []
                     selectedThreadTokenUsage = nil
-                    publishConversationSections([])
+                    resetConversationSections(items: [])
                     changedFiles = []
                     diffSnapshot = .empty
                     clearSelectedThreadLoads()
@@ -2712,7 +2727,7 @@ final class AppViewModel: ObservableObject {
         }
         switch event {
         case .notification(let method, let params):
-            if method != "error" {
+            if method != "error", Self.shouldSurfaceNotificationStatus(method) {
                 statusMessage = method
             }
             await handleNotification(method: method, params: params)
@@ -2731,6 +2746,16 @@ final class AppViewModel: ObservableObject {
         case .disconnected(let message):
             await handleDisconnected(message, generation: generation)
         }
+    }
+
+    // Streaming-class notifications (item/* spam, deltas, terminal echo) arrive tens of times
+    // per second; publishing each to `statusMessage` would invalidate every observer of the
+    // view model per delta. Turn/thread lifecycle methods still surface.
+    private static func shouldSurfaceNotificationStatus(_ method: String) -> Bool {
+        if method.hasPrefix("item/") { return false }
+        if method.localizedCaseInsensitiveContains("delta") { return false }
+        if method.contains("terminalInteraction") { return false }
+        return true
     }
 
     private func handleNotification(method: String, params: JSONValue?) async {
@@ -3241,8 +3266,99 @@ final class AppViewModel: ObservableObject {
     }
 
     private func rebuildConversationFromLiveItems() {
-        let nextSections = CodexSessionProjection.sections(from: liveItems)
-        publishConversationSections(nextSections)
+        resetConversationSections(items: liveItems)
+    }
+
+    /// Full re-projection: resyncs the accumulator to `items` and publishes immediately.
+    /// Hydration, turn boundaries, and structural edits (removal, reorder, id changes) must
+    /// not lag behind the streaming conflation window.
+    private func resetConversationSections(items: [CodexThreadItem], prebuilt: [ConversationSection]? = nil) {
+        conversationAccumulator.reset(items: items, prebuilt: prebuilt)
+        flushConversationSections()
+    }
+
+    /// Resyncs the accumulator without publishing (and drops any pending conflated flush).
+    /// Used where the item list is cleared but the published conversation intentionally stays
+    /// on screen (e.g. closeConnection keeps the last conversation visible).
+    private func resyncConversationAccumulator(items: [CodexThreadItem]) {
+        conversationFlushTask?.cancel()
+        conversationFlushTask = nil
+        conversationAccumulator.reset(items: items)
+    }
+
+    /// Incremental delta path: re-projects only the mutated item and conflates the publish.
+    /// Falls back to a full rebuild whenever the accumulator no longer mirrors liveItems.
+    private func updateLiveItemIncrementally(at index: Int, with item: CodexThreadItem) {
+        liveItems[index] = item
+        guard conversationAccumulator.sections.count == liveItems.count,
+              conversationAccumulator.updateAt(index, with: item)
+        else {
+            rebuildConversationFromLiveItems()
+            return
+        }
+        scheduleConversationFlush()
+    }
+
+    private func appendLiveItemIncrementally(_ item: CodexThreadItem) {
+        liveItems.append(item)
+        guard conversationAccumulator.sections.count == liveItems.count - 1 else {
+            rebuildConversationFromLiveItems()
+            return
+        }
+        conversationAccumulator.append(item)
+        scheduleConversationFlush()
+    }
+
+    /// ACP collector path: `appendingAcpThreadItem` returns a fresh array that differs from
+    /// the previous one by at most one element (append or in-place merge). Map that change
+    /// onto the accumulator; anything else falls back to a full re-projection.
+    private func applyAcpConversationChange(previous: [CodexThreadItem], next: [CodexThreadItem]) {
+        guard conversationAccumulator.sections.count == previous.count else {
+            resetConversationSections(items: next)
+            return
+        }
+        if next.count == previous.count + 1, let appended = next.last {
+            conversationAccumulator.append(appended)
+            scheduleConversationFlush()
+            return
+        }
+        if next.count == previous.count {
+            guard let changedIndex = next.indices.first(where: { previous[$0] != next[$0] }) else {
+                return
+            }
+            guard conversationAccumulator.updateAt(changedIndex, with: next[changedIndex]) else {
+                resetConversationSections(items: next)
+                return
+            }
+            scheduleConversationFlush()
+            return
+        }
+        resetConversationSections(items: next)
+    }
+
+    /// Conflated publish for streaming updates: immediate when outside the flush window
+    /// (leading edge), otherwise a single trailing flush is scheduled for the window's end.
+    private func scheduleConversationFlush() {
+        guard conversationFlushTask == nil else { return }
+        let now = ContinuousClock.now
+        guard let lastFlush = lastConversationFlushAt, now - lastFlush < conversationFlushInterval else {
+            flushConversationSections()
+            return
+        }
+        let delay = conversationFlushInterval - (now - lastFlush)
+        conversationFlushTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            self.conversationFlushTask = nil
+            self.flushConversationSections()
+        }
+    }
+
+    private func flushConversationSections() {
+        conversationFlushTask?.cancel()
+        conversationFlushTask = nil
+        lastConversationFlushAt = ContinuousClock.now
+        publishConversationSections(conversationAccumulator.sections)
     }
 
     private static func visibleLiveItems(from thread: CodexThread) -> [CodexThreadItem] {
@@ -3366,17 +3482,18 @@ final class AppViewModel: ObservableObject {
                 let localEchoID = liveItems[localEchoIndex].id
                 liveItems[localEchoIndex] = item
                 replaceSelectedThreadItem(id: localEchoID, with: item)
+                // The item id changed (local echo -> server id), so the section id changes too:
+                // not expressible as an in-place update — full re-projection.
                 rebuildConversationFromLiveItems()
                 return
             }
             replaceSelectedThreadLocalUserEcho(text: text, with: item)
         }
         if let index = liveItems.firstIndex(where: { $0.id == item.id }) {
-            liveItems[index] = item
+            updateLiveItemIncrementally(at: index, with: item)
         } else {
-            liveItems.append(item)
+            appendLiveItemIncrementally(item)
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func replaceSelectedThreadItem(id itemID: String, with item: CodexThreadItem) {
@@ -3493,8 +3610,7 @@ final class AppViewModel: ObservableObject {
             }
             selectedThread = thread
         }
-        liveItems.append(item)
-        rebuildConversationFromLiveItems()
+        appendLiveItemIncrementally(item)
         return item.id
     }
 
@@ -3734,33 +3850,33 @@ final class AppViewModel: ObservableObject {
         guard let itemID, let delta else { return }
         if let index = liveItems.firstIndex(where: { $0.id == itemID }),
            case .agentMessage(let id, let text) = liveItems[index] {
-            liveItems[index] = .agentMessage(id: id, text: text + delta)
+            updateLiveItemIncrementally(at: index, with: .agentMessage(id: id, text: text + delta))
         } else {
-            liveItems.append(.agentMessage(id: itemID, text: delta))
+            appendLiveItemIncrementally(.agentMessage(id: itemID, text: delta))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func appendCommandOutputDelta(itemID: String?, delta: String?) {
         guard let itemID, let delta else { return }
         if let index = liveItems.firstIndex(where: { $0.id == itemID }),
            case .command(let id, let command, let cwd, let status, let output) = liveItems[index] {
-            liveItems[index] = .command(id: id, command: command, cwd: cwd, status: status, output: (output ?? "") + delta)
+            updateLiveItemIncrementally(
+                at: index,
+                with: .command(id: id, command: command, cwd: cwd, status: status, output: (output ?? "") + delta)
+            )
         } else {
-            liveItems.append(.command(id: itemID, command: "Command", cwd: "", status: "inProgress", output: delta))
+            appendLiveItemIncrementally(.command(id: itemID, command: "Command", cwd: "", status: "inProgress", output: delta))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func appendPlanDelta(itemID: String?, delta: String?) {
         guard let itemID, let delta else { return }
         if let index = liveItems.firstIndex(where: { $0.id == itemID }),
            case .plan(let id, let text) = liveItems[index] {
-            liveItems[index] = .plan(id: id, text: text + delta)
+            updateLiveItemIncrementally(at: index, with: .plan(id: id, text: text + delta))
         } else {
-            liveItems.append(.plan(id: itemID, text: delta))
+            appendLiveItemIncrementally(.plan(id: itemID, text: delta))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func applyTurnPlanUpdate(turnID: String?, params: JSONValue?) {
@@ -3770,11 +3886,10 @@ final class AppViewModel: ObservableObject {
         guard !text.isEmpty else { return }
         if let index = liveItems.firstIndex(where: { $0.id == itemID }),
            case .plan(let id, _) = liveItems[index] {
-            liveItems[index] = .plan(id: id, text: text)
+            updateLiveItemIncrementally(at: index, with: .plan(id: id, text: text))
         } else {
-            liveItems.append(.plan(id: itemID, text: text))
+            appendLiveItemIncrementally(.plan(id: itemID, text: text))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func applyTurnDiffUpdate(turnID: String?, diff: String?) {
@@ -3783,11 +3898,10 @@ final class AppViewModel: ObservableObject {
         let change = CodexFileChange(path: "Turn diff", diff: diff)
         if let index = liveItems.firstIndex(where: { $0.id == itemID }),
            case .fileChange = liveItems[index] {
-            liveItems[index] = .fileChange(id: itemID, changes: [change], status: "inProgress")
+            updateLiveItemIncrementally(at: index, with: .fileChange(id: itemID, changes: [change], status: "inProgress"))
         } else {
-            liveItems.append(.fileChange(id: itemID, changes: [change], status: "inProgress"))
+            appendLiveItemIncrementally(.fileChange(id: itemID, changes: [change], status: "inProgress"))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func turnPlanText(explanation: String?, plan: JSONValue?) -> String {
@@ -3813,11 +3927,13 @@ final class AppViewModel: ObservableObject {
         guard let itemID else { return }
         if let index = liveItems.firstIndex(where: { $0.id == itemID }),
            case .fileChange(_, _, let status) = liveItems[index] {
-            liveItems[index] = .fileChange(id: itemID, changes: changes, status: status.isEmpty ? "inProgress" : status)
+            updateLiveItemIncrementally(
+                at: index,
+                with: .fileChange(id: itemID, changes: changes, status: status.isEmpty ? "inProgress" : status)
+            )
         } else {
-            liveItems.append(.fileChange(id: itemID, changes: changes, status: "inProgress"))
+            appendLiveItemIncrementally(.fileChange(id: itemID, changes: changes, status: "inProgress"))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func appendToolProgress(itemID: String?, message: String?) {
@@ -3825,11 +3941,10 @@ final class AppViewModel: ObservableObject {
         if let index = liveItems.firstIndex(where: { $0.id == itemID }),
            case .toolCall(let id, let label, _, let detail) = liveItems[index] {
             let nextDetail = [detail, message].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
-            liveItems[index] = .toolCall(id: id, label: label, status: "inProgress", detail: nextDetail)
+            updateLiveItemIncrementally(at: index, with: .toolCall(id: id, label: label, status: "inProgress", detail: nextDetail))
         } else {
-            liveItems.append(.toolCall(id: itemID, label: "MCP tool", status: "inProgress", detail: message))
+            appendLiveItemIncrementally(.toolCall(id: itemID, label: "MCP tool", status: "inProgress", detail: message))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func terminalInteractionText(stdin: String?) -> String? {
@@ -3852,11 +3967,13 @@ final class AppViewModel: ObservableObject {
             } else {
                 changes[changes.index(before: changes.endIndex)].diff += delta
             }
-            liveItems[index] = .fileChange(id: itemID, changes: changes, status: status.isEmpty ? "inProgress" : status)
+            updateLiveItemIncrementally(
+                at: index,
+                with: .fileChange(id: itemID, changes: changes, status: status.isEmpty ? "inProgress" : status)
+            )
         } else {
-            liveItems.append(.fileChange(id: itemID, changes: [patchOutput], status: "inProgress"))
+            appendLiveItemIncrementally(.fileChange(id: itemID, changes: [patchOutput], status: "inProgress"))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private enum ReasoningDeltaTarget {
@@ -3899,12 +4016,11 @@ final class AppViewModel: ObservableObject {
             summary = currentSummary
             content = currentContent
             update(&summary, &content)
-            liveItems[index] = .reasoning(id: itemID, summary: summary, content: content)
+            updateLiveItemIncrementally(at: index, with: .reasoning(id: itemID, summary: summary, content: content))
         } else {
             update(&summary, &content)
-            liveItems.append(.reasoning(id: itemID, summary: summary, content: content))
+            appendLiveItemIncrementally(.reasoning(id: itemID, summary: summary, content: content))
         }
-        rebuildConversationFromLiveItems()
     }
 
     private func appending(_ delta: String, to values: [String], at index: Int) -> [String] {
@@ -3925,7 +4041,7 @@ final class AppViewModel: ObservableObject {
         selectedThread = nil
         selectedThreadTokenUsage = nil
         liveItems = []
-        publishConversationSections([])
+        resetConversationSections(items: [])
         changedFiles = []
         diffSnapshot = .empty
         clearSelectedThreadLoads()
@@ -4188,5 +4304,64 @@ private final class TimeoutContinuation<T: Sendable>: @unchecked Sendable {
         }
         pair.1?()
         pair.0.resume(with: result)
+    }
+}
+
+/// Swift mirror of the shared-core `ConversationSectionAccumulator` (CodexSessionProjection.kt):
+/// maintains the projected section list so streaming deltas cost one bridged item conversion
+/// instead of re-projecting the entire conversation across the KMP boundary per delta.
+///
+/// Invariant: after any sequence of operations, `sections` equals
+/// `SharedKMPBridge.conversationSections(from: items)` for the mirrored item list — including
+/// the `#n` dedup suffixes, which `allocate` mirrors from the shared `uniquelyIdentified`
+/// exactly. Callers fall back to `reset` for any operation they cannot map incrementally.
+final class ConversationSectionAccumulator {
+    private var emittedIDs: Set<String> = []
+    private var countsByID: [String: Int] = [:]
+    private(set) var sections: [ConversationSection] = []
+
+    /// Rebuilds from scratch. When `prebuilt` is supplied (a full projection of the same item
+    /// list, e.g. from the thread-detail cache), it is adopted verbatim and only the
+    /// id-allocation state is replayed from the item ids — valid because every section's
+    /// pre-dedup id is its item's id.
+    func reset(items: [CodexThreadItem], prebuilt: [ConversationSection]? = nil) {
+        emittedIDs.removeAll(keepingCapacity: true)
+        countsByID.removeAll(keepingCapacity: true)
+        for item in items {
+            _ = allocate(item.id)
+        }
+        if let prebuilt, prebuilt.count == items.count {
+            sections = prebuilt
+        } else {
+            sections = items.isEmpty ? [] : SharedKMPBridge.conversationSections(from: items)
+        }
+    }
+
+    func append(_ item: CodexThreadItem) {
+        sections.append(SharedKMPBridge.conversationSection(from: item, id: allocate(item.id)))
+    }
+
+    /// Re-projects one item in place, preserving the section's allocated id (streaming updates
+    /// never change row identity). Returns false when the index is out of range.
+    @discardableResult
+    func updateAt(_ index: Int, with item: CodexThreadItem) -> Bool {
+        guard sections.indices.contains(index) else { return false }
+        sections[index] = SharedKMPBridge.conversationSection(from: item, id: sections[index].id)
+        return true
+    }
+
+    // Mirrors the shared `uniquelyIdentified` suffixing exactly.
+    private func allocate(_ baseID: String) -> String {
+        if emittedIDs.insert(baseID).inserted {
+            return baseID
+        }
+        var count = (countsByID[baseID] ?? 1) + 1
+        var nextID = "\(baseID)#\(count)"
+        while !emittedIDs.insert(nextID).inserted {
+            count += 1
+            nextID = "\(baseID)#\(count)"
+        }
+        countsByID[baseID] = count
+        return nextID
     }
 }

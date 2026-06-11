@@ -26,7 +26,7 @@ struct ConversationView: View {
     @State private var attachmentAlert: AttachmentAlert?
     @State private var isQueueSheetPresented = false
     @State private var isTimelineNearBottom = true
-    @State private var timelineDistanceFromBottom: CGFloat = 0
+    @State private var showsScrollToLatestButton = false
     @State private var autoFollowStreaming = true
     @State private var userIsDraggingTimeline = false
     @State private var followLayoutScrollScheduled = false
@@ -304,6 +304,7 @@ struct ConversationView: View {
                                     requestFollowScrollAfterLayout(proxy, isStreaming: isStreaming)
                                 }
                             )
+                            .equatable()
                             .id(section.id)
                         }
                         Color.clear
@@ -341,11 +342,11 @@ struct ConversationView: View {
                         }
                     }
                 }
-                if timelineDistanceFromBottom > Self.latestButtonShowDistance {
+                if showsScrollToLatestButton {
                     Button {
                         autoFollowStreaming = true
                         isTimelineNearBottom = true
-                        timelineDistanceFromBottom = 0
+                        showsScrollToLatestButton = false
                         scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                             withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
@@ -376,7 +377,7 @@ struct ConversationView: View {
                 .onChange(of: model.selectedThreadID) { _, _ in
                     autoFollowStreaming = true
                     isTimelineNearBottom = true
-                    timelineDistanceFromBottom = 0
+                    showsScrollToLatestButton = false
                     initialBottomScrollThreadID = nil
                     requestInitialBottomScrollIfNeeded(proxy)
                 }
@@ -390,7 +391,7 @@ struct ConversationView: View {
                 .onChange(of: model.conversationSendToken) { _, _ in
                     autoFollowStreaming = true
                     isTimelineNearBottom = true
-                    timelineDistanceFromBottom = 0
+                    showsScrollToLatestButton = false
                     scrollToConversationBottom(proxy, latestSectionID: latestSectionID)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.9)) {
@@ -476,7 +477,7 @@ struct ConversationView: View {
 
     private func scrollToConversationBottom(_ proxy: ScrollViewProxy, latestSectionID: String? = nil) {
         isTimelineNearBottom = true
-        timelineDistanceFromBottom = 0
+        showsScrollToLatestButton = false
         programmaticBottomScrollGeneration &+= 1
         let generation = programmaticBottomScrollGeneration
         programmaticBottomScrollSettling = true
@@ -525,14 +526,21 @@ struct ConversationView: View {
             }
         }
 
-        timelineDistanceFromBottom = clampedDistance
+        // Scroll geometry ticks per frame; only write @State when a derived value flips, so
+        // unchanged frames don't invalidate the timeline (and every visible row) per tick.
+        let nextShowsButton = clampedDistance > Self.latestButtonShowDistance
+        if nextShowsButton != showsScrollToLatestButton {
+            showsScrollToLatestButton = nextShowsButton
+        }
         let nextIsNearBottom = clampedDistance <= Self.nearBottomRestoreDistance
         if nextIsNearBottom != isTimelineNearBottom {
             isTimelineNearBottom = nextIsNearBottom
         }
         if nextIsNearBottom {
-            autoFollowStreaming = true
-        } else if userIsDraggingTimeline {
+            if !autoFollowStreaming {
+                autoFollowStreaming = true
+            }
+        } else if userIsDraggingTimeline, autoFollowStreaming {
             autoFollowStreaming = false
         }
     }
@@ -1540,11 +1548,18 @@ struct ApprovalCard: View {
     }
 }
 
-struct ConversationSectionView: View {
+struct ConversationSectionView: View, Equatable {
     let section: ConversationSection
     var isLive = false
     var onLiveContentLayoutChanged: () -> Void = {}
     @State private var isExpanded = false
+
+    // Row identity excludes the layout callback so unchanged rows are equality-skipped during
+    // streaming (used with .equatable() at the call site). Safe: the closure only fires while
+    // isLive is true, and any isLive change re-renders with a fresh closure.
+    nonisolated static func == (lhs: ConversationSectionView, rhs: ConversationSectionView) -> Bool {
+        lhs.section == rhs.section && lhs.isLive == rhs.isLive
+    }
 
     var body: some View {
         HStack {
@@ -1720,13 +1735,14 @@ private struct MarkdownText: View {
 
     init(_ markdown: String, id: String) {
         self.markdown = markdown
-        _document = State(initialValue: MobidexShared.MarkdownDocumentParser.shared.parse(markdown: markdown))
+        // Cache hit for unchanged rows: this init runs on every body evaluation of the row.
+        _document = State(initialValue: MarkdownDocumentCache.document(for: markdown))
     }
 
     var body: some View {
         SharedMarkdownDocumentView(document: document)
             .onChange(of: markdown) { _, newValue in
-                document = MobidexShared.MarkdownDocumentParser.shared.parse(markdown: newValue)
+                document = MarkdownDocumentCache.document(for: newValue)
             }
     }
 }
