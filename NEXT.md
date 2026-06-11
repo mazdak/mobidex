@@ -21,6 +21,21 @@
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal build 44) - 2026-06-11
+
+- Executed from `master` at `52036e9` (`refactor(acp): neutral naming, agent presets, and cwd fix`) after `origin/master` was pulled and confirmed up to date.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 44.
+  - BUILD_ID: `09bc2b13-2df3-41f8-9d54-df83c5cb6101`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-44.ipa` (17,910,203 bytes).
+  - Run record: `.asc/runs/testflight-20260611T120938Z-6af490f8.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+  - Signing: same temporary-keychain flow as build 43 (raw `.key`/`.cer` import); login keychain restored afterward.
+- External submission for this build (pending, run manually — session permissions gate external distribution):
+  `asc workflow run testflight_external BUILD_ID:09bc2b13-2df3-41f8-9d54-df83c5cb6101 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+- Build 44 contents over 43: neutral ACP naming (`.acp`/`AcpClient`) with legacy saved-server decode, Grok/Claude preset buttons (Claude = `bunx @zed-industries/claude-code-acp`), generic debug path, and the cwd fix (executionPath is a PATH list; cwd now only from the selected project).
+- Validation: preflight passed; shared 30 ACP tests, Android compile + smoke + ServerModelsTest, iOS verify build, iOS simulator unit tests (pre-existing AppViewModelTests flake only) — all recorded under the D-checklist above.
+
 ## asc TestFlight submission (internal build 43) - 2026-06-11
 
 - Executed from `master` at `4357ff7` (`feat(acp): spec-compliant ACP with permission round-trip for Claude and Grok`) after `origin/master` was pulled and `master` was confirmed up to date.
