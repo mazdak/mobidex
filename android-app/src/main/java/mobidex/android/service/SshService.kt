@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -434,7 +435,11 @@ private class SshjWebSocketProxyTransport private constructor(
                         when (frame.opcode) {
                             WebSocketOpcode.Text, WebSocketOpcode.Binary, WebSocketOpcode.Continuation -> {
                                 assembler.append(frame)?.let { message ->
-                                    inboundChannel.trySend(String(message, Charsets.UTF_8))
+                                    // Blocking send from the dedicated reader thread: backpressure
+                                    // the socket instead of silently dropping messages.
+                                    if (inboundChannel.trySendBlocking(String(message, Charsets.UTF_8)).isFailure) {
+                                        return@Thread
+                                    }
                                 }
                             }
                             WebSocketOpcode.Ping -> writeFrame(WebSocketOpcode.Pong, frame.payload)
@@ -551,12 +556,16 @@ private class SshjRawExecTransport private constructor(
                     pending = lines.last()
                     for (line in lines.dropLast(1)) {
                         if (line.isNotEmpty()) {
-                            inboundChannel.trySend(line)
+                            // Blocking send from the dedicated reader thread: backpressure the
+                            // socket instead of silently dropping protocol lines.
+                            if (inboundChannel.trySendBlocking(line).isFailure) {
+                                return@Thread
+                            }
                         }
                     }
                 }
                 if (pending.isNotEmpty()) {
-                    inboundChannel.trySend(pending)
+                    inboundChannel.trySendBlocking(pending)
                 }
                 inboundChannel.close()
             } catch (error: Throwable) {
@@ -626,7 +635,11 @@ private class SshjRemoteTerminalSession(
                     val read = input.read(buffer)
                     if (read < 0) break
                     if (read > 0) {
-                        outputChannel.trySend(String(buffer, 0, read, Charsets.UTF_8))
+                        // Blocking send from the dedicated reader thread: backpressure the
+                        // shell instead of silently dropping terminal output during bursts.
+                        if (outputChannel.trySendBlocking(String(buffer, 0, read, Charsets.UTF_8)).isFailure) {
+                            return@Thread
+                        }
                     }
                 }
             } catch (error: Throwable) {

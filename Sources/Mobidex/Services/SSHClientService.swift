@@ -1206,7 +1206,21 @@ private final class SSHRawExecTransport: CodexLineTransport, @unchecked Sendable
             }
             try? await client.close()
         }
-        try await transport.ready.wait()
+        // Mirror CitadelTerminalSession.open: the ready continuation only resumes on
+        // succeed/fail, so caller cancellation (or a hung host) must tear the transport down
+        // rather than leaving an uncancellable wait parked forever.
+        do {
+            try await withTaskCancellationHandler {
+                try await transport.ready.wait()
+            } onCancel: {
+                Task {
+                    await transport.close()
+                }
+            }
+        } catch {
+            await transport.close()
+            throw error
+        }
         return transport
     }
 

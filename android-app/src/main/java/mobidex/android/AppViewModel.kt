@@ -19,7 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonElement
@@ -248,7 +249,18 @@ class AppViewModel(
     private var acpClient: AcpClient? = null
     private var acpJob: Job? = null
     private var acpSessionId: String? = null
+    // Bumped by every ACP connect attempt and by disconnect; in-flight attempts that lose
+    // the race close what they built instead of installing it.
+    private var acpConnectGeneration = 0
     private val _acpSessionItems = MutableStateFlow<List<CodexSessionItem>>(emptyList())
+
+    // Counts overlapping runBusy blocks so one finishing doesn't release the gate while
+    // another is still mutating session state.
+    private var busyCount = 0
+
+    // Teardown on ViewModel clear must not block the main thread (sshj close + join can take
+    // seconds per connection); this scope outlives the ViewModel just long enough to close.
+    private val teardownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences("mobidex", Context.MODE_PRIVATE)
@@ -675,11 +687,18 @@ class AppViewModel(
                 val client = AcpClient(transport)
                 debugAcpClient = client
 
-                client.initialize()
-                // ACP spec requires an absolute cwd on session/new.
-                val cwd = _state.value.selectedProject?.path
-                    ?: error("Select a project before starting an ACP debug session.")
-                val sid = client.createSession(cwd = cwd, title = "ACP debug session")
+                val sid = try {
+                    client.initialize()
+                    // ACP spec requires an absolute cwd on session/new.
+                    val cwd = _state.value.selectedProject?.path
+                        ?: error("Select a project before starting an ACP debug session.")
+                    client.createSession(cwd = cwd, title = "ACP debug session")
+                } catch (error: Throwable) {
+                    // Never strand a half-open transport / remote agent process on failure.
+                    runCatching { client.close() }
+                    debugAcpClient = null
+                    throw error
+                }
 
                 _state.update { it.copy(statusMessage = "ACP session $sid connected (debug).") }
 
@@ -715,6 +734,12 @@ class AppViewModel(
             val server = _state.value.selectedServer ?: return@launch
             if (server.backendType != BackendType.Acp) return@launch
 
+            // Ownership guard: only the newest connect attempt may install a client; any
+            // disconnect or newer connect bumps the generation, and stale attempts close
+            // whatever they built instead of installing it (prevents double-connect leaks
+            // and disconnect-during-connect resurrecting a connection).
+            val generation = ++acpConnectGeneration
+
             acpJob?.cancel()
             acpClient?.let { runCatching { it.close() } }
             acpClient = null
@@ -738,28 +763,42 @@ class AppViewModel(
                     executionPath = server.executionPath,
                 )
                 val transport = sshService.openRawExec(server, credential, command)
+                if (generation != acpConnectGeneration) {
+                    runCatching { transport.close() }
+                    return@runBusy
+                }
                 val client = AcpClient(transport)
-                acpClient = client
-
-                client.initialize()
-                // ACP spec requires an absolute cwd on session/new. executionPath is a PATH list
-                // (binary lookup), never a working directory — only a selected project provides cwd.
-                val cwd = _state.value.selectedProject?.path
-                    ?: error("Select a project before connecting an ACP agent.")
-                val sid = client.createSession(cwd = cwd, title = server.displayName)
-                acpSessionId = sid
+                try {
+                    client.initialize()
+                    // ACP spec requires an absolute cwd on session/new. executionPath is a PATH list
+                    // (binary lookup), never a working directory — only a selected project provides cwd.
+                    val cwd = _state.value.selectedProject?.path
+                        ?: error("Select a project before connecting an ACP agent.")
+                    val sid = client.createSession(cwd = cwd, title = server.displayName)
+                    if (generation != acpConnectGeneration) {
+                        runCatching { client.close() }
+                        return@runBusy
+                    }
+                    acpClient = client
+                    acpSessionId = sid
+                } catch (error: Throwable) {
+                    // Never strand a half-open transport / remote agent process on failure.
+                    runCatching { client.close() }
+                    throw error
+                }
 
                 _state.update {
                     it.copy(
                         connectionState = ServerConnectionState.Connected,
                         failureMessage = null,
-                        statusMessage = "ACP agent session $sid connected."
+                        statusMessage = "ACP agent session ${acpSessionId} connected."
                     )
                 }
 
                 acpJob = launch {
                     launch {
                         client.sessionItems.collect { item ->
+                            if (acpClient !== client) return@collect // stale session
                             // Coalesce streamed deltas / resolve tool cards before projecting.
                             _acpSessionItems.update { list -> list.appendingAcpSessionItem(item) }
                             // Drive the *main* conversationSections (used by ConversationSection / UI)
@@ -775,6 +814,7 @@ class AppViewModel(
                     }
                     launch {
                         client.serverRequests.collect { request ->
+                            if (acpClient !== client) return@collect // stale session
                             if (request.method != AcpProtocolCore.PERMISSION_REQUEST_METHOD) return@collect
                             val permission = AcpProtocolCore.parsePermissionRequest(request.params)
                             _state.update {
@@ -793,6 +833,7 @@ class AppViewModel(
                     }
                     launch {
                         client.disconnects.collect { message ->
+                            if (acpClient !== client) return@collect // stale session
                             if (_state.value.selectedServerID == server.id) {
                                 _state.update {
                                     it.copy(
@@ -1843,9 +1884,13 @@ class AppViewModel(
         }.onFailure { error -> _state.update { it.copy(statusMessage = error.message) } }
     }
 
+    // Called from viewModelScope (Main) everywhere except onCleared, which runs it on
+    // teardownScope (IO) — safe only because androidx cancels viewModelScope before
+    // onCleared, so no Main-thread caller can race it. Keep it that way.
     private suspend fun disconnectInternal(updateState: Boolean = true) {
         eventJob?.cancel()
         eventJob = null
+        acpConnectGeneration += 1 // invalidate any in-flight ACP connect attempt
         acpJob?.cancel()
         acpJob = null
         acpClient?.let { runCatching { it.close() } }
@@ -2735,18 +2780,27 @@ class AppViewModel(
     }
 
     private suspend fun runBusy(status: String, marksFailure: Boolean = false, block: suspend () -> Unit) {
+        busyCount += 1
         _state.update { it.copy(isBusy = true, statusMessage = status, failureMessage = null) }
-        runCatching { block() }
-            .onFailure { error ->
-                _state.update {
-                    it.copy(
-                        connectionState = if (marksFailure) ServerConnectionState.Failed else it.connectionState,
-                        failureMessage = error.message,
-                        statusMessage = error.message,
-                    )
-                }
+        try {
+            block()
+        } catch (cancellation: CancellationException) {
+            // Structured cancellation is not a failure; let it propagate.
+            throw cancellation
+        } catch (error: Throwable) {
+            _state.update {
+                it.copy(
+                    connectionState = if (marksFailure) ServerConnectionState.Failed else it.connectionState,
+                    failureMessage = error.message,
+                    statusMessage = error.message,
+                )
             }
-        _state.update { it.copy(isBusy = false) }
+        } finally {
+            busyCount -= 1
+            if (busyCount == 0) {
+                _state.update { it.copy(isBusy = false) }
+            }
+        }
     }
 
     private fun approvalTitle(method: String): String =
@@ -2791,7 +2845,9 @@ class AppViewModel(
             ?: ""
 
     override fun onCleared() {
-        runBlocking(Dispatchers.IO) { disconnectInternal(updateState = false) }
+        // sshj teardown does network I/O with second-scale joins; blocking main here is an
+        // ANR window. The teardown scope outlives the ViewModel just long enough to close.
+        teardownScope.launch { disconnectInternal(updateState = false) }
     }
 
     class Factory(private val context: Context) : ViewModelProvider.Factory {

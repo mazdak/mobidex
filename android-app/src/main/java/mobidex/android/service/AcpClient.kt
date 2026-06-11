@@ -1,11 +1,14 @@
 package mobidex.android.service
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -62,6 +65,8 @@ class AcpClient(
     private val serverRequestChannel = Channel<AcpServerRequest>(Channel.BUFFERED)
     private val pending = mutableMapOf<Long, CompletableDeferred<JsonElement>>()
     private val pendingMutex = Mutex()
+
+    @Volatile
     private var closed = false
     private var currentSessionId: String? = null
     private val idCounter = AtomicLong(1)
@@ -79,7 +84,9 @@ class AcpClient(
     /** Emits agent -> client requests (permission prompts) that must be answered via [respondToServerRequest]. */
     val serverRequests: Flow<AcpServerRequest> = serverRequestChannel.receiveAsFlow()
 
-    private val _disconnects = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    // replay = 1: a disconnect that fires before the ViewModel's collector subscribes
+    // (e.g. the transport dies right after createSession) must still be observed.
+    private val _disconnects = MutableSharedFlow<String>(replay = 1)
 
     /** Emits once when the transport ends or fails after a successful start (parity with the iOS events stream). */
     val disconnects: SharedFlow<String> = _disconnects.asSharedFlow()
@@ -133,10 +140,13 @@ class AcpClient(
     }
 
     suspend fun close() {
-        if (closed) return
-        closed = true
-        failAllPending(IllegalStateException("ACP client closed."))
-        transport.close()
+        if (!closed) {
+            closed = true
+            failAllPending(IllegalStateException("ACP client closed."))
+            transport.close()
+        }
+        // Always close the channels (idempotent): a close() racing disconnect() must not
+        // leave the reader's final send parked on a full buffer forever.
         itemsChannel.close()
         serverRequestChannel.close()
     }
@@ -146,12 +156,17 @@ class AcpClient(
     private suspend fun sendRequestAndAwait(req: mobidex.shared.CodexRpcRequest): JsonElement {
         val waiter = CompletableDeferred<JsonElement>()
         pendingMutex.withLock {
+            // Re-check under the same lock failAllPending uses: registering after the fail
+            // sweep would otherwise orphan the waiter until the timeout.
+            check(!closed) { "ACP client is closed." }
             pending[req.id] = waiter
         }
         try {
             transport.sendLine(req.encodeJsonLine())
         } catch (e: Throwable) {
-            pendingMutex.withLock { pending.remove(req.id) }
+            // NonCancellable: if sendLine failed via cancellation, the suspending lock would
+            // otherwise rethrow immediately and leak the pending entry.
+            withContext(NonCancellable) { pendingMutex.withLock { pending.remove(req.id) } }
             waiter.completeExceptionally(e)
             throw e
         }
@@ -160,6 +175,11 @@ class AcpClient(
         } catch (e: TimeoutCancellationException) {
             pendingMutex.withLock { pending.remove(req.id) }
             throw IllegalStateException("ACP request ${req.method} timed out after ${REQUEST_TIMEOUT_MS / 1000}s.", e)
+        } catch (e: CancellationException) {
+            // Caller cancelled: drop the registration (a cancelled coroutine cannot take a
+            // suspending lock, so do it under NonCancellable).
+            withContext(NonCancellable) { pendingMutex.withLock { pending.remove(req.id) } }
+            throw e
         }
     }
 
@@ -185,14 +205,16 @@ class AcpClient(
                     }
                     "sessionUpdate" -> {
                         // The key path: agent chunks → existing UI model via the shared mapper.
+                        // Suspending send: backpressure the transport instead of silently
+                        // dropping chat content when the consumer falls behind.
                         classification.toCodexSessionItems().forEach { item ->
-                            itemsChannel.trySend(item)
+                            itemsChannel.send(item)
                         }
                     }
                     "serverRequest" -> {
                         val id = classification.id ?: return@collect
                         val method = classification.method ?: return@collect
-                        serverRequestChannel.trySend(AcpServerRequest(id = id, method = method, params = classification.params))
+                        serverRequestChannel.send(AcpServerRequest(id = id, method = method, params = classification.params))
                     }
                     else -> {
                         // Ignore other notifications (vendor extensions, stopReason-less acks, ...).
@@ -209,14 +231,16 @@ class AcpClient(
         closed = true
         failAllPending(IllegalStateException(message))
         _disconnects.tryEmit(message)
-        itemsChannel.trySend(
-            CodexSessionItem.AgentEvent(
-                id = "acp-disconnect-${System.currentTimeMillis()}",
-                label = "disconnected",
-                status = "error",
-                detail = message,
+        runCatching {
+            itemsChannel.send(
+                CodexSessionItem.AgentEvent(
+                    id = "acp-disconnect-${System.currentTimeMillis()}",
+                    label = "disconnected",
+                    status = "error",
+                    detail = message,
+                )
             )
-        )
+        }
         itemsChannel.close()
         serverRequestChannel.close()
     }

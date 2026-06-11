@@ -1,11 +1,14 @@
 package mobidex.android.service
 
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -48,11 +51,22 @@ sealed interface CodexAppServerEvent {
 
 class CodexAppServerClient(private val transport: CodexLineTransport) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val eventsChannel = Channel<CodexAppServerEvent>(Channel.BUFFERED)
+    // UNLIMITED, deliberately: the events consumer performs RPCs (readThread, ...) whose
+    // responses arrive through this same readLoop. A bounded channel + suspending send would
+    // deadlock the loop behind a full buffer while the consumer awaits a response only the
+    // loop can deliver. Unbounded keeps the no-drop guarantee without producer suspension;
+    // memory is bounded in practice by network rate vs drain rate.
+    private val eventsChannel = Channel<CodexAppServerEvent>(Channel.UNLIMITED)
     private val rpcCore = CodexRpcClientCore()
     private val rpcCoreMutex = Mutex()
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
+
+    @Volatile
     private var closed = false
+
+    private companion object {
+        const val REQUEST_TIMEOUT_MS = 120_000L
+    }
 
     val events: Flow<CodexAppServerEvent> = eventsChannel.receiveAsFlow()
 
@@ -151,10 +165,13 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
     }
 
     suspend fun close() {
-        if (closed) return
-        closed = true
-        failPending(IllegalStateException("The app-server connection closed."))
-        transport.close()
+        if (!closed) {
+            closed = true
+            failPending(IllegalStateException("The app-server connection closed."))
+            transport.close()
+        }
+        // Always close the channel (idempotent): a close() racing disconnectFromReader must
+        // not leave a final send parked on a full buffer forever.
         eventsChannel.close()
     }
 
@@ -166,13 +183,28 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
             pending[next.id] = waiter
             next
         }
+        // Registering can race the reader's fail sweep (closed set, failPending clears the
+        // map, then we add the entry): re-check after registration so the waiter can never
+        // be orphaned into an infinite await.
+        if (closed) {
+            pending.remove(request.id)
+            throw IllegalStateException("The app-server connection is closed.")
+        }
         try {
             transport.sendLine(request.line)
         } catch (error: Throwable) {
             pending.remove(request.id)?.completeExceptionally(error)
             throw error
         }
-        return waiter.await()
+        try {
+            return withTimeout(REQUEST_TIMEOUT_MS) { waiter.await() }
+        } catch (e: TimeoutCancellationException) {
+            pending.remove(request.id)
+            throw IllegalStateException("App-server request $method timed out after ${REQUEST_TIMEOUT_MS / 1000}s.", e)
+        } catch (e: CancellationException) {
+            pending.remove(request.id)
+            throw e
+        }
     }
 
     private suspend fun readLoop() {
@@ -194,11 +226,13 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
                     "serverRequest" -> {
                         val id = action.id?.toJsonElement() ?: return@collect
                         val method = action.method ?: return@collect
-                        eventsChannel.trySend(CodexAppServerEvent.ServerRequest(id, method, action.params?.toJsonElement()))
+                        // Suspending send: backpressure the transport instead of silently
+                        // dropping approval prompts / events when the consumer falls behind.
+                        eventsChannel.send(CodexAppServerEvent.ServerRequest(id, method, action.params?.toJsonElement()))
                     }
                     "notification" -> {
                         val method = action.method ?: return@collect
-                        eventsChannel.trySend(CodexAppServerEvent.Notification(method, action.params?.toJsonElement()))
+                        eventsChannel.send(CodexAppServerEvent.Notification(method, action.params?.toJsonElement()))
                     }
                 }
             }
@@ -214,7 +248,9 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
         closed = true
         failPending(error)
         transport.close()
-        eventsChannel.trySend(CodexAppServerEvent.Disconnected(error.message ?: "The app-server connection failed."))
+        // The Disconnected event drives reconnect/state handling — it must be delivered,
+        // not trySend-dropped when the buffer is full.
+        runCatching { eventsChannel.send(CodexAppServerEvent.Disconnected(error.message ?: "The app-server connection failed.")) }
         eventsChannel.close()
     }
 

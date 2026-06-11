@@ -4,7 +4,19 @@
 
 - [x] E1. Six parallel audit passes (iOS mem / iOS perf / iOS concurrency / Android mem+perf / Android concurrency / shared+transports) — findings cross-corroborated.
 - [x] E2. Consolidated, ranked report committed as AUDIT.md (1×P0, ~14×P1, P2 backlog, cleared list, 3-phase fix plan).
-- [ ] E3. Fix phases pending user scope selection (Phase 1 stability / Phase 2 streaming perf / Phase 3 memory hygiene).
+- [x] E3. User selected Phase 1 (stability) — tracked below as F-checklist. Phases 2–3 remain parked.
+
+## Mission Checklist (active, 2026-06-11: audit Phase 1 — stability fixes)
+
+- [x] F1. A1 Android: AcpClient readLoop uses suspending `send`; SshService reader threads + terminal use `trySendBlocking` (stop on closed); Codex `eventsChannel` is UNLIMITED rather than suspending — review proved a bounded+suspending events channel deadlocks against collector-side RPCs (readThread response arrives behind buffered notifications through the same readLoop). Disconnected delivery guaranteed on both clients.
+- [x] F2. C4 Android: closed-recheck after registration (Codex, volatile-ordered) / under the fail-sweep mutex (ACP); 120s await timeout; pending cleanup on timeout, caller cancellation (NonCancellable lock), and sendLine failure.
+- [x] F3. C5 Android: `runBusy` busyCount (gate releases only at 0) + rethrows CancellationException.
+- [x] F4. C6 Android: `onCleared` runs disconnectInternal on a teardown scope (IO) — no more main-thread runBlocking ANR window (safe: viewModelScope is cancelled before onCleared; documented).
+- [x] F5. C3 Android: `acpConnectGeneration` guard (bumped by connect + disconnectInternal) with close-and-bail after each suspension; client installed only after success; close on failure (production + debug); `acpClient !== client` identity guards in all three collectors.
+- [x] F6. Android: `@Volatile closed` (both clients); `disconnects` SharedFlow replay=1; client `close()` always closes channels (idempotent) so a racing final send can't park forever.
+- [x] F7. C1/C2 iOS: selectServer full ACP teardown (events task + client close); connect installs client only after success and closes on failure/stale; stale-bail no longer lets the caller mark `.connected` with a nil client (review finding); identity guards in collector/events task bodies; closeConnection awaits client close.
+- [x] F8. C7 iOS: `SSHRawExecTransport.open` ready-wait wrapped in withTaskCancellationHandler + close (terminal-pattern mirror).
+- [x] F9. Review round 1 FAIL (2 P1: Codex events deadlock-by-backpressure; iOS stale-bail `.connected`) + 4 P2 — all fixed. Validation green: shared 30, Android compile + 42 focused tests, iOS verify build, iOS simulator suite at pre-change baseline (only the documented AppViewModelTests mock-ordering flake, count identical). Merged + pushed.
 
 ## Mission Checklist (complete, 2026-06-11: ACP productization polish)
 

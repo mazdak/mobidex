@@ -16,7 +16,8 @@
 - Six parallel audits converged independently on one dominant lever: full-conversation re-projection per streamed delta (O(n²) per turn) on the main thread, on both platforms — iOS additionally round-trips every item through the KMP bridge per delta, and Android's Main-thread consumer pressure makes the bounded `trySend` channels DROP deltas/approvals/Disconnected (the one P0).
 - Build-38's markdown fix is incomplete: `MarkdownText` still parses in `State(initialValue:)` on every body evaluation; combined with `statusMessage`-per-notification whole-tree invalidation and unthrottled scroll-tick state writes, visible rows re-parse markdown per delta and per scroll frame.
 - ACP lifecycle has no generation/identity guards (unlike the Codex path): failed connects and server switches leak live clients whose late events corrupt the next connection's state (both platforms).
-- Full report committed as AUDIT.md (findings + cleared list + 3-phase fix plan). Read-only audit; no fixes applied yet.
+- Full report committed as AUDIT.md (findings + cleared list + 3-phase fix plan). Phase 1 (stability) implemented 2026-06-11; Phases 2–3 parked.
+- Phase-1 review caught a designed-in deadlock in the first A1 fix: a bounded events channel with suspending send deadlocks when the consumer awaits an RPC whose response arrives behind buffered notifications through the same read loop. Codex events must be UNLIMITED (no-drop without producer suspension) until Phase 2 moves RPCs out of the collector; ACP channels can keep true backpressure because their collectors never RPC.
 
 ---
 

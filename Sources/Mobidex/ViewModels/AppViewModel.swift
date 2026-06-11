@@ -549,8 +549,14 @@ final class AppViewModel: ObservableObject {
         statusMessage = nil
         resetSessionState(clearThreads: true)
         pendingApprovals = []
+        // Full ACP teardown (mirrors closeConnection): leaving the events task running or the
+        // client unclosed lets a stale disconnect/serverRequest corrupt the next connection's
+        // state, and leaks the SSH channel + remote agent process.
         acpCollectorTask?.cancel()
         acpCollectorTask = nil
+        acpEventsTask?.cancel()
+        acpEventsTask = nil
+        if let client = acpClient { Task { await client.close() } }
         acpClient = nil
         acpSessionId = nil
         acpItems = []
@@ -967,12 +973,20 @@ final class AppViewModel: ObservableObject {
             let client = AcpClient(transport: transport)
             debugAcpClient = client
 
-            try await client.initialize()
-            // ACP spec requires an absolute cwd on session/new.
-            guard let cwd = selectedProject?.path else {
-                throw AppViewModelError.missingAcpWorkingDirectory
+            let sid: String
+            do {
+                try await client.initialize()
+                // ACP spec requires an absolute cwd on session/new.
+                guard let cwd = selectedProject?.path else {
+                    throw AppViewModelError.missingAcpWorkingDirectory
+                }
+                sid = try await client.createSession(cwd: cwd, title: "ACP debug session")
+            } catch {
+                // Never strand a half-open transport / remote agent process on failure.
+                await client.close()
+                debugAcpClient = nil
+                throw error
             }
-            let sid = try await client.createSession(cwd: cwd, title: "ACP debug session")
 
             statusMessage = "ACP session \(sid) connected (debug)."
 
@@ -1016,6 +1030,11 @@ final class AppViewModel: ObservableObject {
         acpClient = nil
         acpItems = []
 
+        // Ownership guard: closeConnection / a newer connect bumps connectionGeneration, and a
+        // stale attempt closes whatever it built instead of installing it (prevents leaked
+        // clients and disconnect-during-connect resurrecting a connection).
+        let generation = connectionGeneration
+
         return await runOperation(.connecting, status: "Starting ACP agent", marksConnectionFailure: true) {
             let credential = try await loadCredentialFromStore(serverID: server.id)
             let command = SharedKMPBridge.acpShellCommand(
@@ -1024,16 +1043,26 @@ final class AppViewModel: ObservableObject {
             )
             let transport = try await sshService.openRawExec(server: server, credential: credential, command: command)
             let client = AcpClient(transport: transport)
-            acpClient = client
 
-            try await client.initialize()
-            // ACP spec requires an absolute cwd on session/new. executionPath is a PATH list
-            // (binary lookup), never a working directory — only a selected project provides cwd.
-            guard let cwd = projectPath else {
-                throw AppViewModelError.missingAcpWorkingDirectory
+            do {
+                try await client.initialize()
+                // ACP spec requires an absolute cwd on session/new. executionPath is a PATH list
+                // (binary lookup), never a working directory — only a selected project provides cwd.
+                guard let cwd = projectPath else {
+                    throw AppViewModelError.missingAcpWorkingDirectory
+                }
+                let sid = try await client.createSession(cwd: cwd, title: server.displayName)
+                guard generation == self.connectionGeneration, self.selectedServer?.id == server.id else {
+                    await client.close()
+                    return
+                }
+                acpClient = client
+                acpSessionId = sid
+            } catch {
+                // Never strand a half-open transport / remote agent process on failure.
+                await client.close()
+                throw error
             }
-            let sid = try await client.createSession(cwd: cwd, title: server.displayName)
-            acpSessionId = sid
 
             statusMessage = "ACP agent session connected."
 
@@ -1041,6 +1070,7 @@ final class AppViewModel: ObservableObject {
                 guard let self else { return }
                 for await item in client.sessionItems {
                     await MainActor.run {
+                        guard self.acpClient === client else { return } // stale session
                         // Coalesce streamed deltas / resolve tool cards before projecting.
                         self.acpItems = SharedKMPBridge.appendingAcpThreadItem(self.acpItems, item)
                         // Drive the normal ConversationView with the proven mapper (identical to debug preview).
@@ -1055,6 +1085,7 @@ final class AppViewModel: ObservableObject {
                 guard let self else { return }
                 for await event in client.events {
                     await MainActor.run {
+                        guard self.acpClient === client else { return } // stale session
                         self.handleAcpEvent(event)
                     }
                 }
@@ -1190,7 +1221,10 @@ final class AppViewModel: ObservableObject {
             await closeConnection(updateState: false, clearOpenSessionCounts: !preservingVisibleState, cancelReconnect: !preservingVisibleState)
             connectionState = .connecting
             let connected = await startAcpProductionSessionForCurrentProject()
-            if connected, selectedServerID == targetServer.id {
+            // acpClient != nil distinguishes a real connect from a stale-bailed attempt
+            // (user disconnected/switched mid-connect): the latter must not resurrect
+            // a Connected state with no client behind it.
+            if connected, selectedServerID == targetServer.id, acpClient != nil {
                 connectionState = .connected
             }
             return
@@ -1994,7 +2028,9 @@ final class AppViewModel: ObservableObject {
         acpCollectorTask = nil
         acpEventsTask?.cancel()
         acpEventsTask = nil
-        if let c = acpClient { Task { await c.close() } }
+        // Await the close so old-transport teardown cannot interleave with (and report errors
+        // into) the next connection's setup.
+        if let c = acpClient { await c.close() }
         acpClient = nil
         acpSessionId = nil
         acpItems = []
