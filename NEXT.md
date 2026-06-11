@@ -46,6 +46,22 @@
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 45) - 2026-06-11
+
+- Executed from `master` at `061f8eb` (`feat(acp): switch session models from the chat UI`) after `origin/master` was pulled and confirmed up to date.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 45.
+  - BUILD_ID: `86742999-b3c3-4342-9ed2-6d33e1ec5ac0`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-45.ipa` (17,936,941 bytes).
+  - Run record: `.asc/runs/testflight-20260611T143502Z-a12b2aa0.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+  - Signing: temporary-keychain flow (raw `.key`/`.cer` import); login keychain restored afterward.
+- External workflow: `asc workflow run testflight_external BUILD_ID:86742999-b3c3-4342-9ed2-6d33e1ec5ac0 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+  - Run record: `.asc/runs/testflight_external-20260611T143958Z-ef90e553.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+- Build 45 contents over 44: Claude preset forces bun runtime (`bunx --bun`, fixes old-system-node hosts); audit Phase 1 stability fixes (no dropped events/approvals, ACP lifecycle guards, request timeouts, runBusy reentrancy, onCleared ANR fix, cancellable raw-exec open); ACP model switching from the chat UI (session/set_model).
+- Validation: preflight passed; shared 27 ACP tests, Android compile + smoke + focused tests, iOS verify build + simulator suite at known-flake baseline — recorded under the F/G checklists above.
+
 ## asc TestFlight submission (internal build 44) - 2026-06-11
 
 - Executed from `master` at `52036e9` (`refactor(acp): neutral naming, agent presets, and cwd fix`) after `origin/master` was pulled and confirmed up to date.
