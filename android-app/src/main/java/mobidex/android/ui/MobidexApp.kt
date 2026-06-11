@@ -654,6 +654,31 @@ private fun SelectedServerActionsMenu(
     }
 }
 
+/** Pre-ready terminal output buffer, capped by total characters (oldest chunks dropped). */
+internal class BoundedPendingOutput(private val maxChars: Int = 256 * 1024) {
+    private val chunks = ArrayDeque<String>()
+    private var totalChars = 0
+
+    fun add(chunk: String) {
+        chunks.addLast(chunk)
+        totalChars += chunk.length
+        while (totalChars > maxChars && chunks.isNotEmpty()) {
+            totalChars -= chunks.removeFirst().length
+        }
+    }
+
+    fun drain(): List<String> {
+        val drained = chunks.toList()
+        clear()
+        return drained
+    }
+
+    fun clear() {
+        chunks.clear()
+        totalChars = 0
+    }
+}
+
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
 private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: () -> Unit, modifier: Modifier = Modifier) {
@@ -661,7 +686,10 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
     var input by remember { mutableStateOf("") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var terminalReady by remember { mutableStateOf(false) }
-    val pendingOutput = remember { mutableStateListOf<String>() }
+    // Plain deque, not snapshot state: chunks are only buffered until the WebView reports
+    // ready and never drive recomposition. Bounded so a never-ready WebView + chatty shell
+    // cannot grow it without limit (audit I7b).
+    val pendingOutput = remember { BoundedPendingOutput() }
     var terminal by remember { mutableStateOf<RemoteTerminalSession?>(null) }
     var terminalStatus by remember { mutableStateOf<TerminalStatus?>(TerminalStatus.Opening) }
 
@@ -775,9 +803,7 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
                                     when (message.optString("type")) {
                                         "ready" -> {
                                             terminalReady = true
-                                            val queued = pendingOutput.toList()
-                                            pendingOutput.clear()
-                                            queued.forEach { writeToTerminal(it) }
+                                            pendingOutput.drain().forEach { writeToTerminal(it) }
                                             evaluateTerminal("window.mobidexTerminal?.focus()")
                                         }
                                         "input" -> send(message.optString("data"))

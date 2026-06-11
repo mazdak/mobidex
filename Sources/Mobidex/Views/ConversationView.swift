@@ -857,6 +857,12 @@ struct ConversationView: View {
                 localAttachmentPaths: attachments,
                 queueWhenActive: queueWhenActive
             )
+            if sent {
+                // Attachments are staged to the remote host before sendComposerInput returns
+                // (including the queued case), so the local tmp copies are no longer needed.
+                deleteStagedAttachments(attachments)
+                return
+            }
             guard sent else {
                 attachmentAlert = AttachmentAlert(
                     title: "Message Not Sent",
@@ -909,6 +915,15 @@ struct ConversationView: View {
         composerDrafts.removeValue(forKey: key)
     }
 
+    /// Removes staged tmp copies once they can no longer be referenced (sent, or removed from
+    /// the strip). Only paths inside the temporary directory are ever deleted.
+    private func deleteStagedAttachments(_ paths: [String]) {
+        let temporaryPrefix = FileManager.default.temporaryDirectory.path
+        for path in paths where path.hasPrefix(temporaryPrefix) {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+    }
+
     private var attachmentStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 8) {
@@ -919,6 +934,7 @@ struct ConversationView: View {
                             attachmentPaths.removeAll { $0 == path }
                             composerEditGeneration &+= 1
                             saveComposerDraft(for: composerDraftKey)
+                            deleteStagedAttachments([path])
                         }
                     )
                 }
@@ -1267,15 +1283,45 @@ private struct ComposerAttachmentTile: View {
     }
 }
 
+/// Downsampled-thumbnail cache: a 48MP camera photo decodes to ~190MB at full resolution,
+/// and tile bodies re-evaluate on every composer keystroke (audit D3). Thumbnails are decoded
+/// once at tile size and cached by path.
+private enum AttachmentThumbnailCache {
+    nonisolated(unsafe) static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>() // NSCache is thread-safe
+        cache.countLimit = 64
+        return cache
+    }()
+
+    static func cached(_ path: String) -> UIImage? {
+        cache.object(forKey: path as NSString)
+    }
+
+    static func makeThumbnail(path: String, maxPixelSize: CGFloat) -> UIImage? {
+        if let cached = cached(path) { return cached }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+        else { return nil }
+        let image = UIImage(cgImage: cgImage)
+        cache.setObject(image, forKey: path as NSString)
+        return image
+    }
+}
+
 private struct AttachmentThumbnail: View {
     let path: String
     let size: CGSize
 
+    @State private var thumbnail: UIImage?
+
     var body: some View {
         Group {
-            if AttachmentDisplay.isImagePath(path),
-               FileManager.default.fileExists(atPath: path),
-               let image = UIImage(contentsOfFile: path) {
+            if let image = thumbnail ?? AttachmentThumbnailCache.cached(path) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
@@ -1291,6 +1337,21 @@ private struct AttachmentThumbnail: View {
         }
         .frame(width: size.width, height: size.height)
         .clipped()
+        .task(id: path) {
+            guard AttachmentDisplay.isImagePath(path),
+                  thumbnail == nil,
+                  AttachmentThumbnailCache.cached(path) == nil,
+                  FileManager.default.fileExists(atPath: path)
+            else { return }
+            let targetPath = path
+            // 3x the 72pt tile, decoded off the main actor.
+            let image = await Task.detached(priority: .userInitiated) {
+                AttachmentThumbnailCache.makeThumbnail(path: targetPath, maxPixelSize: 240)
+            }.value
+            if path == targetPath {
+                thumbnail = image
+            }
+        }
     }
 }
 

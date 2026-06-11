@@ -240,14 +240,6 @@ class AppViewModel(
     private var suppressThreadAutoSelection = false
     private var suppressCachedThreadSelection = false
 
-    // ACP / Grok debug wiring (item 7 minimal path, Codex untouched).
-    // Parallel holders + surface so mapped sessionItems (Reasoning/AgentMessage/ToolCall/etc. from the shared mapper)
-    // can be driven over real openRawExec + AcpClient without touching appServer/eventJob/connectSelectedServer/send paths.
-    private var debugAcpClient: AcpClient? = null
-    private var debugAcpJob: Job? = null
-    private val _debugAcpItems = MutableStateFlow<List<CodexSessionItem>>(emptyList())
-    val debugAcpItems: StateFlow<List<CodexSessionItem>> = _debugAcpItems.asStateFlow()
-
     // ACP / Grok *production* wiring (acp-production-wiring chunk).
     // When selectedServer.backendType == Acp, connect/send/approval/close paths drive these
     // instead of appServer/eventJob. Collector feeds the *main* conversation state (same hydrate/append
@@ -676,66 +668,6 @@ class AppViewModel(
                 val server = _state.value.selectedServer ?: return@runBusy
                 sshService.testConnection(server, credentialStore.loadCredential(server.id))
                 _state.update { it.copy(statusMessage = "Connection test passed for ${server.displayName}.") }
-            }
-        }
-    }
-
-    /**
-     * Minimal debug/experimental path (parity with iOS).
-     * Drives the server's configured ACP launch command over SSH raw exec + the shared AcpClient
-     * + mapper. Emits the exact CodexSessionItem kinds (Reasoning for thoughts, AgentMessage,
-     * ToolCall, etc.) into a parallel debug surface (`debugAcpItems`) that reuses the same models
-     * already rendered by ConversationSection / projection machinery.
-     *
-     * Codex connect/openAppServer/send/disconnect paths are 100% untouched (byte-for-byte).
-     */
-    fun startAcpDebugSession(initialPrompt: String? = null) {
-        viewModelScope.launch {
-            val server = _state.value.selectedServer ?: return@launch
-            // Cancel any prior debug ACP session (keeps surface simple, no hidden state sharing).
-            debugAcpJob?.cancel()
-            debugAcpClient?.let { runCatching { it.close() } }
-            debugAcpClient = null
-            _debugAcpItems.value = emptyList()
-
-            runBusy("Starting ACP debug session", marksFailure = true) {
-                val credential = credentialStore.loadCredential(server.id)
-                // No agent keys from the phone: after SSH auth, the remote agent process
-                // inherits the user's environment (same model as Codex).
-                val command = RemoteAcpCommand.shellCommand(
-                    launchCommand = server.acpLaunchCommand,
-                    executionPath = server.executionPath,
-                )
-                val transport = sshService.openRawExec(server, credential, command)
-                val client = AcpClient(transport)
-                debugAcpClient = client
-
-                val sid = try {
-                    client.initialize()
-                    // ACP spec requires an absolute cwd on session/new.
-                    val cwd = _state.value.selectedProject?.path
-                        ?: error("Select a project before starting an ACP debug session.")
-                    client.createSession(cwd = cwd, title = "ACP debug session").sessionId
-                } catch (error: Throwable) {
-                    // Never strand a half-open transport / remote agent process on failure.
-                    runCatching { client.close() }
-                    debugAcpClient = null
-                    throw error
-                }
-
-                _state.update { it.copy(statusMessage = "ACP session $sid connected (debug).") }
-
-                if (!initialPrompt.isNullOrBlank()) {
-                    runCatching { client.sendPrompt(sid, initialPrompt) }
-                }
-
-                debugAcpJob = launch {
-                    client.sessionItems.collect { item ->
-                        _debugAcpItems.update { it + item }
-                    }
-                }
-                // Debug surface already emits the exact CodexSessionItem kinds (via shared mapper)
-                // that ConversationSection renders for Codex — same "properly translated" path as iOS preview.
             }
         }
     }
@@ -1247,6 +1179,7 @@ class AppViewModel(
             selectedThreadID = _state.value.selectedThreadID,
             fetchedAtEpochSeconds = Instant.now().epochSecond,
         )
+        threadListCache.evictOldestBeyond(MAX_CACHED_THREAD_LISTS) { it.fetchedAtEpochSeconds }
     }
 
     private fun sortedThreadsPreservingSelectedThread(
@@ -1290,6 +1223,10 @@ class AppViewModel(
             thread = thread,
             fetchedAtEpochSeconds = Instant.now().epochSecond,
         )
+        // Each entry retains a full conversation; without a cap a day of browsing sessions
+        // accumulates tens-to-hundreds of MB (audit D2). Write-recency keeps the selected
+        // session fresh because streaming flushes rewrite its entry continuously.
+        threadDetailCache.evictOldestBeyond(MAX_CACHED_THREAD_DETAILS) { it.fetchedAtEpochSeconds }
     }
 
     private fun cacheCurrentSelectedThreadDetail() {
@@ -3204,6 +3141,16 @@ private fun String.isImageAttachmentPath(): Boolean =
 
 private const val MACOS_PRIVACY_WARNING_DISMISSED_KEY = "dismissedMacOSPrivacyWarning"
 private const val STREAMED_SECTIONS_FLUSH_WINDOW_MILLIS = 50L
+private const val MAX_CACHED_THREAD_DETAILS = 8 // mirrors the iOS detail-cache cap
+private const val MAX_CACHED_THREAD_LISTS = 16
+
+/** Evicts oldest entries (by [ageOf], ascending) until the map is within [cap]. */
+internal fun <K, V> MutableMap<K, V>.evictOldestBeyond(cap: Int, ageOf: (V) -> Long) {
+    while (size > cap) {
+        val oldest = entries.minByOrNull { ageOf(it.value) } ?: return
+        remove(oldest.key)
+    }
+}
 private const val REMOTE_DIRECTORY_BROWSE_TIMEOUT_MILLIS = 20_000L
 private const val NEW_SESSION_OPERATION_TIMEOUT_MILLIS = 30_000L
 

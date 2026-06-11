@@ -228,16 +228,14 @@ object AcpProtocolCore {
     /** JSON-RPC error code agents use for "authenticate first" (ACP auth_required). */
     const val AUTH_REQUIRED_ERROR_CODE = -32000
 
-    private val rpcCore = CodexRpcClientCore(initialRequestId = 1)
-
-    fun nextRequest(method: String, params: JsonValue? = null): CodexRpcOutboundRequest =
-        rpcCore.nextRequest(method, params)
-
+    // Stateless line builders only. This singleton deliberately holds no request-id counter:
+    // every client owns its own CodexRpcClientCore/AtomicLong, so two live clients can never
+    // mint colliding ids through shared mutable state.
     fun notificationLine(method: String, params: JsonValue? = null): String =
-        rpcCore.notificationLine(method, params)
+        CodexRpcNotification(method = method, params = params).encodeJsonLine()
 
     fun resultLine(id: JsonValue, result: JsonValue): String =
-        rpcCore.resultLine(id, result)
+        CodexRpcResultResponse(id = id, result = result).encodeJsonLine()
 
     fun classifyInbound(envelope: AcpRpcInboundEnvelope): AcpRpcInboundClassification? {
         val numericId = envelope.id?.responseIdValue

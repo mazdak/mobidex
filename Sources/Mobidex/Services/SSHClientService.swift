@@ -210,6 +210,7 @@ enum SSHServiceError: LocalizedError {
     case appServerClosed(command: String, details: String?)
     case remoteDirectoryBrowseFailed(String)
     case localFileNotReadable(String)
+    case attachmentTooLarge(String, maxBytes: UInt64)
     case hostKeyChanged(String, Int)
 
     var errorDescription: String? {
@@ -250,6 +251,8 @@ enum SSHServiceError: LocalizedError {
             "Could not browse remote folders: \(details)"
         case .localFileNotReadable(let path):
             "Could not read the local file at \(path)."
+        case .attachmentTooLarge(let path, let maxBytes):
+            "The attachment at \(path) is larger than the \(maxBytes / 1_048_576)MB upload limit."
         case .hostKeyChanged(let host, let port):
             "The SSH host key for \(host):\(port) changed. Remove and re-add the server if this change was expected."
         }
@@ -478,21 +481,19 @@ final class CitadelSSHService: TerminalSSHService {
                 var remotePaths: [String] = []
                 for localPath in localPaths {
                     let localURL = URL(fileURLWithPath: localPath)
-                    let data: Data
-                    do {
-                        data = try Data(contentsOf: localURL)
-                    } catch {
+                    guard let fileSize = (try? FileManager.default.attributesOfItem(atPath: localPath)[.size] as? NSNumber)?.uint64Value else {
                         throw SSHServiceError.localFileNotReadable(localPath)
+                    }
+                    guard fileSize <= maxAttachmentUploadBytes else {
+                        throw SSHServiceError.attachmentTooLarge(localPath, maxBytes: maxAttachmentUploadBytes)
                     }
                     let remotePath = "\(remoteDirectory)/\(UUID().uuidString)-\(sanitizedFilename(localURL.lastPathComponent))"
                     do {
-                        try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
-                            var buffer = ByteBufferAllocator().buffer(capacity: data.count)
-                            buffer.writeBytes(data)
-                            try await file.write(buffer)
-                        }
+                        try await uploadViaSFTPStreaming(localURL: localURL, remotePath: remotePath, sftp: sftp)
+                    } catch let error as SSHServiceError {
+                        throw error
                     } catch {
-                        try await uploadViaShell(data: data, remotePath: remotePath, client: client)
+                        try await uploadViaShellStreaming(localURL: localURL, remotePath: remotePath, client: client)
                     }
                     remotePaths.append(remotePath)
                 }
@@ -643,9 +644,57 @@ private final class DiagnosticHostKeyValidator: NIOSSHClientServerAuthentication
     }
 }
 
-private func uploadViaShell(data: Data, remotePath: String, client: SSHClient) async throws {
-    let encoded = data.base64EncodedString()
-    let command = "printf %s \(encoded.shellQuotedForRemoteCommand()) | base64 -d > \(remotePath.shellQuotedForRemoteCommand())"
+/// Upload chunk size: bounds memory to ~1MB per attachment regardless of file size (audit D1).
+private let attachmentUploadChunkBytes = 1_048_576
+private let maxAttachmentUploadBytes: UInt64 = 1_073_741_824 // 1GB sanity guard
+
+private func uploadViaSFTPStreaming(localURL: URL, remotePath: String, sftp: SFTPClient) async throws {
+    let handle: FileHandle
+    do {
+        handle = try FileHandle(forReadingFrom: localURL)
+    } catch {
+        throw SSHServiceError.localFileNotReadable(localURL.path)
+    }
+    defer { try? handle.close() }
+    try await sftp.withFile(filePath: remotePath, flags: [.write, .create, .truncate]) { file in
+        var offset: UInt64 = 0
+        while true {
+            guard let chunk = try handle.read(upToCount: attachmentUploadChunkBytes), !chunk.isEmpty else {
+                break
+            }
+            var buffer = ByteBufferAllocator().buffer(capacity: chunk.count)
+            buffer.writeBytes(chunk)
+            try await file.write(buffer, at: offset)
+            offset += UInt64(chunk.count)
+        }
+    }
+}
+
+/// Fallback when SFTP is unavailable: stream chunked base64 appends so the whole file is never
+/// held in memory (the old single-command form built a ~1.4x-file-size string).
+private func uploadViaShellStreaming(localURL: URL, remotePath: String, client: SSHClient) async throws {
+    let handle: FileHandle
+    do {
+        handle = try FileHandle(forReadingFrom: localURL)
+    } catch {
+        throw SSHServiceError.localFileNotReadable(localURL.path)
+    }
+    defer { try? handle.close() }
+    let quotedPath = remotePath.shellQuotedForRemoteCommand()
+    try await runShellUploadCommand(": > \(quotedPath)", client: client)
+    while true {
+        guard let chunk = try handle.read(upToCount: attachmentUploadChunkBytes), !chunk.isEmpty else {
+            break
+        }
+        let encoded = chunk.base64EncodedString()
+        try await runShellUploadCommand(
+            "printf %s \(encoded.shellQuotedForRemoteCommand()) | base64 -d >> \(quotedPath)",
+            client: client
+        )
+    }
+}
+
+private func runShellUploadCommand(_ command: String, client: SSHClient) async throws {
     let result = try await client.executeCommand(command, maxResponseSize: 16_384, mergeStreams: true, inShell: true)
     let output = String(buffer: result).trimmingCharacters(in: .whitespacesAndNewlines)
     if !output.isEmpty {
@@ -1101,7 +1150,7 @@ private func diagnosticStage(for mapped: Error, fallback: Error) -> String {
             return "SSH handshake"
         case .appServerClosed:
             return "app-server"
-        case .transportClosed, .invalidDiscoveryOutput, .remoteDirectoryBrowseFailed, .localFileNotReadable:
+        case .transportClosed, .invalidDiscoveryOutput, .remoteDirectoryBrowseFailed, .localFileNotReadable, .attachmentTooLarge:
             return "remote command"
         }
     }

@@ -1,5 +1,16 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## Mission Checklist (active, 2026-06-11: audit Phase 3 — memory hygiene)
+
+- [ ] I1. shared-core: WebSocket frame/assembled-message size caps (throw codec exception, kill connection) + tests; delete the dormant unsynchronized `nextRequest` id counter from the AcpProtocolCore singleton (clients own their cores).
+- [ ] I2. iOS D1: stream attachment uploads in chunks (SFTP file-handle writes; chunk or retire the whole-file base64 shell fallback) — no whole-file Data loads.
+- [ ] I3. iOS D3: composer thumbnails downsample once + cache (no full-res decode in body); staged tmp files deleted after send / on removal / draft clear.
+- [ ] I4. iOS D2: prune expired threadListCache entries alongside the detail-cache prune (stranded-key fix).
+- [ ] I5. iOS debug-path teardown: closeConnection tears down debugAcpClient/collector; events stream drained/bounded; debug items coalesced via the accumulator path.
+- [ ] I6. Android D2: LRU-cap thread detail/list caches (full CodexThreads retained forever today).
+- [ ] I7. Android debug-path teardown (disconnectInternal closes debug holders; _debugAcpItems coalesced); terminal pendingOutput bounded; WS upgrade header read without per-byte full-buffer copies.
+- [ ] I8. Codex review passes + triage; full validation; merge + push.
+
 ## Mission Checklist (active, 2026-06-11: whole-app memory/perf/concurrency audit)
 
 - [x] E1. Six parallel audit passes (iOS mem / iOS perf / iOS concurrency / Android mem+perf / Android concurrency / shared+transports) — findings cross-corroborated.

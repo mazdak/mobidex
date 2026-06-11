@@ -371,15 +371,19 @@ private class SshjWebSocketProxyTransport private constructor(
 
         private fun readUpgradeResponse(input: InputStream): UpgradeResponse {
             val buffer = ByteArrayOutputStream()
+            // Rolling 32-bit window over the last four bytes — checking the terminator without
+            // copying the whole buffer per byte (the old toByteArray-per-byte was quadratic).
+            var window = 0
+            val separator = 0x0D_0A_0D_0A
             while (true) {
                 val next = input.read()
                 if (next < 0) error("The app-server proxy closed before websocket upgrade completed.")
                 buffer.write(next)
-                val bytes = buffer.toByteArray()
-                if (bytes.endsWith(httpHeaderSeparator)) {
-                    return UpgradeResponse(String(bytes, Charsets.UTF_8), ByteArray(0))
+                window = (window shl 8) or (next and 0xFF)
+                if (window == separator) {
+                    return UpgradeResponse(String(buffer.toByteArray(), Charsets.UTF_8), ByteArray(0))
                 }
-                if (bytes.size > 65_536) error("The app-server websocket upgrade response was too large.")
+                if (buffer.size() > 65_536) error("The app-server websocket upgrade response was too large.")
             }
         }
 
@@ -419,7 +423,6 @@ private class SshjWebSocketProxyTransport private constructor(
         }
 
         private val secureRandom = SecureRandom()
-        private val httpHeaderSeparator = byteArrayOf(13, 10, 13, 10)
         private const val webSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
     }
 
@@ -657,11 +660,6 @@ private class SshjRemoteTerminalSession(
 }
 
 private data class UpgradeResponse(val headers: String, val leftover: ByteArray)
-
-private fun ByteArray.endsWith(suffix: ByteArray): Boolean {
-    if (size < suffix.size) return false
-    return suffix.indices.all { index -> this[size - suffix.size + index] == suffix[index] }
-}
 
 private fun SSHClient.execString(command: String): String =
     startSession().use { session ->

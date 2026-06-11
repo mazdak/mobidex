@@ -355,6 +355,7 @@ final class AppViewModel: ObservableObject {
     // can be driven over real openRawExec + AcpClient without touching appServer/eventTask/connectSelectedServer/send paths.
     private var debugAcpClient: AcpClient?
     private var debugAcpCollectorTask: Task<Void, Never>?
+    private var debugAcpEventsDrainTask: Task<Void, Never>?
     @Published private(set) var debugAcpItems: [CodexThreadItem] = []
     var debugAcpConversationSections: [ConversationSection] {
         SharedKMPBridge.conversationSections(from: debugAcpItems)
@@ -573,6 +574,7 @@ final class AppViewModel: ObservableObject {
         acpItems = []
         acpModelOptions = []
         acpCurrentModelId = nil
+        tearDownDebugAcpSession()
         return true
     }
 
@@ -968,6 +970,8 @@ final class AppViewModel: ObservableObject {
 
         // Cancel prior debug ACP session (simple reset, no hidden sharing with Codex state).
         debugAcpCollectorTask?.cancel()
+        debugAcpEventsDrainTask?.cancel()
+        debugAcpEventsDrainTask = nil
         if let prior = debugAcpClient {
             await prior.close()
         }
@@ -1011,11 +1015,27 @@ final class AppViewModel: ObservableObject {
                 guard let self else { return }
                 for await item in client.sessionItems {
                     await MainActor.run {
-                        self.debugAcpItems.append(item)
+                        // Coalesce like production so a streamed message is one bubble.
+                        self.debugAcpItems = SharedKMPBridge.appendingAcpThreadItem(self.debugAcpItems, item)
                     }
                 }
             }
+            // Nothing renders debug events, but the stream buffers unboundedly unless drained.
+            debugAcpEventsDrainTask = Task {
+                for await _ in client.events {}
+            }
         }
+    }
+
+    /// Tears down the DEBUG-only ACP session (SSH channel + remote agent process + drain tasks).
+    private func tearDownDebugAcpSession() {
+        debugAcpCollectorTask?.cancel()
+        debugAcpCollectorTask = nil
+        debugAcpEventsDrainTask?.cancel()
+        debugAcpEventsDrainTask = nil
+        if let client = debugAcpClient { Task { await client.close() } }
+        debugAcpClient = nil
+        debugAcpItems = []
     }
 
     func presentAcpDebugPreview() {
@@ -2066,6 +2086,7 @@ final class AppViewModel: ObservableObject {
         if let c = acpClient { await c.close() }
         acpModelOptions = []
         acpCurrentModelId = nil
+        tearDownDebugAcpSession()
         acpClient = nil
         acpSessionId = nil
         acpItems = []
@@ -2138,6 +2159,25 @@ final class AppViewModel: ObservableObject {
             selectedThreadID: selectedThreadID,
             fetchedAt: .now
         )
+        pruneThreadListCache(now: .now, currentScope: scope)
+    }
+
+    /// List-cache hygiene (audit D2/I4): scope keys embed the project's session-path set, so
+    /// discovery rewrites and archived-toggle flips strand old keys forever — and entries can
+    /// hold fully hydrated threads. Drop expired entries and cap the rest by recency.
+    private func pruneThreadListCache(now: Date, currentScope: ThreadLoadScope?) {
+        threadListCache = threadListCache.filter { scope, entry in
+            scope == currentScope || isCacheEntryFresh(fetchedAt: entry.fetchedAt, ttl: sessionListCacheTTL, now: now)
+        }
+        let cap = 16
+        guard threadListCache.count > cap else { return }
+        let removable = threadListCache
+            .filter { scope, _ in currentScope.map { scope != $0 } ?? true }
+            .sorted { $0.value.fetchedAt < $1.value.fetchedAt }
+            .map(\.key)
+        for key in removable.prefix(max(0, threadListCache.count - cap)) {
+            threadListCache.removeValue(forKey: key)
+        }
     }
 
     private func cacheThreadDetail(thread: CodexThread, liveItems: [CodexThreadItem], sections: [ConversationSection]) {

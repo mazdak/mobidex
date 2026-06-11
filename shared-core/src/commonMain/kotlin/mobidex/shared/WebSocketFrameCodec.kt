@@ -59,10 +59,20 @@ object WebSocketFrameCodec {
         }
     }
 
+    /**
+     * Upper bound for a single frame payload and for an assembled fragmented message.
+     * A corrupt/desynced length header (or a hostile peer) must fail the connection instead
+     * of buffering the rest of the stream toward a 2GB allocation that looks like a hang.
+     */
+    const val MAX_PAYLOAD_BYTES: Int = 64 * 1024 * 1024
+
     internal fun validateFrameHeader(fin: Boolean, opcode: Int, length: Int, masked: Boolean, requireUnmasked: Boolean) {
         ensureSupportedOpcode(opcode)
         if (requireUnmasked && masked) {
             throw WebSocketFrameCodecException("Received masked websocket frame from server.")
+        }
+        if (length > MAX_PAYLOAD_BYTES) {
+            throw WebSocketFrameCodecException("Websocket frame payload exceeds the $MAX_PAYLOAD_BYTES byte limit.")
         }
         if (opcode.isControlOpcode) {
             if (!fin) {
@@ -288,6 +298,11 @@ class WebSocketMessageAssembler {
     private fun appendFragment(payload: ByteArray) {
         fragmentedPayloads += payload
         fragmentedPayloadLength += payload.size
+        if (fragmentedPayloadLength > WebSocketFrameCodec.MAX_PAYLOAD_BYTES) {
+            throw WebSocketFrameCodecException(
+                "Websocket fragmented message exceeds the ${WebSocketFrameCodec.MAX_PAYLOAD_BYTES} byte limit."
+            )
+        }
     }
 
     private fun combinedFragments(): ByteArray {

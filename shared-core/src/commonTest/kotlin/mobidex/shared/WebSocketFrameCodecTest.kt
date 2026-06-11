@@ -122,3 +122,35 @@ class WebSocketFrameCodecTest {
         }
     }
 }
+
+class WebSocketPayloadCapTest {
+    @Test
+    fun parserRejectsFrameHeaderClaimingPayloadBeyondCap() {
+        // 64-bit length header claiming MAX_PAYLOAD_BYTES + 1 — must fail the connection
+        // instead of buffering the stream forever waiting for a frame that never completes.
+        val claimed = WebSocketFrameCodec.MAX_PAYLOAD_BYTES.toLong() + 1
+        val header = ByteArray(10)
+        header[0] = (0x80 or WebSocketOpcode.Binary).toByte() // FIN + binary
+        header[1] = 127 // 64-bit extended length, unmasked
+        for (index in 0 until 8) {
+            header[2 + index] = ((claimed shr ((7 - index) * 8)) and 0xFF).toByte()
+        }
+        val parser = WebSocketFrameParser(requireUnmasked = true)
+        parser.append(header)
+        assertFailsWith<WebSocketFrameCodecException> { parser.nextFrame() }
+    }
+
+    @Test
+    fun assemblerRejectsFragmentedMessageBeyondCap() {
+        val assembler = WebSocketMessageAssembler()
+        val chunk = ByteArray(16 * 1024 * 1024)
+        assembler.append(WebSocketFrame(fin = false, opcode = WebSocketOpcode.Binary, payload = chunk))
+        assembler.append(WebSocketFrame(fin = false, opcode = WebSocketOpcode.Continuation, payload = chunk))
+        assembler.append(WebSocketFrame(fin = false, opcode = WebSocketOpcode.Continuation, payload = chunk))
+        assertFailsWith<WebSocketFrameCodecException> {
+            // Fifth 16MB fragment pushes past the 64MB cap.
+            assembler.append(WebSocketFrame(fin = false, opcode = WebSocketOpcode.Continuation, payload = chunk))
+            assembler.append(WebSocketFrame(fin = true, opcode = WebSocketOpcode.Continuation, payload = chunk))
+        }
+    }
+}
