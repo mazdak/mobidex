@@ -1,5 +1,15 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## Mission Checklist (active, 2026-06-11: ACP productization polish)
+
+- [x] D1. shared-core: RemoteAcpCommand reduced to presets + shellCommand (`grokLaunchCommand`, `claudeLaunchCommand` = `bunx @zed-industries/claude-code-acp`); grok-specific stdioCommand/candidate-scan machinery deleted; tests rewritten (5/5 green).
+- [x] D2. BackendType `.acpGrok`→`.acp` (iOS custom init(from:) maps legacy "acpGrok"; unknown → codexAppServer) / `AcpGrok`→`Acp` (Android `@JsonNames("AcpGrok")` + repository Json `coerceInputValues` so unknown values fall back instead of failing the saved list). Persistence tests on both platforms green (iOS legacy-decode test passed on simulator).
+- [x] D3. `AcpGrokClient`→`AcpClient` renamed everywhere (git mv + references + smoke test); xcodegen regenerated pbxproj cleanly.
+- [x] D4. Debug path now drives the server's configured launch command via shellCommand (acpStdioCommand bridge deleted); `startAcpDebugSession` de-Grokked on both platforms incl. RootView labels; debug cwd requires a selected project.
+- [x] D5. cwd bug from build 43 fixed: executionPath is a PATH list, not a working directory — cwd now comes only from the selected project with a fail-fast message; `createSession`/`sessionNew` cwd tightened to non-optional end to end.
+- [x] D6. Grok/Claude preset buttons prefill the launch command in both server editors (stored value remains a plain command string).
+- [x] D7. Subagent review PASS (4 P2s — stale comments, unknown-enum parity, nullable cwd — all fixed). Validation green: shared 25+5, Android compile + smoke + ServerModelsTest (incl. unknown-value coercion), iOS verify build, iOS simulator unit tests (only the documented pre-existing AppViewModelTests mock-ordering flake failed; CredentialStorageTests incl. the new legacy decode passed). Merged to master + pushed; no new TestFlight cut (build 43 remains current).
+
 ## Mission Checklist (active, 2026-06-10: Claude ACP support + TestFlight)
 
 - [x] C1. Verify Grok `agent stdio` wire format vs ACP spec. (Verified live against grok 0.2.22: grok is strictly spec-shaped — array prompts, required cwd+mcpServers, session/cancel, update.sessionUpdate, no `initialized` notification, and `authenticate` required before session/new. Spec compliance is safe for Grok and required for Claude.)
@@ -24,7 +34,7 @@
 - External submission for this build (pending, run manually):
   `asc workflow run testflight_external BUILD_ID:13d0c274-6bb6-4f91-b6f4-0f4bee0d4411 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
 - Validation note: `Scripts/verify-ios-distribution-config.sh` passed; shared-core `AcpProtocolCoreTest` 25/25; Android `compileDebugKotlin` + `AcpGrokClientSmokeTest` green; iOS simulator verify build green; two subagent reviews (full delta FAIL→fixed, fix-delta PASS).
-- To try Claude on this build: create/edit a server with backend type ACP, set the launch command to `npx @zed-industries/claude-code-acp` (Node 18+ on the host; pre-run once on the host to warm the npx cache and run `claude /login` or export `ANTHROPIC_API_KEY` in the remote shell), select a project, connect.
+- To try Claude on this build: create/edit a server with backend type ACP, set the launch command to `bunx @zed-industries/claude-code-acp` (the Claude preset as of the 2026-06-11 polish; pre-run once on the host to warm the bunx cache and run `claude /login` or export `ANTHROPIC_API_KEY` in the remote shell), select a project, connect.
 
 ## Mission Checklist (active, 2026-06-05 regressions)
 

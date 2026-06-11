@@ -56,7 +56,7 @@ interface MobidexSshService {
     /**
      * Opens a raw line-based exec channel over SSH (plain \n-delimited text, no WebSocket framing).
      * Preferred for ACP agents such as `grok agent stdio`.
-     * The caller supplies the exact remote command (e.g. from RemoteAcpCommand.stdioCommand).
+     * The caller supplies the exact remote command (e.g. from RemoteAcpCommand.shellCommand).
      */
     suspend fun openRawExec(server: ServerRecord, credential: SSHCredential, command: String): CodexLineTransport
     suspend fun openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential): RemoteTerminalSession

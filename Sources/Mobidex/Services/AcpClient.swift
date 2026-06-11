@@ -1,19 +1,19 @@
 import Foundation
 import NIOCore
 
-/// Thin ACP client for driving Grok agents (via `grok agent stdio`) over a raw line transport on iOS.
+/// Thin ACP client for driving spec-compliant stdio agents (`grok agent stdio`,
+/// `bunx @zed-industries/claude-code-acp`, ...) over a raw line transport on iOS.
 ///
-/// Full parity implementation for item 5. Reuses `CodexLineTransport` (SSHRawExecTransport via
-/// `sshService.openRawExec` + `SharedKMPBridge.acpStdioCommand`).
+/// Reuses `CodexLineTransport` (SSHRawExecTransport via `sshService.openRawExec` +
+/// `SharedKMPBridge.acpShellCommand`).
 ///
 /// `session/update` chunks are classified via bridged `AcpProtocolCore` and mapped (via
 /// `acpClassificationToSessionItems`) into the exact `CodexThreadItem` model (reasoning, agentMessage,
-/// toolCall, plan, agentEvent) already used by the conversation UI. When wired in the ViewModel,
-/// Grok/ACP responses render in `ConversationView` / `ConversationSection` with **zero new UI code** —
-/// directly satisfying the mission's "properly translated to right UI elements" criterion.
+/// toolCall, plan, agentEvent) already used by the conversation UI, so ACP responses render in
+/// `ConversationView` / `ConversationSection` with zero new UI code.
 ///
 /// Codex app-server path and all Codex launch/WS code remain 100% untouched.
-actor AcpGrokClient {
+actor AcpClient {
     nonisolated let events: AsyncStream<CodexAppServerEvent>
     nonisolated let sessionItems: AsyncStream<CodexThreadItem>  // The primary UI translation surface (mapper output)
 
@@ -32,7 +32,7 @@ actor AcpGrokClient {
     private let eventContinuation: AsyncStream<CodexAppServerEvent>.Continuation
     private let itemContinuation: AsyncStream<CodexThreadItem>.Continuation
 
-    // Generous default: a cold `npx @zed-industries/claude-code-acp` may download the package
+    // Generous default: a cold `bunx @zed-industries/claude-code-acp` may download the package
     // on the host before answering initialize.
     init(transport: CodexLineTransport, requestTimeoutSeconds: Double = 120) {
         self.transport = transport
@@ -66,7 +66,7 @@ actor AcpGrokClient {
     /// Creates a new ACP session. When the agent answers auth_required (some agents, e.g. grok,
     /// require an explicit `authenticate` even when logged in on the host), authenticates with the
     /// first advertised method and retries once.
-    func createSession(cwd: String? = nil, title: String? = nil) async throws -> String {
+    func createSession(cwd: String, title: String? = nil) async throws -> String {
         guard !isClosed else { throw CodexAppServerClientError.disconnected }
         let params = SharedKMPBridge.acpSessionNewParams(cwd: cwd, title: title)
         let result: JSONValue
@@ -279,9 +279,9 @@ actor AcpGrokClient {
 
 // MARK: - Debug conveniences (smoke / unit tests)
 #if DEBUG
-extension AcpGrokClient {
-    static func makeStub(transport: CodexLineTransport) -> AcpGrokClient {
-        AcpGrokClient(transport: transport)
+extension AcpClient {
+    static func makeStub(transport: CodexLineTransport) -> AcpClient {
+        AcpClient(transport: transport)
     }
 }
 #endif

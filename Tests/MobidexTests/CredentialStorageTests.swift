@@ -147,10 +147,10 @@ final class CredentialStorageTests: XCTestCase {
             username: "user",
             acpLaunchCommand: "  my-agent --stdio --profile work  ",
             authMethod: .password,
-            backendType: .acpGrok
+            backendType: .acp
         )
 
-        XCTAssertEqual(server.backendType, .acpGrok)
+        XCTAssertEqual(server.backendType, .acp)
         XCTAssertEqual(server.acpLaunchCommand, "my-agent --stdio --profile work")
 
         let blankCommandServer = ServerRecord(
@@ -159,9 +159,35 @@ final class CredentialStorageTests: XCTestCase {
             username: "user",
             acpLaunchCommand: " ",
             authMethod: .password,
-            backendType: .acpGrok
+            backendType: .acp
         )
         XCTAssertEqual(blankCommandServer.acpLaunchCommand, SharedKMPBridge.defaultAcpLaunchCommand)
+    }
+
+    func testBackendTypeDecodesLegacyAcpGrokStoredValue() throws {
+        // Pre-rename builds persisted "acpGrok"; saved servers must keep decoding as .acp.
+        let payload = Data("""
+        {
+          "id": "00000000-0000-0000-0000-000000000002",
+          "displayName": "Legacy ACP",
+          "host": "host",
+          "port": 22,
+          "username": "user",
+          "authMethod": "password",
+          "projects": [],
+          "createdAt": 1770000000,
+          "updatedAt": 1770000000,
+          "backendType": "acpGrok"
+        }
+        """.utf8)
+        let decoded = try JSONDecoder().decode(ServerRecord.self, from: payload)
+        XCTAssertEqual(decoded.backendType, .acp)
+
+        // Re-encoding writes the new raw value only.
+        let reencoded = try JSONEncoder().encode(decoded)
+        let json = String(decoding: reencoded, as: UTF8.self)
+        XCTAssertTrue(json.contains("\"backendType\":\"acp\""))
+        XCTAssertFalse(json.contains("acpGrok"))
     }
 
     func testServerRecordDefaultAppServerCommandResolvesCodexExecutable() {

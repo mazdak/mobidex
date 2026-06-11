@@ -2333,8 +2333,8 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = backendType == BackendType.CodexAppServer, onClick = { backendType = BackendType.CodexAppServer })
                     Text(BackendType.CodexAppServer.label)
-                    RadioButton(selected = backendType == BackendType.AcpGrok, onClick = { backendType = BackendType.AcpGrok })
-                    Text(BackendType.AcpGrok.label)
+                    RadioButton(selected = backendType == BackendType.Acp, onClick = { backendType = BackendType.Acp })
+                    Text(BackendType.Acp.label)
                 }
                 Text(backendType.detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(executionPath, { executionPath = it }, label = { Text("Execution Path") }, modifier = Modifier.fillMaxWidth())
@@ -2349,7 +2349,11 @@ private fun ServerEditorDialog(original: ServerRecord?, model: AppViewModel, onD
                         minLines = 2,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Text("Mobidex expects ACP JSON-RPC over stdio. Grok is the default, but any ACP-compatible coding agent can be used.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { acpLaunchCommand = RemoteAcpCommand.grokLaunchCommand }) { Text("Grok") }
+                        TextButton(onClick = { acpLaunchCommand = RemoteAcpCommand.claudeLaunchCommand }) { Text("Claude") }
+                    }
+                    Text("Mobidex expects ACP JSON-RPC over stdio. Use a preset or any ACP-compatible agent command. The agent reads its own login from the remote host (e.g. grok login or claude /login).", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = authMethod == ServerAuthMethod.Password, onClick = { authMethod = ServerAuthMethod.Password })

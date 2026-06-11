@@ -4,10 +4,37 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlinx.serialization.json.Json
 import mobidex.shared.RemoteAcpCommand
 import mobidex.shared.RemoteServerLaunchDefaults
 
 class ServerModelsTest {
+    @Test
+    fun backendTypeDecodesLegacyAcpGrokStoredValue() {
+        // Pre-rename builds persisted "AcpGrok"; the same Json config the repository uses
+        // must keep decoding those saved servers as the Acp backend.
+        val json = Json {
+            ignoreUnknownKeys = true
+            coerceInputValues = true
+        }
+        val legacy = json.decodeFromString<ServerRecord>(
+            """{"displayName":"dev","host":"h","username":"u","authMethod":"Password","backendType":"AcpGrok"}"""
+        )
+        assertEquals(BackendType.Acp, legacy.backendType)
+        val current = json.decodeFromString<ServerRecord>(
+            """{"displayName":"dev","host":"h","username":"u","authMethod":"Password","backendType":"Acp"}"""
+        )
+        assertEquals(BackendType.Acp, current.backendType)
+        // Unknown values (e.g. written by a newer build) coerce to the default instead of
+        // failing the whole saved-server list (parity with iOS decoding).
+        val unknown = json.decodeFromString<ServerRecord>(
+            """{"displayName":"dev","host":"h","username":"u","authMethod":"Password","backendType":"FutureBackend"}"""
+        )
+        assertEquals(BackendType.CodexAppServer, unknown.backendType)
+        // Records re-encode with the new name only.
+        assertContains(json.encodeToString(ServerRecord.serializer(), legacy), "\"backendType\":\"Acp\"")
+    }
+
     @Test
     fun serverRecordNormalizationUsesSharedLaunchDefaults() {
         val server = ServerRecord(

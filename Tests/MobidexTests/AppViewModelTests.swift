@@ -1176,7 +1176,7 @@ final class AppViewModelTests: XCTestCase {
             executionPath: "$HOME/bin:/usr/bin:$PATH",
             acpLaunchCommand: "custom-agent --stdio --profile work",
             authMethod: .password,
-            backendType: .acpGrok
+            backendType: .acp
         )
         let repository = InMemoryServerRepository(servers: [server])
         let credentials = InMemoryCredentialStore()

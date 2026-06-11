@@ -42,7 +42,7 @@ class AcpRpcException(val code: Int, message: String) : Exception(message)
 
 /**
  * Thin ACP client for driving spec-compliant stdio agents (`grok agent stdio`,
- * `npx @zed-industries/claude-code-acp`, ...) over a raw line transport.
+ * `bunx @zed-industries/claude-code-acp`, ...) over a raw line transport.
  *
  * - Uses CodexLineTransport (obtained via SshService.openRawExec + RemoteAcpCommand.shellCommand)
  * - Leverages shared AcpProtocolCore for request building, inbound classification, and the
@@ -54,7 +54,7 @@ class AcpRpcException(val code: Int, message: String) : Exception(message)
  * - Surfaces agent -> client requests (permission prompts) on [serverRequests] for the
  *   ViewModel to answer via [respondToServerRequest].
  */
-class AcpGrokClient(
+class AcpClient(
     private val transport: CodexLineTransport,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -68,7 +68,7 @@ class AcpGrokClient(
     private var authMethodIds: List<String> = emptyList()
 
     private companion object {
-        // Generous: a cold `npx @zed-industries/claude-code-acp` may download the package
+        // Generous: a cold `bunx @zed-industries/claude-code-acp` may download the package
         // on the host before answering initialize.
         const val REQUEST_TIMEOUT_MS = 120_000L
     }
@@ -98,7 +98,7 @@ class AcpGrokClient(
      * Creates a new ACP session and returns its sessionId. When the agent answers auth_required,
      * authenticates with its first advertised method and retries once.
      */
-    suspend fun createSession(cwd: String? = null, title: String? = null): String {
+    suspend fun createSession(cwd: String, title: String? = null): String {
         check(!closed) { "ACP client is closed." }
         val result = try {
             sendRequestAndAwait(AcpRpcRequests.sessionNew(id = nextId(), cwd = cwd, title = title))

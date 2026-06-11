@@ -185,7 +185,7 @@ private enum AppViewModelError: LocalizedError {
         case .operationTimedOut(let message):
             message
         case .missingAcpWorkingDirectory:
-            "Select a project (or set the server's execution path) before connecting an ACP agent."
+            "Select a project before connecting an ACP agent."
         }
     }
 }
@@ -352,8 +352,8 @@ final class AppViewModel: ObservableObject {
 
     // ACP / Grok debug wiring (item 7 minimal path, Codex untouched).
     // Parallel holders + surface so mapped sessionItems (CodexThreadItem from the bridged KMP mapper)
-    // can be driven over real openRawExec + AcpGrokClient without touching appServer/eventTask/connectSelectedServer/send paths.
-    private var debugAcpClient: AcpGrokClient?
+    // can be driven over real openRawExec + AcpClient without touching appServer/eventTask/connectSelectedServer/send paths.
+    private var debugAcpClient: AcpClient?
     private var debugAcpCollectorTask: Task<Void, Never>?
     @Published private(set) var debugAcpItems: [CodexThreadItem] = []
     var debugAcpConversationSections: [ConversationSection] {
@@ -362,12 +362,12 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var isShowingAcpDebugPreview = false
 
     // ACP / Grok *production* wiring.
-    // When selectedServer.backendType == .acpGrok, the main connectSelectedServer / send / approval / close
+    // When selectedServer.backendType == .acp, the main connectSelectedServer / send / approval / close
     // paths drive these instead of appServer + eventTask. The collector feeds the primary conversation state
     // (via the same SharedKMPBridge.conversationSections(from:) the debug preview already uses) so Grok
     // chunks render as identical rich UI elements in the normal ConversationView.
-    // Zero changes to any Codex paths. Reuses AcpGrokClient actor + mapper + raw-exec + (post-simplification) auth model.
-    private var acpClient: AcpGrokClient?
+    // Zero changes to any Codex paths. Reuses AcpClient actor + mapper + raw-exec + (post-simplification) auth model.
+    private var acpClient: AcpClient?
     private var acpCollectorTask: Task<Void, Never>?
     private var acpEventsTask: Task<Void, Never>?
     private var acpItems: [CodexThreadItem] = []
@@ -937,15 +937,14 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    /// Minimal debug/experimental path for item 7 (ACP/Grok wiring parity with Android).
-    /// Drives a real `grok agent stdio` over SSH raw exec + the Swift AcpGrokClient (actor) + bridged mapper.
-    /// Emits the exact CodexThreadItem kinds (reasoning for thoughts, agentMessage, toolCall, etc.)
-    /// into a parallel debug surface (`debugAcpItems`) that reuses the same models already rendered
-    /// by ConversationView / ConversationSection — satisfying "properly translated to right UI elements".
+    /// Minimal debug/experimental path (parity with Android).
+    /// Drives the server's configured ACP launch command over SSH raw exec + the Swift AcpClient
+    /// (actor) + bridged mapper. Emits the exact CodexThreadItem kinds (reasoning for thoughts,
+    /// agentMessage, toolCall, etc.) into a parallel debug surface (`debugAcpItems`) that reuses
+    /// the same models already rendered by ConversationView / ConversationSection.
     ///
     /// Codex connectSelectedServer / send / disconnect paths are 100% untouched (byte-for-byte).
-    /// ServerRecord backendType and main flows remain parked.
-    func startAcpDebugSessionForGrok(model: String = "grok-build", initialPrompt: String? = nil) async {
+    func startAcpDebugSession(initialPrompt: String? = nil) async {
         guard let server = selectedServer else { return }
 
         // Cancel prior debug ACP session (simple reset, no hidden sharing with Codex state).
@@ -956,20 +955,26 @@ final class AppViewModel: ObservableObject {
         debugAcpClient = nil
         debugAcpItems = []
 
-        await runOperation(.connecting, status: "Starting Grok (ACP debug)", marksConnectionFailure: true) {
+        await runOperation(.connecting, status: "Starting ACP debug session", marksConnectionFailure: true) {
             let credential = try await loadCredentialFromStore(serverID: server.id)
-            // No XAI key injection from the phone. SSH authentication is the trust boundary;
-            // the remote grok process reads its own auth (exactly as codex does today).
-            let command = SharedKMPBridge.acpStdioCommand(grokBin: nil, model: model, extraArgs: [])
+            // No agent keys from the phone. SSH authentication is the trust boundary;
+            // the remote agent process reads its own auth (exactly as codex does today).
+            let command = SharedKMPBridge.acpShellCommand(
+                launchCommand: server.acpLaunchCommand,
+                executionPath: server.executionPath
+            )
             let transport = try await sshService.openRawExec(server: server, credential: credential, command: command)
-            let client = AcpGrokClient(transport: transport)
+            let client = AcpClient(transport: transport)
             debugAcpClient = client
 
             try await client.initialize()
-            let cwd = selectedProject?.path
-            let sid = try await client.createSession(cwd: cwd, title: "Grok debug session")
+            // ACP spec requires an absolute cwd on session/new.
+            guard let cwd = selectedProject?.path else {
+                throw AppViewModelError.missingAcpWorkingDirectory
+            }
+            let sid = try await client.createSession(cwd: cwd, title: "ACP debug session")
 
-            statusMessage = "ACP Grok session \(sid) connected (debug)."
+            statusMessage = "ACP session \(sid) connected (debug)."
 
             if let prompt = initialPrompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 try? await client.sendPrompt(sessionId: sid, text: prompt)
@@ -990,16 +995,16 @@ final class AppViewModel: ObservableObject {
         isShowingAcpDebugPreview = true
     }
 
-    /// Production ACP path helper (called from main send / connect branches when backendType == .acpGrok).
-    /// Launches the server's configured ACP stdio command via openRawExec + AcpGrokClient actor for
+    /// Production ACP path helper (called from main send / connect branches when backendType == .acp).
+    /// Launches the server's configured ACP stdio command via openRawExec + AcpClient actor for
     /// the currently selected project. Collector feeds the *main* conversationSections via the exact same
     /// SharedKMPBridge.conversationSections(from:) projection used by the debug preview and (on the
-    /// KMP side) by the Android production collector. This makes a .acpGrok ServerRecord "just work"
+    /// KMP side) by the Android production collector. This makes a .acp ServerRecord "just work"
     /// in the normal chat UI with identical rich elements (Reasoning, ToolCall, Plan, etc.).
     ///
     /// Codex paths remain 100% untouched.
     private func startAcpProductionSessionForCurrentProject() async -> Bool {
-        guard let server = selectedServer, server.backendType == .acpGrok else { return false }
+        guard let server = selectedServer, server.backendType == .acp else { return false }
         let projectPath = selectedProject?.path
 
         // Cancel prior production ACP session for this server if project changed or we are restarting.
@@ -1018,13 +1023,13 @@ final class AppViewModel: ObservableObject {
                 executionPath: server.executionPath
             )
             let transport = try await sshService.openRawExec(server: server, credential: credential, command: command)
-            let client = AcpGrokClient(transport: transport)
+            let client = AcpClient(transport: transport)
             acpClient = client
 
             try await client.initialize()
-            // ACP spec requires an absolute cwd on session/new; fall back to the server's
-            // execution path when no project is selected, and fail fast when neither is set.
-            guard let cwd = projectPath ?? (server.executionPath.isEmpty ? nil : server.executionPath) else {
+            // ACP spec requires an absolute cwd on session/new. executionPath is a PATH list
+            // (binary lookup), never a working directory — only a selected project provides cwd.
+            guard let cwd = projectPath else {
                 throw AppViewModelError.missingAcpWorkingDirectory
             }
             let sid = try await client.createSession(cwd: cwd, title: server.displayName)
@@ -1175,7 +1180,7 @@ final class AppViewModel: ObservableObject {
     private func connectSelectedServer(syncActiveChatCounts: Bool, preservingVisibleState: Bool) async {
         guard !isConnectingAppServer else { return }
         guard let targetServer = selectedServer else { return }
-        if targetServer.backendType == .acpGrok {
+        if targetServer.backendType == .acp {
             // ACP production path: use the pre-built helper (collector drives main conversationSections via SharedKMPBridge + mapper).
             // Early return keeps the entire Codex connect body below byte-for-byte untouched.
             isConnectingAppServer = true
@@ -1723,7 +1728,7 @@ final class AppViewModel: ObservableObject {
         activeTurnBehavior: ActiveTurnSendBehavior = .queue
     ) async -> Bool {
         guard !baseInput.isEmpty || !localAttachmentPaths.isEmpty else { return false }
-        if selectedServer?.backendType == .acpGrok {
+        if selectedServer?.backendType == .acp {
             // ACP production send path (simple text prompt for v1; attachments/ rich input future).
             // Uses stored sid + client; optimistic local echo appended to acpItems so it appears via the
             // SharedKMPBridge.conversationSections mapper (identical rich UI elements as debug preview + Android).

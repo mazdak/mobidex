@@ -131,21 +131,20 @@ enum SharedKMPBridge {
         toRemoteDirectoryListing(try MobidexShared.RemoteDirectoryBrowser.shared.decodeListing(output: output))
     }
 
-    // MARK: - ACP / Grok agent (item 5 iOS client parity)
-    // Raw stdio launch command for `grok agent stdio` over openRawExec (CodexLineTransport).
+    // MARK: - ACP agent launch
+    // Shell one-liner for any ACP stdio agent over openRawExec (CodexLineTransport).
     // Mirrors appServerCommand pattern; delegates to KMP RemoteAcpCommand.
-    // No xaiApiKey: auth is the remote user's concern after SSH login (same as Codex).
-    static func acpStdioCommand(grokBin: String?, model: String?, extraArgs: [String] = []) -> String {
-        MobidexShared.RemoteAcpCommand.shared.stdioCommand(
-            acpPath: grokBin ?? "grok",
-            executionPath: "",
-            model: model ?? "grok-build",
-            extraArgs: extraArgs
-        )
-    }
-
+    // No agent keys from the phone: auth is the remote user's concern after SSH login (same as Codex).
     static var defaultAcpLaunchCommand: String {
         MobidexShared.RemoteAcpCommand.shared.defaultLaunchCommand
+    }
+
+    static var acpGrokLaunchCommand: String {
+        MobidexShared.RemoteAcpCommand.shared.grokLaunchCommand
+    }
+
+    static var acpClaudeLaunchCommand: String {
+        MobidexShared.RemoteAcpCommand.shared.claudeLaunchCommand
     }
 
     static func acpShellCommand(launchCommand: String, executionPath: String) -> String {
@@ -155,9 +154,9 @@ enum SharedKMPBridge {
         )
     }
 
-    // MARK: - ACP / Grok protocol surface (item 5 iOS AcpGrokClient parity)
+    // MARK: - ACP / Grok protocol surface (item 5 iOS AcpClient parity)
     // Minimal bridge mirroring the Codex RPC section below. Exposes request builders + classify + mapper
-    // so AcpGrokClient can drive `grok agent stdio` over CodexLineTransport (openRawExec) and feed the
+    // so AcpClient can drive `grok agent stdio` over CodexLineTransport (openRawExec) and feed the
     // exact same SharedCodexSessionItem instances (AgentMessage, Reasoning, ToolCall, Plan, AgentEvent)
     // into the existing conversation UI with zero new rendering code.
     typealias SharedAcpRpcRequests = MobidexShared.AcpRpcRequests
@@ -193,7 +192,7 @@ enum SharedKMPBridge {
         params(from: MobidexShared.AcpRpcRequests.shared.authenticate(id: 0, methodId: methodId))
     }
 
-    static func acpSessionNewParams(cwd: String?, title: String?) -> JSONValue? {
+    static func acpSessionNewParams(cwd: String, title: String?) -> JSONValue? {
         let req = MobidexShared.AcpRpcRequests.shared.sessionNew(id: 0, cwd: cwd, title: title)
         return params(from: req)
     }

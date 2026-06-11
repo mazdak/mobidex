@@ -18,7 +18,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Focused smoke for AcpGrokClient + the shared mapper against spec-shaped ACP traffic
+ * Focused smoke for AcpClient + the shared mapper against spec-shaped ACP traffic
  * (the wire format both `grok agent stdio` and `claude-code-acp` emit).
  *
  * Uses a scripted CodexLineTransport that answers requests like a spec agent:
@@ -28,15 +28,15 @@ import org.junit.Test
  *   `session/request_permission` server request
  *
  * Verifies chunks flow out as the existing CodexSessionItem kinds the UI renders, that the
- * permission request surfaces on [AcpGrokClient.serverRequests], and that answering it writes
+ * permission request surfaces on [AcpClient.serverRequests], and that answering it writes
  * the spec outcome shape back to the transport. No real SSH or agent binary required.
  */
-class AcpGrokClientSmokeTest {
+class AcpClientSmokeTest {
 
     @Test
     fun smoke_specAgentRoundTrip_emitsMappedItemsAndAnswersPermission() = runBlocking {
         val transport = ScriptedAcpAgentTransport()
-        val client = AcpGrokClient(transport)
+        val client = AcpClient(transport)
 
         client.initialize()
         val sid = client.createSession(cwd = "/work/project", title = "smoke")
@@ -90,7 +90,7 @@ class AcpGrokClientSmokeTest {
         assertTrue(plan.text.contains("[pending] Wire the client"))
     }
 
-    private suspend fun awaitFirstServerRequest(client: AcpGrokClient): AcpServerRequest {
+    private suspend fun awaitFirstServerRequest(client: AcpClient): AcpServerRequest {
         var result: AcpServerRequest? = null
         try {
             client.serverRequests.collect { request ->

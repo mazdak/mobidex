@@ -26,7 +26,12 @@ interface ServerRepository {
 
 class SharedPreferencesServerRepository(context: Context) : ServerRepository {
     private val prefs = context.getSharedPreferences("mobidex_servers", Context.MODE_PRIVATE)
-    private val json = Json { ignoreUnknownKeys = true }
+    // coerceInputValues: an unknown stored backendType (e.g. from a newer build) falls back to the
+    // property default instead of failing the whole saved-server list (parity with iOS decoding).
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
     override suspend fun loadServers(): List<ServerRecord> = withContext(Dispatchers.IO) {
         prefs.getString(KEY, null)?.let { json.decodeFromString<List<ServerRecord>>(it) } ?: emptyList()

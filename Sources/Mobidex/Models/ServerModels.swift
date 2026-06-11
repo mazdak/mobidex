@@ -16,19 +16,29 @@ enum ServerAuthMethod: String, Codable, CaseIterable, Identifiable {
 
 enum BackendType: String, Codable, CaseIterable {
     case codexAppServer
-    case acpGrok
+    case acp
 
     var label: String {
         switch self {
         case .codexAppServer: "Codex"
-        case .acpGrok: "ACP Agent"
+        case .acp: "ACP Agent"
         }
     }
 
     var detail: String {
         switch self {
         case .codexAppServer: "Uses `codex app-server` for Codex sessions."
-        case .acpGrok: "Uses any ACP-compatible stdio agent command."
+        case .acp: "Uses any ACP-compatible stdio agent command (Grok, Claude, ...)."
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case "acp", "acpGrok": // "acpGrok" is the legacy stored value from pre-rename builds
+            self = .acp
+        default:
+            self = .codexAppServer
         }
     }
 }

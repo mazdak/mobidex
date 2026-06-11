@@ -55,10 +55,10 @@ object AcpRpcRequests {
         ),
     )
 
-    fun sessionNew(id: Long, cwd: String? = null, title: String? = null): CodexRpcRequest {
+    fun sessionNew(id: Long, cwd: String, title: String? = null): CodexRpcRequest {
         val params = linkedMapOf<String, JsonValue>(
             // Spec requires cwd (absolute path) and mcpServers on session/new.
-            "cwd" to jsonString(cwd.orEmpty()),
+            "cwd" to jsonString(cwd),
             "mcpServers" to jsonArray(emptyList()),
         )
         title?.let { params["title"] = jsonString(it) }

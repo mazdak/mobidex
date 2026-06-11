@@ -1023,18 +1023,18 @@ struct ConnectionDiagnosticsView: View {
                 }
 
                 #if DEBUG
-                Section("ACP / Grok (Debug — item 7)") {
+                Section("ACP (Debug)") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Drive `grok agent stdio` over raw SSH exec + the real AcpGrokClient + bridged mapper. Responses appear as ConversationSection using the exact same projection as Codex (no new UI or classification).")
+                        Text("Drive the server's configured ACP launch command over raw SSH exec + the real AcpClient + bridged mapper. Responses appear as ConversationSection using the exact same projection as Codex (no new UI or classification).")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
                         Button {
                             Task {
-                                await model.startAcpDebugSessionForGrok(model: "grok-build", initialPrompt: "Say hello and think step by step about the current directory.")
+                                await model.startAcpDebugSession(initialPrompt: "Say hello and think step by step about the current directory.")
                             }
                         } label: {
-                            Label("Start Grok ACP debug session", systemImage: "play")
+                            Label("Start ACP debug session", systemImage: "play")
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.isRunningConnectionDiagnostics)

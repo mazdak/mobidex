@@ -106,10 +106,22 @@ struct ServerEditorView: View {
                             .lineLimit(2...4)
                             .font(.system(.body, design: .monospaced))
                             .accessibilityIdentifier("acpLaunchCommandField")
+                        HStack(spacing: 12) {
+                            Button("Grok") {
+                                acpLaunchCommand = SharedKMPBridge.acpGrokLaunchCommand
+                            }
+                            .accessibilityIdentifier("acpPresetGrokButton")
+                            Button("Claude") {
+                                acpLaunchCommand = SharedKMPBridge.acpClaudeLaunchCommand
+                            }
+                            .accessibilityIdentifier("acpPresetClaudeButton")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     } header: {
                         Text("ACP Launch Command")
                     } footer: {
-                        Text("Mobidex runs this remote command over SSH and expects ACP JSON-RPC over stdio. Grok is the default, but any ACP-compatible coding agent can be used.")
+                        Text("Mobidex runs this remote command over SSH and expects ACP JSON-RPC over stdio. Use a preset or any ACP-compatible agent command. The agent reads its own login from the remote host (e.g. `grok` login or `claude /login`).")
                     }
                 }
 

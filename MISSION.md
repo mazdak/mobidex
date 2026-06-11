@@ -1,3 +1,26 @@
+# Mission: ACP Productization Polish (complete)
+
+**Mission statement:** Finish the generic-ACP polish — rename the Grok-flavored ACP surface to neutral names, add agent presets (Grok / Claude via `bunx` / custom), generalize the grok-specific launch fallbacks, and clean up the debug path — without breaking saved servers or Codex paths.
+
+**Done criteria:**
+- `BackendType.acpGrok` → `.acp` on both platforms with an explicit one-line legacy decode mapping so existing saved servers keep working.
+- `AcpGrokClient` → `AcpClient` (files, classes, tests) on both platforms; debug UI labels and method names de-Grokked.
+- Claude preset uses `bunx @zed-industries/claude-code-acp`; server editors offer Grok / Claude presets that prefill the launch command (stored value stays a plain command string).
+- RemoteAcpCommand loses grok-specific binary fallback scanning (or it becomes preset-scoped); debug path uses the same launch-command flow as production.
+- Shared, Android, and iOS validation green; subagent review; merged to master (no new TestFlight unless asked).
+
+**Guardrails / Constraints:**
+- Zero changes to Codex paths.
+- iOS + Android parity.
+- Hard breaks preferred, but saved-server decoding must map legacy `acpGrok` explicitly (data migration, not API compat).
+
+**Critical learnings:**
+- Real bug found during polish: `executionPath` is a PATH list (binary lookup), not a working directory — build 43's no-project fallback would have sent a PATH string as the ACP session cwd. Now cwd comes only from the selected project (fail-fast otherwise) and the cwd parameter is non-optional end to end.
+- `@JsonNames` on kotlinx-serialization 1.8.1 enum entries works for the legacy `AcpGrok` value (proven by unit test with the repository's Json config); `coerceInputValues = true` added so unknown future backendType values degrade to the default instead of failing the entire saved-server list (matches the new lenient iOS decode).
+- SwiftUI Form rows: preset buttons need `.buttonStyle(.bordered)` for independent hit-testing inside an HStack (borderless buttons would make the whole row one tap target).
+
+---
+
 # Mission: Claude ACP Support + TestFlight
 
 **Mission statement:** Make the ACP path work with Claude via `@zed-industries/claude-code-acp` (spec-compliant requests, `tool_call_update`/unknown-variant handling, `session/request_permission` round-trip, `auth_required` surfacing), then cut a new internal+external TestFlight build.

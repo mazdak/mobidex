@@ -2,7 +2,9 @@ package mobidex.android.model
 
 import java.time.Instant
 import java.util.UUID
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNames
 import mobidex.shared.RemoteAcpCommand
 import mobidex.shared.RemoteCodexAppServerCommand
 import mobidex.shared.RemoteServerLaunchDefaults
@@ -13,10 +15,13 @@ enum class ServerAuthMethod(val label: String) {
     PrivateKey("Private Key"),
 }
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 enum class BackendType(val label: String, val detail: String) {
     CodexAppServer("Codex", "Uses codex app-server for Codex sessions."),
-    AcpGrok("ACP Agent", "Uses any ACP-compatible stdio agent command."),
+    // "AcpGrok" is the legacy stored value from pre-rename builds.
+    @JsonNames("AcpGrok")
+    Acp("ACP Agent", "Uses any ACP-compatible stdio agent command (Grok, Claude, ...)."),
 }
 
 @Serializable

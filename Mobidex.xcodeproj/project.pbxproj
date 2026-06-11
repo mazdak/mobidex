@@ -27,7 +27,6 @@
 		79D56F08BA702659D59BEB65 /* CodexAppServerProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */; };
 		79EA4C43E85FBB5ADF350A78 /* SessionListProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = F45F4AA8B639F92DD2A66EDD /* SessionListProjection.swift */; };
 		8045CD991645A8E35F376019 /* AdwaitaMonoNerdFontMono-Bold-9ngdykef.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 358184575E48F2510D655EC1 /* AdwaitaMonoNerdFontMono-Bold-9ngdykef.ttf */; };
-		81BB9CABE63D641C5D0F6281 /* AcpGrokClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A55265033958BC8AA2BE5C9D /* AcpGrokClient.swift */; };
 		89A76F324C8541635216B08F /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500E2233796B5934C1591FFC /* AppViewModel.swift */; };
 		933A43D48B21A23E7AB79142 /* ProjectListProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2F82A6CB0A50CC3827261D2 /* ProjectListProjectionTests.swift */; };
 		A19431CD7B430E2609120733 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3F9F6842C4EC0EECCFCD2D39 /* Security.framework */; };
@@ -50,6 +49,7 @@
 		DE3C8D92D5509847D8F7C24C /* MobidexUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0138BF77FD4B1030601AF47C /* MobidexUITests.swift */; };
 		E1757AEB23E37E2300CB6932 /* CodexSessionProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55BCBB84C98AA5E8F2995DED /* CodexSessionProjection.swift */; };
 		E8613A97F994AFF88722315D /* MobidexShared.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 036A6139F3DF3BF1127395AD /* MobidexShared.xcframework */; };
+		EA0B551AA6C64A5B87A31874 /* AcpClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A16341BE4AA7605D54A2BB /* AcpClient.swift */; };
 		EA630B6ECD0E0A9C99137981 /* DiffModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FFEE6E89AB7883BE87D5EAA /* DiffModels.swift */; };
 		EBD1A8E61239443A745E0FBE /* mobidex-terminal.css in Resources */ = {isa = PBXBuildFile; fileRef = EAFD88C24357DA6BAEB208B7 /* mobidex-terminal.css */; };
 		EF457C61BF63BE6F4CCE01E4 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A36E6F7E71F62B39096BACC /* TerminalView.swift */; };
@@ -109,12 +109,12 @@
 		7FFEE6E89AB7883BE87D5EAA /* DiffModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffModels.swift; sourceTree = "<group>"; };
 		82A0BC0C7137371A8AFAB12B /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
 		84FDD3A694257EDC18131C08 /* SessionChangesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionChangesView.swift; sourceTree = "<group>"; };
+		88A16341BE4AA7605D54A2BB /* AcpClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcpClient.swift; sourceTree = "<group>"; };
 		8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectAddView.swift; sourceTree = "<group>"; };
 		943BD46ACC076971B96DE6E9 /* MobidexLaunchSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobidexLaunchSmoke.swift; sourceTree = "<group>"; };
 		97220BF00949FD3FFDB61C6D /* CodexModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexModels.swift; sourceTree = "<group>"; };
 		9A36E6F7E71F62B39096BACC /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
 		A1342E3749B84624F282C2BB /* ConversationMarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationMarkdownRenderer.swift; sourceTree = "<group>"; };
-		A55265033958BC8AA2BE5C9D /* AcpGrokClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcpGrokClient.swift; sourceTree = "<group>"; };
 		A9E203F76163440875A08EB6 /* index.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = index.html; sourceTree = "<group>"; };
 		AB39406C31D7D2E32AF33332 /* CodexSSHWebSocketTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexSSHWebSocketTransport.swift; sourceTree = "<group>"; };
 		B2F82A6CB0A50CC3827261D2 /* ProjectListProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectListProjectionTests.swift; sourceTree = "<group>"; };
@@ -237,7 +237,7 @@
 		A04CEC65A977511A04DFF040 /* Services */ = {
 			isa = PBXGroup;
 			children = (
-				A55265033958BC8AA2BE5C9D /* AcpGrokClient.swift */,
+				88A16341BE4AA7605D54A2BB /* AcpClient.swift */,
 				24E646E81A3C7D7ADD258617 /* CodexAppServerProtocol.swift */,
 				AB39406C31D7D2E32AF33332 /* CodexSSHWebSocketTransport.swift */,
 				7B962D351C5EDF581C16E298 /* CredentialStore.swift */,
@@ -456,7 +456,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				81BB9CABE63D641C5D0F6281 /* AcpGrokClient.swift in Sources */,
+				EA0B551AA6C64A5B87A31874 /* AcpClient.swift in Sources */,
 				89A76F324C8541635216B08F /* AppViewModel.swift in Sources */,
 				79D56F08BA702659D59BEB65 /* CodexAppServerProtocol.swift in Sources */,
 				6320B0AF845A3D3BE655ED71 /* CodexModels.swift in Sources */,
