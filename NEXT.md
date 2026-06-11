@@ -1,6 +1,12 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
-## Mission Checklist (active, 2026-06-11: ACP productization polish)
+## Mission Checklist (active, 2026-06-11: whole-app memory/perf/concurrency audit)
+
+- [x] E1. Six parallel audit passes (iOS mem / iOS perf / iOS concurrency / Android mem+perf / Android concurrency / shared+transports) — findings cross-corroborated.
+- [x] E2. Consolidated, ranked report committed as AUDIT.md (1×P0, ~14×P1, P2 backlog, cleared list, 3-phase fix plan).
+- [ ] E3. Fix phases pending user scope selection (Phase 1 stability / Phase 2 streaming perf / Phase 3 memory hygiene).
+
+## Mission Checklist (complete, 2026-06-11: ACP productization polish)
 
 - [x] D1. shared-core: RemoteAcpCommand reduced to presets + shellCommand (`grokLaunchCommand`, `claudeLaunchCommand` = `bunx @zed-industries/claude-code-acp`); grok-specific stdioCommand/candidate-scan machinery deleted; tests rewritten (5/5 green).
 - [x] D2. BackendType `.acpGrok`→`.acp` (iOS custom init(from:) maps legacy "acpGrok"; unknown → codexAppServer) / `AcpGrok`→`Acp` (Android `@JsonNames("AcpGrok")` + repository Json `coerceInputValues` so unknown values fall back instead of failing the saved list). Persistence tests on both platforms green (iOS legacy-decode test passed on simulator).

@@ -1,3 +1,25 @@
+# Mission: Whole-App Memory / Performance / Concurrency Audit
+
+**Mission statement:** Audit the full app (iOS, Android, shared-core, transports) for memory growth/leaks, performance hot paths, and concurrency hazards; deliver a verified, severity-ranked findings report with concrete fixes proposed.
+
+**Done criteria:**
+- Parallel audit coverage: iOS memory, iOS performance, iOS concurrency, Android memory+performance, Android concurrency, shared-core/transports.
+- Each finding has file:line, a concrete failure mode, and a proposed fix; top findings adversarially verified (no plausible-but-wrong claims).
+- Known suspects checked: ACP streaming re-projection (O(n²)), unbounded acpItems/events buffering, markdown parsing in view construction (post-build-38 state), giant AppViewModels, coroutine/actor lifecycle.
+- Report delivered ranked by severity; fix plan proposed (fixes applied only after user picks scope).
+
+**Guardrails / Constraints:**
+- Audit is read-only; no code changes until the user picks the fix scope.
+- Findings must be evidence-based (code paths read, not pattern-matched).
+
+**Critical learnings:**
+- Six parallel audits converged independently on one dominant lever: full-conversation re-projection per streamed delta (O(n²) per turn) on the main thread, on both platforms — iOS additionally round-trips every item through the KMP bridge per delta, and Android's Main-thread consumer pressure makes the bounded `trySend` channels DROP deltas/approvals/Disconnected (the one P0).
+- Build-38's markdown fix is incomplete: `MarkdownText` still parses in `State(initialValue:)` on every body evaluation; combined with `statusMessage`-per-notification whole-tree invalidation and unthrottled scroll-tick state writes, visible rows re-parse markdown per delta and per scroll frame.
+- ACP lifecycle has no generation/identity guards (unlike the Codex path): failed connects and server switches leak live clients whose late events corrupt the next connection's state (both platforms).
+- Full report committed as AUDIT.md (findings + cleared list + 3-phase fix plan). Read-only audit; no fixes applied yet.
+
+---
+
 # Mission: ACP Productization Polish (complete)
 
 **Mission statement:** Finish the generic-ACP polish — rename the Grok-flavored ACP surface to neutral names, add agent presets (Grok / Claude via `bunx` / custom), generalize the grok-specific launch fallbacks, and clean up the debug path — without breaking saved servers or Codex paths.
