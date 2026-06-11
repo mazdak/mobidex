@@ -15,8 +15,14 @@ object RemoteAcpCommand {
     /** Preset: xAI Grok CLI in ACP stdio mode. */
     const val grokLaunchCommand: String = "grok agent stdio --model grok-build"
 
-    /** Preset: Claude Code via Zed's ACP adapter (requires bun on the host). */
-    const val claudeLaunchCommand: String = "bunx @zed-industries/claude-code-acp"
+    /**
+     * Preset: Claude Code via Zed's ACP adapter (requires bun on the host).
+     * `--bun` forces the bun runtime: without it, bunx honors the package's node shebang and
+     * resolves `node` from the app's non-interactive PATH, which on hosts with an old system
+     * node (e.g. Ubuntu's v18) fails to parse the adapter's `import ... with` syntax —
+     * verified live against a real host.
+     */
+    const val claudeLaunchCommand: String = "bunx --bun @zed-industries/claude-code-acp"
 
     const val defaultLaunchCommand: String = grokLaunchCommand
 

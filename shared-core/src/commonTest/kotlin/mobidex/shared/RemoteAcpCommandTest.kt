@@ -35,11 +35,12 @@ class RemoteAcpCommandTest {
     @Test
     fun presetsAreCompleteLaunchCommands() {
         assertEquals("grok agent stdio --model grok-build", RemoteAcpCommand.grokLaunchCommand)
-        assertEquals("bunx @zed-industries/claude-code-acp", RemoteAcpCommand.claudeLaunchCommand)
+        // --bun is load-bearing: without it bunx uses the host's node (system node can be too old).
+        assertEquals("bunx --bun @zed-industries/claude-code-acp", RemoteAcpCommand.claudeLaunchCommand)
         assertEquals(RemoteAcpCommand.grokLaunchCommand, RemoteAcpCommand.defaultLaunchCommand)
 
         val claude = RemoteAcpCommand.shellCommand(launchCommand = RemoteAcpCommand.claudeLaunchCommand)
-        assertContains(claude, "exec bunx @zed-industries/claude-code-acp")
+        assertContains(claude, "exec bunx --bun @zed-industries/claude-code-acp")
     }
 
     @Test
