@@ -3317,16 +3317,24 @@ final class AppViewModel: ObservableObject {
             resetConversationSections(items: next)
             return
         }
-        if next.count == previous.count + 1, let appended = next.last {
+        // Mirror the Android guards exactly: take the incremental path only for the two
+        // shapes appendingAcpThreadItem can produce (append with unchanged prefix; exactly
+        // one same-id element changed). Anything else is ambiguous → full re-projection.
+        if next.count == previous.count + 1, let appended = next.last,
+           next.dropLast().elementsEqual(previous) {
             conversationAccumulator.append(appended)
             scheduleConversationFlush()
             return
         }
         if next.count == previous.count {
-            guard let changedIndex = next.indices.first(where: { previous[$0] != next[$0] }) else {
+            let changedIndices = next.indices.filter { previous[$0] != next[$0] }
+            guard let changedIndex = changedIndices.first else {
                 return
             }
-            guard conversationAccumulator.updateAt(changedIndex, with: next[changedIndex]) else {
+            guard changedIndices.count == 1,
+                  previous[changedIndex].id == next[changedIndex].id,
+                  conversationAccumulator.updateAt(changedIndex, with: next[changedIndex])
+            else {
                 resetConversationSections(items: next)
                 return
             }

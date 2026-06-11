@@ -929,12 +929,20 @@ class AppViewModel(
                         _state.update { it.copy(statusMessage = error.message ?: "Project refresh failed after connect.") }
                     }
                     _state.value.selectedThreadID?.let { threadID ->
-                        // Audit B6: thread parse runs off-main; hydrateConversation projects off-main too.
+                        val requestServerID = _state.value.selectedServerID
+                        val requestProjectID = _state.value.selectedProjectID
+                        // Audit B6: thread parse runs off-main; hydrateConversation projects off-main
+                        // too. Selection may change while the resume is in flight — hydrate only if
+                        // this thread/server is still selected and the client is still installed.
                         withContext(projectionDispatcher) {
                             runCatching { client.resumeThread(threadID) }
                                 .recoverCatching { client.readThread(threadID) }
                                 .getOrNull()
-                        }?.let { hydrateConversation(it) }
+                        }?.let { hydrated ->
+                            if (appServer === client) {
+                                hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, threadID)
+                            }
+                        }
                     }
                     refreshThreads(refreshGeneration = refreshGeneration)
                     refreshHandedOff = true
@@ -2450,10 +2458,17 @@ class AppViewModel(
                     refreshThreads()
                     if (targetsSelectedThread) {
                         val client = appServer
+                        val requestServerID = _state.value.selectedServerID
+                        val requestProjectID = _state.value.selectedProjectID
                         val threadID = _state.value.selectedThreadID
                         if (client != null && threadID != null) {
-                            // Audit B6: readThread response parsing happens off-main too.
-                            hydrateConversation(withContext(projectionDispatcher) { client.readThread(threadID) })
+                            // Audit B6: readThread response parsing happens off-main too. The
+                            // suspension means the user may have switched thread/server before
+                            // the read returns — hydrate only if the selection is still current.
+                            val hydrated = withContext(projectionDispatcher) { client.readThread(threadID) }
+                            if (appServer === client) {
+                                hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, threadID)
+                            }
                         }
                     }
                     params.string("threadId")?.let { startNextQueuedTurnIfReady(it) }

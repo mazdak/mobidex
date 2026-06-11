@@ -1,3 +1,14 @@
+# Mission: Audit Phase 2 — Streaming Performance (complete)
+
+**Mission statement:** Fix all Phase-2 audit findings (B1–B7): incremental conversation projection on both platforms, off-main hydration, conflated publishes, markdown parse caching, SwiftUI invalidation fixes, and the quadratic line-buffer fix.
+
+**Critical learnings:**
+- The invariant design (incremental sections must equal the full projection exactly, fall back on any ambiguity) made a high-risk refactor reviewable: every reviewer/test could check one property instead of reasoning about all paths.
+- `codex review --uncommitted`/`--base` rejects custom prompts; targeted instructions need `codex exec --sandbox read-only`. The two codex passes earned their keep: a selection race introduced by moving projection off-main (suspend before select), a pre-existing-but-widened stale-hydrate window (fixed via hydrateConversationIfCurrent + client identity), and a Kotlin/Swift guard asymmetry in the ACP diff rules.
+- Off-main work before a selection write is a recurring race shape: select synchronously, re-validate after every resume.
+
+---
+
 # Mission: Whole-App Memory / Performance / Concurrency Audit
 
 **Mission statement:** Audit the full app (iOS, Android, shared-core, transports) for memory growth/leaks, performance hot paths, and concurrency hazards; deliver a verified, severity-ranked findings report with concrete fixes proposed.

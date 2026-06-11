@@ -22,7 +22,7 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] H5. iOS B3: `MarkdownDocumentCache` (NSCache, 256 entries) keyed by body — `MarkdownText` and `SharedMarkdownView` both stop re-parsing on body re-evaluation.
 - [x] H6. iOS B4: statusMessage skipped for item/* + delta + terminalInteraction notifications; `ConversationSectionView` Equatable on section+isLive (closure excluded) + `.equatable()`.
 - [x] H7. iOS B5: per-frame CGFloat @State removed; derived booleans written only on change.
-- [ ] H8. Validation green on combined tree (shared full jvmTest, Android full unit suite, iOS build + simulator at known-flake baseline with new projection tests passing). Codex reviews + triage pending.
+- [x] H8. Validation green on combined tree (shared full jvmTest, Android full unit suite, iOS build + simulator at known-flake baseline with new projection tests passing). Two `codex` review passes (per user request): default `codex review --uncommitted` found 1 P2 (openThread selected only after the off-main projection — rapid taps could revert selection; fixed by selecting synchronously + superseded-tap bail). Targeted `codex exec` concurrency pass found 1 P1 (turn-completed/connect-resume hydrates didn't re-validate selection after suspending — switched to `hydrateConversationIfCurrent` + client identity check) and 1 P2 (Swift ACP diff rules laxer than Kotlin's — added unchanged-prefix, exactly-one-change, and same-id guards); flush scheduler, allocator parity, Equatable rows, and the openThread fix verified clean. All findings fixed, re-validated, merged + pushed.
 
 ## Mission Checklist (complete, 2026-06-11: ACP model switching from chat UI)
 
