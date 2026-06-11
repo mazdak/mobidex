@@ -19,6 +19,9 @@
 **Critical learnings:**
 - Verified live (grok 0.2.22 binary probe): grok `agent stdio` uses the official ACP Rust crate and is strictly spec-shaped — `prompt` must be a content-block array, `session/new` requires `cwd`+`mcpServers`, cancellation is the `session/cancel` notification (`session/interrupt` → method-not-found), `session/update` uses `update.sessionUpdate`, and the LSP-style `initialized` notification is not part of ACP (grok logs a decode error). Strict spec compliance helps Grok, not just Claude.
 - Grok requires an explicit `authenticate` (`{methodId:"grok.com"}`) after `initialize` before `session/new`, even when logged in on the host. Generic handling: on `session/new` auth_required (-32000), call `authenticate` with the first advertised method and retry once.
+- Full-delta review found a real P1: spec agents answer void methods (authenticate!) with `"result": null`, which Swift's Decodable drops, stalling the pending request — fixed by classifying id-only envelopes as void results in shared classifyInbound. All 7 P2s also fixed; fix-delta re-review PASSED.
+- Signing for non-interactive archive: import the raw `.asc/signing/generated/mobidex-ios-distribution.key` + `.cer` into a temporary keychain (the `.p12` password is unrecorded; the raw key pair needs none). Restore login keychain afterward.
+- Internal TestFlight `1.0 (43)` uploaded from `master` 4357ff7 (BUILD_ID `13d0c274-6bb6-4f91-b6f4-0f4bee0d4411`). External submission intentionally left for the user (session permission boundary for external-facing distribution).
 
 ---
 

@@ -8,8 +8,23 @@
 - [x] C4. Android: parity (serverRequests Flow + respondToServerRequest, auth retry, fire-and-forget prompt, session/cancel, accumulator in collector, permission round-trip in respond()). compileDebugKotlin + reworked AcpGrokClientSmokeTest green (spec wire shapes, auth retry, permission outcome).
 - [x] C5. Subagent review of full delta (VERDICT: FAIL with 1 P1 + 7 P2; all findings fixed): P1 `"result":null` void responses (authenticate!) stalled iOS pending requests — fixed in shared classifyInbound (id-only → resultResponse(Null), serverRequest checked first) + regression tests; P2s fixed: Android request timeout (120s, matching new iOS default for cold `npx` runs), cwd fail-fast on both platforms, status-less tool_call_update no longer regresses completed cards, per-item event spam removed from iOS readLoop, Android disconnects flow → Failed state + approval clear (iOS parity), cancel now answers in-flight permission requests with cancelled outcome on both platforms, Android failAllPending single-lock.
 - [x] C6. Validation after fixes: shared-core AcpProtocolCoreTest 25/25, Android compileDebugKotlin + AcpGrokClientSmokeTest (authenticate answered with spec `"result":null`) green, verify-ios-build green.
-- [ ] C7. Merge to `master`, pull `origin/master`, push.
-- [ ] C8. TestFlight: distribution preflight, `asc workflow run testflight VERSION:1.0` (internal), `testflight_external` for the same build, record build number/ID/run records.
+- [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
+- [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
+
+## asc TestFlight submission (internal build 43) - 2026-06-11
+
+- Executed from `master` at `4357ff7` (`feat(acp): spec-compliant ACP with permission round-trip for Claude and Grok`) after `origin/master` was pulled and `master` was confirmed up to date.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 43.
+  - BUILD_ID: `13d0c274-6bb6-4f91-b6f4-0f4bee0d4411`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-43.ipa` (17,917,295 bytes).
+  - Run record: `.asc/runs/testflight-20260611T025309Z-a3bce694.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+  - Signing note: archive used the repo `.asc/signing/generated` distribution key+cer imported into a temporary unlocked keychain (`security import` of the raw `.key`/`.cer` — the `.p12` password is not recorded anywhere; the raw pair avoids needing it). Login keychain restored and temp keychain deleted afterward.
+- External submission for this build (pending, run manually):
+  `asc workflow run testflight_external BUILD_ID:13d0c274-6bb6-4f91-b6f4-0f4bee0d4411 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+- Validation note: `Scripts/verify-ios-distribution-config.sh` passed; shared-core `AcpProtocolCoreTest` 25/25; Android `compileDebugKotlin` + `AcpGrokClientSmokeTest` green; iOS simulator verify build green; two subagent reviews (full delta FAIL→fixed, fix-delta PASS).
+- To try Claude on this build: create/edit a server with backend type ACP, set the launch command to `npx @zed-industries/claude-code-acp` (Node 18+ on the host; pre-run once on the host to warm the npx cache and run `claude /login` or export `ANTHROPIC_API_KEY` in the remote shell), select a project, connect.
 
 ## Mission Checklist (active, 2026-06-05 regressions)
 
@@ -196,6 +211,10 @@ This file holds the durable mission checklist and parked side quests. Mirror key
 - [x] 10. Conventional commit (feat(acp): add initial ACP/Grok stdio support sketch (RemoteAcpCommand + AcpProtocolCore mapper + Android AcpGrokClient + openRawExec parity + smoke + trackers)) landed as 86d76f3 after green check-work VERDICT: PASS (full builds, UI mapper proof, guardrails, iOS transport de-risk). Trackers + TODO.md updated. (done)
 
 ## Parked / Non-blocking Side Quests (do not start mid-mission without re-triage)
+
+- ACP productization cleanups (post Claude validation): rename `BackendType.acpGrok` → `.acp` and `AcpGrokClient` → `AcpClient` (hard break); replace single default launch command with an agent preset picker (Grok `grok agent stdio --model grok-build` / Claude `npx @zed-industries/claude-code-acp` / custom); generalize RemoteAcpCommand grok-specific binary fallback paths; update "Grok ACP debug session" labels and test names.
+- ACP turn-state UX: track session/prompt stopReason per turn (end_turn/cancelled) to drive an "agent is working" indicator + stop button visibility for ACP sessions (interrupt is wired but the active-turn affordance may not show).
+- ACP debug path polish: startAcpDebugSessionForGrok still passes possibly-nil cwd; debug client `events` stream unconsumed (disconnected/serverRequest only; small buffer).
 
 - Rogue codex agents / unconditional launch fix in RemoteCodexAppServerCommand.kt (explicitly "keep in our back pocket").
 - Full ServerRecord discriminator (backend: codex vs acp/grok) + persistence + UI picker for connection type.
