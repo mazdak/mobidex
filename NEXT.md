@@ -64,6 +64,22 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 46) - 2026-06-11
+
+- Executed from `master` at `cc8bf1e` (`fix(streaming): harden phase-2 paths per codex review findings`) after `origin/master` was pulled and confirmed up to date.
+- Internal workflow: `asc workflow run testflight VERSION:1.0`
+  - Build number: 46.
+  - BUILD_ID: `b9250ef4-b994-4109-9f44-0c69e0ffefe8`.
+  - IPA: `.asc/artifacts/Mobidex-TestFlight-1.0-46.ipa` (17,952,617 bytes).
+  - Run record: `.asc/runs/testflight-20260611T183128Z-37ec1122.json`.
+  - Status: ok; export compliance set and build added to `Internal Testers`.
+- External workflow: `asc workflow run testflight_external BUILD_ID:b9250ef4-b994-4109-9f44-0c69e0ffefe8 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+  - Run record: `.asc/runs/testflight_external-20260611T183630Z-c77503f5.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+  - Signing: temporary-keychain flow; login keychain restored afterward.
+- Build 46 contents over 45: audit Phase 2 streaming performance — incremental conversation projection (invariant-checked accumulator, both platforms), conflated 50ms publishes, off-main Android hydration, linear raw-exec line reader, iOS markdown parse cache, per-notification invalidation fix, Equatable rows, scroll-write fix; plus the two codex-review hardening fixes (stale-hydrate guards, Swift ACP diff guards).
+- Validation: preflight passed; full shared + Android suites green incl. new invariant tests; iOS build green; simulator suite at documented flake baseline; two codex review passes triaged to zero open findings (H-checklist above).
+
 ## asc TestFlight submission (internal + external build 45) - 2026-06-11
 
 - Executed from `master` at `061f8eb` (`feat(acp): switch session models from the chat UI`) after `origin/master` was pulled and confirmed up to date.
