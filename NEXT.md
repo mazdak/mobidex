@@ -6,7 +6,14 @@
 - [x] E2. Consolidated, ranked report committed as AUDIT.md (1×P0, ~14×P1, P2 backlog, cleared list, 3-phase fix plan).
 - [x] E3. User selected Phase 1 (stability) — tracked below as F-checklist. Phases 2–3 remain parked.
 
-## Mission Checklist (active, 2026-06-11: audit Phase 1 — stability fixes)
+## Mission Checklist (active, 2026-06-11: ACP model switching from chat UI)
+
+- [x] G1. shared-core: `AcpModelInfo`/`AcpSessionModels` + `acpSessionModels()` parsing of session/new `models`; `sessionSetModel` builder; tests (27 total green).
+- [x] G2. Android: `AcpClient.createSession` → `AcpSession(sessionId, models)` + `setModel()`; `acpModels` in UI state with `setAcpModel()`; `AcpModelSelector` dropdown atop ChatTimeline; smoke covers parse + `session/set_model` wire shape.
+- [x] G3. iOS: `AcpSessionInfo`/`AcpModelOption` + `setModel()`; bridge `acpSessionSetModelParams`/`acpSessionModels` (KMP `description` → `description_`, verified against the generated header); `@Published` model state + toolbar cpu-icon menu; cleared on selectServer/closeConnection/disconnect.
+- [x] G4. Review found 1 required fix (Android `acpModels` survived server switch/edit/delete via `selectServer` reset + `clearingSessionScope`) + 2 polish nits — all fixed. Validation green (shared 27, Android compile+smoke, iOS build). Merged + pushed.
+
+## Mission Checklist (complete, 2026-06-11: audit Phase 1 — stability fixes)
 
 - [x] F1. A1 Android: AcpClient readLoop uses suspending `send`; SshService reader threads + terminal use `trySendBlocking` (stop on closed); Codex `eventsChannel` is UNLIMITED rather than suspending — review proved a bounded+suspending events channel deadlocks against collector-side RPCs (readThread response arrives behind buffered notifications through the same readLoop). Disconnected delivery guaranteed on both clients.
 - [x] F2. C4 Android: closed-recheck after registration (Codex, volatile-ordered) / under the fail-sweep mutex (ACP); 120s await timeout; pending cleanup on timeout, caller cancellation (NonCancellable lock), and sendLine failure.

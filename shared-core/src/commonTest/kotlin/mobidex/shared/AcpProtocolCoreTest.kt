@@ -69,6 +69,51 @@ class AcpProtocolCoreTest {
     }
 
     @Test
+    fun sessionSetModelHasSpecShape() {
+        val req = AcpRpcRequests.sessionSetModel(9, sessionId = "s1", modelId = "sonnet")
+        assertEquals("session/set_model", req.method)
+        val params = req.params as? JsonValue.ObjectValue
+        assertEquals("s1", params?.get("sessionId")?.stringValue)
+        assertEquals("sonnet", params?.get("modelId")?.stringValue)
+    }
+
+    @Test
+    fun parsesSessionModelsFromSessionNewResult() {
+        val result = jsonObject(
+            mapOf(
+                "sessionId" to jsonString("s1"),
+                "models" to jsonObject(
+                    mapOf(
+                        "availableModels" to jsonArray(
+                            listOf(
+                                jsonObject(
+                                    mapOf(
+                                        "modelId" to jsonString("default"),
+                                        "name" to jsonString("Default (recommended)"),
+                                        "description" to jsonString("Opus 4.6"),
+                                    )
+                                ),
+                                jsonObject(mapOf("modelId" to jsonString("sonnet"), "name" to jsonString("Sonnet"))),
+                            )
+                        ),
+                        "currentModelId" to jsonString("default"),
+                    )
+                ),
+            )
+        )
+        val models = acpSessionModels(result)
+        assertNotNull(models)
+        assertEquals(listOf("default", "sonnet"), models.available.map { it.modelId })
+        assertEquals("Default (recommended)", models.available.first().name)
+        assertEquals("default", models.currentModelId)
+
+        // Agents that advertise no models -> null (switching unsupported).
+        assertNull(acpSessionModels(jsonObject(mapOf("sessionId" to jsonString("s2")))))
+        assertNull(acpSessionModels(jsonObject(mapOf("models" to jsonObject(mapOf("availableModels" to jsonArray(emptyList())))))))
+        assertNull(acpSessionModels(null))
+    }
+
+    @Test
     fun sessionCancelParamsCarrySessionId() {
         val params = AcpRpcRequests.sessionCancelParams("s9")
         assertEquals("s9", params["sessionId"]?.stringValue)

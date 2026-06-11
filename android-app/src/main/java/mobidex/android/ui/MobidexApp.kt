@@ -1303,6 +1303,36 @@ private fun NewSessionMenuButton(
     }
 }
 
+/** Compact model picker for live ACP sessions (shown only when the agent advertises models). */
+@Composable
+private fun AcpModelSelector(models: mobidex.shared.AcpSessionModels, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val current = models.available.firstOrNull { it.modelId == models.currentModelId }
+    Box {
+        TextButton(onClick = { expanded = true }) {
+            Text("Model: ${current?.name ?: current?.modelId ?: models.currentModelId ?: "default"}")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            models.available.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text((option.name ?: option.modelId) + if (option.modelId == models.currentModelId) " ✓" else "")
+                            option.description?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(option.modelId)
+                    },
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ChatTimeline(
     state: MobidexUiState,
@@ -1372,6 +1402,9 @@ private fun ChatTimeline(
     }
 
     Column(modifier) {
+        state.acpModels?.let { models ->
+            AcpModelSelector(models = models, onSelect = model::setAcpModel)
+        }
         Box(Modifier.weight(1f)) {
             LazyColumn(Modifier.fillMaxSize(), state = listState, reverseLayout = false) {
                 items(state.pendingApprovals, key = { it.id }) { approval ->

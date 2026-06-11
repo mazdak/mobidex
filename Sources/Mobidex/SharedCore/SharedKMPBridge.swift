@@ -212,6 +212,22 @@ enum SharedKMPBridge {
         toJSONValue(MobidexShared.AcpRpcRequests.shared.sessionCancelParams(sessionId: sessionId))
     }
 
+    static func acpSessionSetModelParams(sessionId: String, modelId: String) -> JSONValue? {
+        params(from: MobidexShared.AcpRpcRequests.shared.sessionSetModel(id: 0, sessionId: sessionId, modelId: modelId))
+    }
+
+    /// Model state the agent advertised in a session/new result (empty options = no switching).
+    static func acpSessionModels(result: JSONValue?) -> (options: [AcpModelOption], currentModelId: String?) {
+        guard let models = MobidexShared.AcpProtocolCoreKt.acpSessionModels(sessionNewResult: result.map(toSharedJSONValue)) else {
+            return ([], nil)
+        }
+        let options = models.available.compactMap { entry -> AcpModelOption? in
+            guard let info = entry as? MobidexShared.AcpModelInfo else { return nil }
+            return AcpModelOption(modelId: info.modelId, name: info.name, description: info.description_)
+        }
+        return (options, models.currentModelId)
+    }
+
     /// Displayable summary for a `session/request_permission` request.
     static func acpPermissionSummary(params: JSONValue?) -> (title: String, detail: String) {
         let parsed = MobidexShared.AcpProtocolCore.shared.parsePermissionRequest(params: params.map(toSharedJSONValue))

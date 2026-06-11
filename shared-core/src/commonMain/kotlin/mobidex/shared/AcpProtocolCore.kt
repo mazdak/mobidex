@@ -103,6 +103,46 @@ object AcpRpcRequests {
         method = "authenticate",
         params = jsonObject(mapOf("methodId" to jsonString(methodId))),
     )
+
+    /** Switches the session's model to one of the ids advertised in the session/new result. */
+    fun sessionSetModel(id: Long, sessionId: String, modelId: String): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "session/set_model",
+        params = jsonObject(
+            linkedMapOf(
+                "sessionId" to jsonString(sessionId),
+                "modelId" to jsonString(modelId),
+            )
+        ),
+    )
+}
+
+// --- Session model state (from the session/new result) ---
+
+data class AcpModelInfo(val modelId: String, val name: String?, val description: String?)
+
+data class AcpSessionModels(val available: List<AcpModelInfo>, val currentModelId: String?)
+
+/**
+ * Extracts the model state an agent advertises in its session/new result
+ * (`models: { availableModels: [{modelId, name, description}], currentModelId }`).
+ * Returns null when the agent advertises none (model switching unsupported).
+ */
+fun acpSessionModels(sessionNewResult: JsonValue?): AcpSessionModels? {
+    val models = sessionNewResult?.get("models") ?: return null
+    val available = ((models["availableModels"] as? JsonValue.ArrayValue)?.value.orEmpty()).mapNotNull { entry ->
+        val modelId = entry["modelId"]?.stringValue ?: return@mapNotNull null
+        AcpModelInfo(
+            modelId = modelId,
+            name = entry["name"]?.stringValue,
+            description = entry["description"]?.stringValue,
+        )
+    }
+    if (available.isEmpty()) return null
+    return AcpSessionModels(
+        available = available,
+        currentModelId = models["currentModelId"]?.stringValue,
+    )
 }
 
 /** Extracts the advertised auth method ids from an `initialize` result (`authMethods[].id`). */

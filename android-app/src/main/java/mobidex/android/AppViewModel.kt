@@ -99,6 +99,8 @@ data class MobidexUiState(
     val selectedThread: CodexThread? = null,
     val conversationSections: List<mobidex.shared.ConversationSection> = emptyList(),
     val pendingApprovals: List<PendingApproval> = emptyList(),
+    // Model state the ACP agent advertised for the live session (null = no switching).
+    val acpModels: mobidex.shared.AcpSessionModels? = null,
     val connectionState: ServerConnectionState = ServerConnectionState.Disconnected,
     val failureMessage: String? = null,
     val statusMessage: String? = null,
@@ -320,6 +322,7 @@ class AppViewModel(
                 selectedThread = null,
                 conversationSections = emptyList(),
                 pendingApprovals = emptyList(),
+                acpModels = null,
                 diffSnapshot = GitDiffSnapshot.Empty,
                 failureMessage = null,
                 statusMessage = null,
@@ -692,7 +695,7 @@ class AppViewModel(
                     // ACP spec requires an absolute cwd on session/new.
                     val cwd = _state.value.selectedProject?.path
                         ?: error("Select a project before starting an ACP debug session.")
-                    client.createSession(cwd = cwd, title = "ACP debug session")
+                    client.createSession(cwd = cwd, title = "ACP debug session").sessionId
                 } catch (error: Throwable) {
                     // Never strand a half-open transport / remote agent process on failure.
                     runCatching { client.close() }
@@ -749,6 +752,7 @@ class AppViewModel(
                 it.copy(
                     conversationSections = emptyList(),
                     pendingApprovals = emptyList(),
+                    acpModels = null,
                     failureMessage = null,
                     statusMessage = "Starting ACP agent..."
                 )
@@ -768,19 +772,20 @@ class AppViewModel(
                     return@runBusy
                 }
                 val client = AcpClient(transport)
-                try {
+                val session = try {
                     client.initialize()
                     // ACP spec requires an absolute cwd on session/new. executionPath is a PATH list
                     // (binary lookup), never a working directory — only a selected project provides cwd.
                     val cwd = _state.value.selectedProject?.path
                         ?: error("Select a project before connecting an ACP agent.")
-                    val sid = client.createSession(cwd = cwd, title = server.displayName)
+                    val created = client.createSession(cwd = cwd, title = server.displayName)
                     if (generation != acpConnectGeneration) {
                         runCatching { client.close() }
                         return@runBusy
                     }
                     acpClient = client
-                    acpSessionId = sid
+                    acpSessionId = created.sessionId
+                    created
                 } catch (error: Throwable) {
                     // Never strand a half-open transport / remote agent process on failure.
                     runCatching { client.close() }
@@ -791,7 +796,8 @@ class AppViewModel(
                     it.copy(
                         connectionState = ServerConnectionState.Connected,
                         failureMessage = null,
-                        statusMessage = "ACP agent session ${acpSessionId} connected."
+                        acpModels = session.models,
+                        statusMessage = "ACP agent session ${session.sessionId} connected."
                     )
                 }
 
@@ -839,6 +845,7 @@ class AppViewModel(
                                     it.copy(
                                         connectionState = ServerConnectionState.Failed,
                                         pendingApprovals = emptyList(),
+                                        acpModels = null,
                                         failureMessage = message,
                                         statusMessage = message,
                                     )
@@ -1811,6 +1818,27 @@ class AppViewModel(
         }
     }
 
+    /** Switches the live ACP session to one of the models advertised at session/new. */
+    fun setAcpModel(modelId: String) {
+        viewModelScope.launch {
+            val client = acpClient ?: return@launch
+            val sid = acpSessionId ?: return@launch
+            val models = _state.value.acpModels ?: return@launch
+            if (models.currentModelId == modelId) return@launch
+            runBusy("Switching model") {
+                client.setModel(sid, modelId)
+                if (acpClient === client) {
+                    _state.update {
+                        it.copy(
+                            acpModels = it.acpModels?.copy(currentModelId = modelId),
+                            statusMessage = "Model switched.",
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     fun respond(approval: PendingApproval, accept: Boolean) {
         viewModelScope.launch {
             runBusy(if (accept) "Approving" else "Declining") {
@@ -1910,6 +1938,7 @@ class AppViewModel(
                     connectionState = ServerConnectionState.Disconnected,
                     pendingApprovals = emptyList(),
                     conversationSections = emptyList(),
+                    acpModels = null,
                     statusMessage = "Server disconnected.",
                 )
             }
@@ -2873,6 +2902,7 @@ private fun MobidexUiState.clearingSessionScope(): MobidexUiState =
         selectedThread = null,
         conversationSections = emptyList(),
         pendingApprovals = emptyList(),
+        acpModels = null,
         diffSnapshot = GitDiffSnapshot.Empty,
         isRefreshingSessions = false,
         tokenUsagePercent = null,

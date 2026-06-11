@@ -77,6 +77,11 @@ struct ConversationView: View {
         .navigationTitle(model.selectedThread?.title ?? model.selectedProject?.displayName ?? "Conversation")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if !model.acpModelOptions.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    acpModelMenu
+                }
+            }
             if horizontalSizeClass == .compact, model.selectedProject != nil {
                 ToolbarItem(placement: .topBarTrailing) {
                     conversationNewSessionButton
@@ -136,6 +141,28 @@ struct ConversationView: View {
             .onDisappear {
                 updateRecordingIdleTimer(isRecording: false)
             }
+    }
+
+    /// Model picker for live ACP sessions (shown only when the agent advertises models).
+    private var acpModelMenu: some View {
+        Menu {
+            ForEach(model.acpModelOptions) { option in
+                Button {
+                    Task { await model.setAcpModel(option.modelId) }
+                } label: {
+                    let title = option.description.map { "\(option.displayName) — \($0)" } ?? option.displayName
+                    if option.modelId == model.acpCurrentModelId {
+                        Label(title, systemImage: "checkmark")
+                    } else {
+                        Text(title)
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "cpu")
+                .accessibilityLabel("Model")
+        }
+        .accessibilityIdentifier("acpModelMenu")
     }
 
     private var conversationNewSessionButton: some View {

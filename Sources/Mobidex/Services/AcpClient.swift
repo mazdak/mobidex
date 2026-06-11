@@ -1,6 +1,23 @@
 import Foundation
 import NIOCore
 
+/// A model the ACP agent advertises for the live session.
+struct AcpModelOption: Identifiable, Equatable, Sendable {
+    var id: String { modelId }
+    let modelId: String
+    let name: String?
+    let description: String?
+
+    var displayName: String { name ?? modelId }
+}
+
+/// A created ACP session: its id plus the advertised model state (empty = no switching).
+struct AcpSessionInfo: Sendable {
+    let sessionId: String
+    let modelOptions: [AcpModelOption]
+    let currentModelId: String?
+}
+
 /// Thin ACP client for driving spec-compliant stdio agents (`grok agent stdio`,
 /// `bunx @zed-industries/claude-code-acp`, ...) over a raw line transport on iOS.
 ///
@@ -63,10 +80,10 @@ actor AcpClient {
         authMethodIds = SharedKMPBridge.acpAuthMethodIds(initializeResult: result)
     }
 
-    /// Creates a new ACP session. When the agent answers auth_required (some agents, e.g. grok,
-    /// require an explicit `authenticate` even when logged in on the host), authenticates with the
-    /// first advertised method and retries once.
-    func createSession(cwd: String, title: String? = nil) async throws -> String {
+    /// Creates a new ACP session and returns its id plus advertised model state. When the agent
+    /// answers auth_required (some agents, e.g. grok, require an explicit `authenticate` even
+    /// when logged in on the host), authenticates with the first advertised method and retries once.
+    func createSession(cwd: String, title: String? = nil) async throws -> AcpSessionInfo {
         guard !isClosed else { throw CodexAppServerClientError.disconnected }
         let params = SharedKMPBridge.acpSessionNewParams(cwd: cwd, title: title)
         let result: JSONValue
@@ -87,7 +104,17 @@ actor AcpClient {
             return "acp-\(UUID().uuidString.prefix(8))"
         }()
         currentSessionId = sid
-        return sid
+        let models = SharedKMPBridge.acpSessionModels(result: result)
+        return AcpSessionInfo(sessionId: sid, modelOptions: models.options, currentModelId: models.currentModelId)
+    }
+
+    /// Switches the session's model to one of the ids advertised by createSession.
+    func setModel(sessionId: String, modelId: String) async throws {
+        guard !isClosed else { throw CodexAppServerClientError.disconnected }
+        _ = try await request(
+            method: "session/set_model",
+            params: SharedKMPBridge.acpSessionSetModelParams(sessionId: sessionId, modelId: modelId)
+        )
     }
 
     func sendPrompt(sessionId: String, text: String) async throws {

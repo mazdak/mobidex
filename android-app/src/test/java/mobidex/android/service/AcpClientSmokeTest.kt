@@ -39,12 +39,21 @@ class AcpClientSmokeTest {
         val client = AcpClient(transport)
 
         client.initialize()
-        val sid = client.createSession(cwd = "/work/project", title = "smoke")
+        val session = client.createSession(cwd = "/work/project", title = "smoke")
+        val sid = session.sessionId
         assertEquals("sess-smoke-001", sid)
         assertTrue(
             "auth_required should trigger authenticate before the session/new retry",
             transport.sentMethods.contains("authenticate")
         )
+
+        // Model state advertised at session/new is parsed and switchable via session/set_model.
+        assertEquals(listOf("default", "sonnet"), session.models?.available?.map { it.modelId })
+        assertEquals("default", session.models?.currentModelId)
+        client.setModel(sid, "sonnet")
+        val setModelLine = transport.sentLines.last { it.contains("session/set_model") }
+        assertTrue(setModelLine.contains("\"modelId\":\"sonnet\""))
+        assertTrue(setModelLine.contains("\"sessionId\":\"$sid\""))
 
         val collected = mutableListOf<CodexSessionItem>()
         val permission = async {
@@ -127,12 +136,15 @@ class AcpClientSmokeTest {
                     if (sessionNewCount == 1) {
                         respond("""{"jsonrpc":"2.0","id":$id,"error":{"code":-32000,"message":"Authentication required"}}""")
                     } else {
-                        respond("""{"jsonrpc":"2.0","id":$id,"result":{"sessionId":"sess-smoke-001"}}""")
+                        respond(
+                            """{"jsonrpc":"2.0","id":$id,"result":{"sessionId":"sess-smoke-001","models":{"availableModels":[{"modelId":"default","name":"Default (recommended)","description":"Opus"},{"modelId":"sonnet","name":"Sonnet"}],"currentModelId":"default"}}}"""
+                        )
                         streamSpecUpdates()
                     }
                 }
                 // Spec agents answer void methods with an explicit null result.
                 "authenticate" -> respond("""{"jsonrpc":"2.0","id":$id,"result":null}""")
+                "session/set_model" -> respond("""{"jsonrpc":"2.0","id":$id,"result":null}""")
             }
         }
 

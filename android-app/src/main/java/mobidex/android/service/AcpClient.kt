@@ -29,7 +29,9 @@ import mobidex.shared.AcpRpcInboundEnvelope
 import mobidex.shared.AcpRpcRequests
 import mobidex.shared.CodexSessionItem
 import mobidex.shared.JsonValue
+import mobidex.shared.AcpSessionModels
 import mobidex.shared.acpAuthMethodIds
+import mobidex.shared.acpSessionModels
 import mobidex.shared.encodeJsonLine
 import mobidex.shared.toCodexSessionItems
 
@@ -38,6 +40,12 @@ data class AcpServerRequest(
     val id: JsonValue,
     val method: String,
     val params: JsonValue?,
+)
+
+/** A created ACP session: its id plus the model state the agent advertised (null = no switching). */
+data class AcpSession(
+    val sessionId: String,
+    val models: AcpSessionModels?,
 )
 
 /** JSON-RPC error from the agent, with the code preserved for auth_required handling. */
@@ -102,10 +110,10 @@ class AcpClient(
     }
 
     /**
-     * Creates a new ACP session and returns its sessionId. When the agent answers auth_required,
-     * authenticates with its first advertised method and retries once.
+     * Creates a new ACP session and returns its id plus advertised model state. When the agent
+     * answers auth_required, authenticates with its first advertised method and retries once.
      */
-    suspend fun createSession(cwd: String, title: String? = null): String {
+    suspend fun createSession(cwd: String, title: String? = null): AcpSession {
         check(!closed) { "ACP client is closed." }
         val result = try {
             sendRequestAndAwait(AcpRpcRequests.sessionNew(id = nextId(), cwd = cwd, title = title))
@@ -117,7 +125,13 @@ class AcpClient(
         }
         val sid = extractSessionId(result) ?: error("session/new did not return a sessionId in result: $result")
         currentSessionId = sid
-        return sid
+        return AcpSession(sessionId = sid, models = acpSessionModels(result.toSharedJsonValue()))
+    }
+
+    /** Switches the session's model to one of the ids advertised by [createSession]. */
+    suspend fun setModel(sessionId: String, modelId: String) {
+        check(!closed) { "ACP client is closed." }
+        sendRequestAndAwait(AcpRpcRequests.sessionSetModel(id = nextId(), sessionId = sessionId, modelId = modelId))
     }
 
     /** Fire-and-forget: the prompt result (stopReason) only arrives when the whole turn ends. */

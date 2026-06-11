@@ -372,6 +372,9 @@ final class AppViewModel: ObservableObject {
     private var acpEventsTask: Task<Void, Never>?
     private var acpItems: [CodexThreadItem] = []
     private var acpSessionId: String?
+    // Model state the ACP agent advertised for the live session (empty = no switching).
+    @Published private(set) var acpModelOptions: [AcpModelOption] = []
+    @Published private(set) var acpCurrentModelId: String?
 
     private var threadListCache: [ThreadLoadScope: CachedThreadList] = [:]
     private var threadDetailCache: [ThreadDetailCacheKey: CachedThreadDetail] = [:]
@@ -560,6 +563,8 @@ final class AppViewModel: ObservableObject {
         acpClient = nil
         acpSessionId = nil
         acpItems = []
+        acpModelOptions = []
+        acpCurrentModelId = nil
         return true
     }
 
@@ -980,7 +985,7 @@ final class AppViewModel: ObservableObject {
                 guard let cwd = selectedProject?.path else {
                     throw AppViewModelError.missingAcpWorkingDirectory
                 }
-                sid = try await client.createSession(cwd: cwd, title: "ACP debug session")
+                sid = try await client.createSession(cwd: cwd, title: "ACP debug session").sessionId
             } catch {
                 // Never strand a half-open transport / remote agent process on failure.
                 await client.close()
@@ -1051,13 +1056,15 @@ final class AppViewModel: ObservableObject {
                 guard let cwd = projectPath else {
                     throw AppViewModelError.missingAcpWorkingDirectory
                 }
-                let sid = try await client.createSession(cwd: cwd, title: server.displayName)
+                let session = try await client.createSession(cwd: cwd, title: server.displayName)
                 guard generation == self.connectionGeneration, self.selectedServer?.id == server.id else {
                     await client.close()
                     return
                 }
                 acpClient = client
-                acpSessionId = sid
+                acpSessionId = session.sessionId
+                acpModelOptions = session.modelOptions
+                acpCurrentModelId = session.currentModelId
             } catch {
                 // Never strand a half-open transport / remote agent process on failure.
                 await client.close()
@@ -1109,6 +1116,8 @@ final class AppViewModel: ObservableObject {
         case .disconnected(let message):
             statusMessage = message
             pendingApprovals = []
+            acpModelOptions = []
+            acpCurrentModelId = nil
             if connectionState == .connected {
                 connectionState = .failed(message)
             }
@@ -1988,6 +1997,18 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Switches the live ACP session to one of the models advertised at session/new.
+    func setAcpModel(_ modelId: String) async {
+        guard let acpClient, let acpSessionId, acpCurrentModelId != modelId else { return }
+        await runOperation(.sending, status: "Switching model") {
+            try await acpClient.setModel(sessionId: acpSessionId, modelId: modelId)
+            if self.acpClient === acpClient {
+                self.acpCurrentModelId = modelId
+                self.statusMessage = "Model switched."
+            }
+        }
+    }
+
     func respond(to approval: PendingApproval, accept: Bool) async {
         await runOperation(.respondingToApproval, status: accept ? "Approving" : "Declining") {
             if let acpClient {
@@ -2031,6 +2052,8 @@ final class AppViewModel: ObservableObject {
         // Await the close so old-transport teardown cannot interleave with (and report errors
         // into) the next connection's setup.
         if let c = acpClient { await c.close() }
+        acpModelOptions = []
+        acpCurrentModelId = nil
         acpClient = nil
         acpSessionId = nil
         acpItems = []
