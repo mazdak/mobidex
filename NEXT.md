@@ -31,8 +31,10 @@
   - Run record: `.asc/runs/testflight-20260611T120938Z-6af490f8.json`.
   - Status: ok; export compliance set and build added to `Internal Testers`.
   - Signing: same temporary-keychain flow as build 43 (raw `.key`/`.cer` import); login keychain restored afterward.
-- External submission for this build (pending, run manually — session permissions gate external distribution):
-  `asc workflow run testflight_external BUILD_ID:09bc2b13-2df3-41f8-9d54-df83c5cb6101 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"`
+- External workflow: `asc workflow run testflight_external BUILD_ID:09bc2b13-2df3-41f8-9d54-df83c5cb6101 EXTERNAL_TESTFLIGHT_GROUP:"External Testers"` (user-authorized)
+  - Run record: `.asc/runs/testflight_external-20260611T123551Z-e40807d8.json`.
+  - Status: ok; submitted for beta app review and attached to `External Testers`.
+  - Public TestFlight link remains `https://testflight.apple.com/join/zmqueV6P`.
 - Build 44 contents over 43: neutral ACP naming (`.acp`/`AcpClient`) with legacy saved-server decode, Grok/Claude preset buttons (Claude = `bunx @zed-industries/claude-code-acp`), generic debug path, and the cwd fix (executionPath is a PATH list; cwd now only from the selected project).
 - Validation: preflight passed; shared 30 ACP tests, Android compile + smoke + ServerModelsTest, iOS verify build, iOS simulator unit tests (pre-existing AppViewModelTests flake only) — all recorded under the D-checklist above.
 
