@@ -40,6 +40,7 @@ data class CodexThreadSummary(
     val id: String,
     val cwd: String,
     val updatedAtEpochSeconds: Long,
+    val isUnscoped: Boolean = false,
 )
 
 data class SessionListSection(

@@ -180,6 +180,21 @@ class SharedCoreParityTest {
     }
 
     @Test
+    fun projectCatalogIgnoresNoFolderSessionsForProjects() {
+        val refreshed = ProjectCatalog.refreshedProjects(
+            existingProjects = emptyList(),
+            discoveredProjects = emptyList(),
+            openSessions = listOf(
+                CodexThreadSummary(id = "no-folder", cwd = "", updatedAtEpochSeconds = 30),
+                CodexThreadSummary(id = "unscoped", cwd = "/home/me", updatedAtEpochSeconds = 40, isUnscoped = true),
+                CodexThreadSummary(id = "regular-docs", cwd = "/Users/me/Documents/Codex/2026-06-12/example-chat", updatedAtEpochSeconds = 50),
+            ),
+        )
+
+        assertEquals(listOf("/Users/me/Documents/Codex/2026-06-12/example-chat"), refreshed.map { it.path })
+    }
+
+    @Test
     fun sessionListSectionsGroupByProjectAndSortByRecentActivity() {
         val projects = listOf(
             ProjectRecord(path = "/srv/app", sessionPaths = listOf("/srv/app", "/srv/.codex/worktrees/a/app")),
@@ -207,6 +222,33 @@ class SharedCoreParityTest {
                     CodexThreadSummary(id = "app-main-old", cwd = "/srv/app", updatedAtEpochSeconds = 20),
                 ),
                 projects = projects,
+                projectPath = "/srv/app",
+            ),
+        )
+    }
+
+    @Test
+    fun sessionListSectionsGroupNoFolderSessions() {
+        val sections = SessionListSections.from(
+            sessions = listOf(
+                CodexThreadSummary(id = "folder", cwd = "/srv/app", updatedAtEpochSeconds = 20),
+                CodexThreadSummary(id = "unscoped-home", cwd = "/home/me", updatedAtEpochSeconds = 50, isUnscoped = true),
+                CodexThreadSummary(id = "no-folder-new", cwd = "", updatedAtEpochSeconds = 40),
+                CodexThreadSummary(id = "no-folder-old", cwd = " ", updatedAtEpochSeconds = 10),
+            ),
+            projects = listOf(ProjectRecord(path = "/srv/app")),
+        )
+
+        assertEquals(listOf("No Folder", "app"), sections.map { it.title })
+        assertEquals(listOf("unscoped-home", "no-folder-new", "no-folder-old"), sections.first().sessionIds)
+        assertEquals(
+            emptyList(),
+            SessionListSections.sessionIdsForProject(
+                sessions = listOf(
+                    CodexThreadSummary(id = "no-folder", cwd = "", updatedAtEpochSeconds = 40),
+                    CodexThreadSummary(id = "unscoped", cwd = "/srv/app", updatedAtEpochSeconds = 50, isUnscoped = true),
+                ),
+                projects = listOf(ProjectRecord(path = "/srv/app")),
                 projectPath = "/srv/app",
             ),
         )

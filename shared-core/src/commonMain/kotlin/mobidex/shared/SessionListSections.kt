@@ -28,7 +28,9 @@ object SessionListSections {
 
         val sessionsBySectionId = linkedMapOf<String, MutableList<CodexThreadSummary>>()
         for (session in sessions) {
-            val sectionId = projectPathBySessionPath[session.cwd]
+            val sectionId = if (session.isUnscoped || CodexFolderlessPaths.isFolderlessCwd(session.cwd)) {
+                noFolderSectionId
+            } else projectPathBySessionPath[session.cwd]
                 ?: codexWorktreeMainProjectPath(session.cwd, projectPathByCodexWorktreeName)
                 ?: session.cwd
             sessionsBySectionId.getOrPut(sectionId) { mutableListOf() }.add(session)
@@ -40,7 +42,7 @@ object SessionListSections {
             val sortedSessions = sectionSessions.sortedWith(sessionComparator)
             SessionListSection(
                 id = sectionId,
-                title = projectByPath[sectionId]?.displayName ?: sectionId,
+                title = if (sectionId == noFolderSectionId) noFolderSectionTitle else projectByPath[sectionId]?.displayName ?: sectionId,
                 sessionIds = sortedSessions.map { it.id },
             )
         }.sortedWith(
@@ -65,6 +67,9 @@ object SessionListSections {
 
     private val sessionComparator = compareByDescending<CodexThreadSummary> { it.updatedAtEpochSeconds }
         .thenBy { it.id }
+
+    private const val noFolderSectionId = "__mobidex_no_folder__"
+    private const val noFolderSectionTitle = "No Folder"
 
     private fun codexWorktreeMainProjectPath(cwd: String, candidates: Map<String, String>): String? {
         if (!isCodexWorktreePath(cwd)) return null

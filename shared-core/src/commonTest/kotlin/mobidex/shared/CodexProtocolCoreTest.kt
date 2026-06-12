@@ -43,6 +43,12 @@ class CodexProtocolCoreTest {
         assertEquals(listOf(jsonString("/srv/app")), writableRoots.value)
         assertEquals(JsonValue.BoolValue(true), workspaceSandbox.value["networkAccess"])
 
+        val noFolderWorkspace = CodexTurnOptions(
+            accessMode = CodexAccessMode.WorkspaceWrite,
+            cwd = "",
+        ).jsonFields["sandboxPolicy"] as JsonValue.ObjectValue
+        assertEquals(emptyList(), (noFolderWorkspace.value["writableRoots"] as JsonValue.ArrayValue).value)
+
         val full = CodexTurnOptions(
             reasoningEffort = CodexReasoningEffortOption.Medium,
             accessMode = CodexAccessMode.FullAccess,
@@ -102,6 +108,16 @@ class CodexProtocolWireEncodingTest {
     }
 
     @Test
+    fun threadListRequestOmitsBlankCwd() {
+        val line = CodexRpcRequests.threadList(id = 1, cwd = "   ", limit = 20).encodeJsonLine()
+
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":false,\"sourceKinds\":[\"cli\",\"vscode\",\"exec\",\"appServer\"]}}",
+            line,
+        )
+    }
+
+    @Test
     fun lifecycleAndThreadRequestsEncodeCurrentWireShape() {
         assertEquals(
             "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"mobidex\",\"title\":\"Mobidex\",\"version\":\"0.1.0\"},\"capabilities\":{\"experimentalApi\":true}}}",
@@ -126,6 +142,10 @@ class CodexProtocolWireEncodingTest {
         assertEquals(
             "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"thread/start\",\"params\":{\"cwd\":\"/srv/app\"}}",
             CodexRpcRequests.startThread(id = 5, cwd = "/srv/app").encodeJsonLine(),
+        )
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":50,\"method\":\"thread/start\",\"params\":{}}",
+            CodexRpcRequests.startThread(id = 50, cwd = "").encodeJsonLine(),
         )
         assertEquals(
             "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"thread/archive\",\"params\":{\"threadId\":\"thread-1\"}}",

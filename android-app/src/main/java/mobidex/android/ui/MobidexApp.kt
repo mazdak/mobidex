@@ -400,16 +400,26 @@ private fun ProjectSessionPane(
     var sessionListMutationRefreshPending by remember(state.selectedServerID, sessionsProjectID) { mutableStateOf(false) }
     val server = state.selectedServer
     val sessionsProject = server?.projects?.firstOrNull { it.id == sessionsProjectID }
+    val showingSessions = sessionsProject != null
     val connectionMode = state.connectionState == ServerConnectionState.Connecting
-    val refreshInProgress = if (sessionsProject != null) state.isRefreshingSessions else state.isDiscoveringProjects
+    val refreshInProgress = if (showingSessions) state.isRefreshingSessions else state.isDiscoveringProjects
 
     Column(modifier) {
-        PaneHeader(sessionsProject?.let { "${it.displayName} Sessions" } ?: server?.displayName ?: "Mobidex", Icons.Default.FolderOpen) {
-            if (sessionsProject != null) {
+        PaneHeader(
+            when {
+                sessionsProject != null -> "${sessionsProject.displayName} Sessions"
+                else -> server?.displayName ?: "Mobidex"
+            },
+            Icons.Default.FolderOpen
+        ) {
+            if (showingSessions) {
                 TextButton(
                     onClick = {
                         sessionsProjectID = null
                         sessionSearch = ""
+                        visibleSessionSections = emptyList()
+                        sessionListMutationRefreshPending = false
+                        model.showProjectList()
                     },
                 ) {
                     Text("Projects")
@@ -417,7 +427,7 @@ private fun ProjectSessionPane(
             }
             IconButton(
                 onClick = {
-                    if (sessionsProject != null) {
+                    if (showingSessions) {
                         model.refreshThreads()
                     } else {
                         model.refreshProjects()
@@ -431,18 +441,33 @@ private fun ProjectSessionPane(
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                 }
             }
-            if (sessionsProject == null) {
+            if (!showingSessions) {
+                NewSessionMenuButton(
+                    enabled = state.canStartNoFolderSession && !connectionMode,
+                    showNoFolderOption = true,
+                    onStartWithoutFolder = {
+                        model.startNoFolderSession { created ->
+                            if (created) {
+                                onOpenDetail()
+                            }
+                        }
+                    },
+                    onStart = {},
+                    onStartInProjectDirectory = {},
+                )
                 IconButton(onClick = onAddProject, enabled = server != null) {
                     Icon(Icons.Default.Add, contentDescription = "Add Project")
                 }
             } else {
                 NewSessionMenuButton(
-                    enabled = state.canCreateSession && !connectionMode,
+                    enabled = state.canChooseNewSessionLocation && !connectionMode,
+                    showNoFolderOption = false,
+                    onStartWithoutFolder = {},
                     onStart = {
-                        model.startNewSession { created ->
+                        model.startNewSession(NewSessionLocation.CodexWorktree) { created ->
                             if (created) {
                                 sessionListMutationRefreshPending = true
-                                visibleSessionSections = model.sessionSections("")
+                                visibleSessionSections = visibleSessionSectionsForCurrentScope(state, model)
                                 onOpenDetail()
                             }
                         }
@@ -451,7 +476,7 @@ private fun ProjectSessionPane(
                         model.startNewSession(NewSessionLocation.ProjectDirectory) { created ->
                             if (created) {
                                 sessionListMutationRefreshPending = true
-                                visibleSessionSections = model.sessionSections("")
+                                visibleSessionSections = visibleSessionSectionsForCurrentScope(state, model)
                                 onOpenDetail()
                             }
                         }
@@ -498,25 +523,26 @@ private fun ProjectSessionPane(
                 onClose = { showTerminal = false },
                 modifier = Modifier.weight(1f),
             )
-        } else if (sessionsProject != null) {
+        } else if (showingSessions) {
             BackHandler(enabled = true) {
                 sessionsProjectID = null
                 sessionSearch = ""
                 visibleSessionSections = emptyList()
                 sessionListMutationRefreshPending = false
+                model.showProjectList()
             }
             LaunchedEffect(state.isRefreshingSessions, sessionsProjectID) {
-                if (!state.isRefreshingSessions && sessionsProjectID != null) {
-                    visibleSessionSections = model.sessionSections("")
+                if (!state.isRefreshingSessions && showingSessions) {
+                    visibleSessionSections = visibleSessionSectionsForCurrentScope(state, model)
                 }
             }
             LaunchedEffect(state.isBusy, state.isStartingNewSession, sessionListMutationRefreshPending, sessionsProjectID) {
                 if (sessionListMutationRefreshPending &&
                     !state.isBusy &&
                     !state.isStartingNewSession &&
-                    sessionsProjectID != null
+                    showingSessions
                 ) {
-                    visibleSessionSections = model.sessionSections("")
+                    visibleSessionSections = visibleSessionSectionsForCurrentScope(state, model)
                     sessionListMutationRefreshPending = false
                 }
             }
@@ -546,6 +572,10 @@ private fun ProjectSessionPane(
                     visibleSessionSections = emptyList()
                     model.selectProject(project.id)
                 },
+                onOpenNoFolderThread = { thread ->
+                    model.openNoFolderThread(thread)
+                    onOpenDetail()
+                },
             )
         }
     }
@@ -561,6 +591,16 @@ private fun ProjectSessionPane(
         )
     }
 }
+
+private fun visibleSessionSectionsForCurrentScope(
+    state: MobidexUiState,
+    model: AppViewModel,
+): List<AndroidSessionListSection> =
+    if (state.isShowingAllSessions) {
+        model.noFolderSessionSections("")
+    } else {
+        model.sessionSections("")
+    }
 
 @Composable
 private fun DeleteServerConfirmationDialog(
@@ -772,7 +812,7 @@ private fun TerminalPane(state: MobidexUiState, model: AppViewModel, onClose: ()
         ) {
             Column(Modifier.weight(1f)) {
                 Text("Terminal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(state.selectedThread?.cwd ?: state.selectedProject?.path ?: state.selectedServer?.endpointLabel.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                Text(state.selectedThread?.folderLabel ?: state.selectedProject?.path ?: state.selectedServer?.endpointLabel.orEmpty(), style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onClick = onClose) { Text("Close") }
         }
@@ -944,8 +984,14 @@ private fun ProjectList(
     onShowInactiveChange: (Boolean) -> Unit,
     disabled: Boolean = false,
     onOpenSessions: (ProjectRecord) -> Unit,
+    onOpenNoFolderThread: (CodexThread) -> Unit,
 ) {
     val sections = model.projectSections(search, showInactive, state.showsArchivedSessions)
+    val query = search.trim()
+    val noFolderThreads = state.noFolderThreads.filter { thread ->
+        (state.showsArchivedSessions || !thread.isArchived) &&
+            (query.isEmpty() || thread.title.contains(query, ignoreCase = true))
+    }
     val contentIsLoading = state.isDiscoveringProjects || disabled
     val contentAlpha = if (contentIsLoading) 0.42f else 1f
 
@@ -954,7 +1000,7 @@ private fun ProjectList(
             value = search,
             onValueChange = onSearchChange,
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            placeholder = { Text("Search Projects") },
+            placeholder = { Text("Search Projects and Chats") },
             modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
             enabled = !contentIsLoading,
             singleLine = true,
@@ -963,12 +1009,52 @@ private fun ProjectList(
             LoadingListStatusRow("Loading projects...")
         }
         LazyColumn(Modifier.weight(1f, fill = true).graphicsLayer { alpha = contentAlpha }) {
+            if (sections.projects.isNotEmpty()) {
+                item(key = "projects-header") {
+                    Text("Projects", modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 6.dp), style = MaterialTheme.typography.labelLarge)
+                }
+            }
             section(sections.projects) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
-            if (sections.isEmpty) {
+            item(key = "chats-header") {
+                Text("Chats", modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 6.dp), style = MaterialTheme.typography.labelLarge)
+            }
+            items(noFolderThreads, key = { "no-folder-${it.id}" }) { thread ->
+                NoFolderChatRow(
+                    thread = thread,
+                    selected = thread.id == state.selectedThreadID,
+                    enabled = !contentIsLoading,
+                    onOpen = onOpenNoFolderThread,
+                )
+                HorizontalDivider()
+            }
+            if (sections.isEmpty && noFolderThreads.isEmpty()) {
                 item { EmptyState(projectEmptyTitle(state, sections, search), "Add a project to get started.", Icons.Default.Folder) }
             }
         }
     }
+}
+
+@Composable
+private fun NoFolderChatRow(
+    thread: CodexThread,
+    selected: Boolean,
+    enabled: Boolean,
+    onOpen: (CodexThread) -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text(thread.title, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
+        supportingContent = {
+            Column {
+                Text(thread.folderLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(thread.status.sessionLabel, color = threadStatusColor(thread))
+            }
+        },
+        leadingContent = { Icon(Icons.Default.Description, contentDescription = null) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
+            .clickable(enabled = enabled) { onOpen(thread) },
+    )
 }
 
 @Composable
@@ -985,7 +1071,7 @@ private fun LoadingListStatusRow(title: String) {
 
 internal fun projectEmptyTitle(state: MobidexUiState, sections: AndroidProjectListSections, search: String): String =
     when {
-        search.trim().isNotEmpty() -> "No Matching Projects"
+        search.trim().isNotEmpty() -> "No Matching Items"
         state.isDiscoveringProjects -> "Loading Projects"
         else -> "No Projects"
     }
@@ -1033,7 +1119,7 @@ private fun filterSessionSections(
     return sections.mapNotNull { section ->
         val threads = section.threads.filter { thread ->
             thread.title.contains(query, ignoreCase = true) ||
-                thread.cwd.contains(query, ignoreCase = true)
+                thread.folderLabel.contains(query, ignoreCase = true)
         }
         if (threads.isEmpty()) null else section.copy(threads = threads)
     }
@@ -1104,7 +1190,7 @@ private fun ThreadList(
                             headlineContent = { Text(thread.title, fontWeight = if (thread.id == state.selectedThreadID) FontWeight.SemiBold else FontWeight.Normal) },
                             supportingContent = {
                                 Column {
-                                    Text(thread.cwd, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(thread.folderLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(thread.status.sessionLabel, color = threadStatusColor(thread))
                                 }
                             },
@@ -1163,7 +1249,13 @@ private fun ConversationPane(
             }
             when (detail) {
                 SessionDetailMode.Chat -> ChatTimeline(state, model, composerDrafts, Modifier.weight(1f))
-                SessionDetailMode.Changes -> ChangesView(state, model, Modifier.weight(1f))
+                SessionDetailMode.Changes -> {
+                    if (thread.isFolderless) {
+                        EmptyState("No Folder", "This chat is not attached to a folder.", Icons.Default.Folder, Modifier.weight(1f))
+                    } else {
+                        ChangesView(state, model, Modifier.weight(1f))
+                    }
+                }
             }
         } else if (project != null) {
             EmptyState("Select a Session", "Choose a session from the project list.", Icons.Default.Description, Modifier.weight(1f))
@@ -1195,7 +1287,7 @@ private fun MacOSPrivacyWarningBanner(state: MobidexUiState, model: AppViewModel
 }
 
 private fun macOSPrivacyWarningForConversation(state: MobidexUiState): String? =
-    state.selectedThread?.cwd?.let { ProjectRecord.macOSPrivacyWarning(listOf(it)) }
+    state.selectedThread?.cwd?.takeIf { it.isNotBlank() }?.let { ProjectRecord.macOSPrivacyWarning(listOf(it)) }
         ?: state.selectedProject?.macOSPrivacyWarning
 
 internal fun sessionEmptyTitle(state: MobidexUiState): String =
@@ -1232,7 +1324,7 @@ private fun ConversationHeader(thread: CodexThread, state: MobidexUiState, model
     Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) {
             Text(thread.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(thread.cwd, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(thread.folderLabel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (state.activeTurnID != null) {
             IconButton(onClick = { model.interruptActiveTurn() }) {
@@ -1299,10 +1391,18 @@ private fun ProjectHeader(project: ProjectRecord, state: MobidexUiState, model: 
 @Composable
 private fun NewSessionMenuButton(
     enabled: Boolean,
+    showNoFolderOption: Boolean = false,
+    onStartWithoutFolder: () -> Unit = {},
     onStart: () -> Unit,
     onStartInProjectDirectory: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    if (showNoFolderOption) {
+        IconButton(onClick = onStartWithoutFolder, enabled = enabled) {
+            Icon(Icons.Default.Add, contentDescription = "New Chat")
+        }
+        return
+    }
     Box {
         IconButton(onClick = onStart, enabled = enabled) {
             Icon(Icons.Default.Add, contentDescription = "New Session")
@@ -2299,7 +2399,7 @@ private fun ChangesView(state: MobidexUiState, model: AppViewModel, modifier: Mo
         Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Changed Files", style = MaterialTheme.typography.titleMedium)
-                Text(state.selectedThread?.cwd ?: state.selectedProject?.path ?: "", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(state.selectedThread?.folderLabel ?: state.selectedProject?.path ?: "", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = { model.refreshDiffSnapshot() }, enabled = state.connectionState == ServerConnectionState.Connected) {
                 Icon(Icons.Default.Refresh, contentDescription = "Refresh Changes")

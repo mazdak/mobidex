@@ -43,6 +43,34 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testThreadListDecodesNoFolderThreads() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.listThreads(limit: 20) }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+
+        transport.receive("""
+        {"id":\(id),"result":{"data":[
+          {"id":"thread-no-folder","preview":"General chat","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-docs","preview":"Generated Codex chat","cwd":"/Users/me/Documents/Codex/2026-06-12/example-chat","status":{"type":"idle"},"updatedAt":1770000200,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        let threads = try await task.value
+        XCTAssertEqual(threads.count, 2)
+        let thread = try XCTUnwrap(threads.first { $0.id == "thread-no-folder" })
+        XCTAssertEqual(thread.id, "thread-no-folder")
+        XCTAssertEqual(thread.cwd, "")
+        XCTAssertEqual(thread.folderLabel, "No Folder")
+        let docsThread = try XCTUnwrap(threads.first { $0.id == "thread-docs" })
+        XCTAssertEqual(docsThread.folderLabel, "/Users/me/Documents/Codex/2026-06-12/example-chat")
+        XCTAssertFalse(docsThread.isFolderless)
+        await client.close()
+    }
+
     func testStartTurnEncodesTextInputWithCurrentAppServerShape() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport)
@@ -549,7 +577,7 @@ final class CodexProtocolTests: XCTestCase {
         let id = try XCTUnwrap(object["id"] as? Int)
 
         transport.receive("""
-        {"id":\(id),"result":{"data":[{"id":"thread-bad"}],"nextCursor":null}}
+        {"id":\(id),"result":{"data":[{"id":"thread-bad","cwd":""}],"nextCursor":null}}
         """)
 
         do {
@@ -557,7 +585,7 @@ final class CodexProtocolTests: XCTestCase {
             XCTFail("Expected malformed thread data to fail decoding.")
         } catch {
             XCTAssertTrue(error.localizedDescription.contains("thread/list"), error.localizedDescription)
-            XCTAssertTrue(error.localizedDescription.contains("missing key `cwd`"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("missing key `status`"), error.localizedDescription)
         }
 
         await client.close()

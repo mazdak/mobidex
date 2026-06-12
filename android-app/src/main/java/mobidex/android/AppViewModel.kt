@@ -99,6 +99,7 @@ data class MobidexUiState(
     val selectedProjectID: String? = null,
     val isShowingAllSessions: Boolean = false,
     val threads: List<CodexThread> = emptyList(),
+    val noFolderThreads: List<CodexThread> = emptyList(),
     val selectedThreadID: String? = null,
     val selectedThread: CodexThread? = null,
     val conversationSections: List<mobidex.shared.ConversationSection> = emptyList(),
@@ -132,10 +133,19 @@ data class MobidexUiState(
         get() = connectionState == ServerConnectionState.Connected && !isStartingNewSession
 
     val canCreateSession: Boolean
-        get() = connectionState != ServerConnectionState.Connecting && selectedServer != null && selectedProject != null && !isBusy && !isStartingNewSession
+        get() = connectionState != ServerConnectionState.Connecting && canStartCodexSessionInCurrentScope && !isBusy && !isStartingNewSession
 
     val activeTurnID: String?
         get() = selectedThread?.let { activeTurnID(it) }
+
+    private val canStartCodexSessionInCurrentScope: Boolean
+        get() = selectedServer?.backendType == BackendType.CodexAppServer && (selectedProject != null || isShowingAllSessions)
+
+    val canChooseNewSessionLocation: Boolean
+        get() = canStartCodexSessionInCurrentScope && !isBusy && !isStartingNewSession
+
+    val canStartNoFolderSession: Boolean
+        get() = selectedServer?.backendType == BackendType.CodexAppServer && !isBusy && !isStartingNewSession
 }
 
 private fun activeTurnID(thread: CodexThread): String? =
@@ -146,6 +156,7 @@ private fun activeTurnID(thread: CodexThread): String? =
     }
 
 enum class NewSessionLocation {
+    NoFolder,
     CodexWorktree,
     ProjectDirectory,
 }
@@ -203,6 +214,11 @@ private data class CachedThreadList(
     val threads: List<CodexThread>,
     val selectedThreadID: String?,
     val fetchedAtEpochSeconds: Long,
+)
+
+private data class ThreadScopeLoadResult(
+    val threads: List<CodexThread>,
+    val noFolderThreads: List<CodexThread>? = null,
 )
 
 private data class CachedThreadDetail(
@@ -333,6 +349,7 @@ class AppViewModel(
                 selectedProjectID = server?.projects?.firstSavedProjectID,
                 isShowingAllSessions = false,
                 threads = emptyList(),
+                noFolderThreads = emptyList(),
                 selectedThreadID = null,
                 selectedThread = null,
                 conversationSections = emptyList(),
@@ -394,6 +411,7 @@ class AppViewModel(
         _state.update { state ->
             state.copy(
                 threads = emptyList(),
+                noFolderThreads = emptyList(),
                 selectedThreadID = null,
                 selectedThread = null,
                 conversationSections = emptyList(),
@@ -428,6 +446,7 @@ class AppViewModel(
         _state.update { state ->
             state.copy(
                 threads = emptyList(),
+                noFolderThreads = emptyList(),
                 selectedThreadID = null,
                 selectedThread = null,
                 conversationSections = emptyList(),
@@ -436,6 +455,65 @@ class AppViewModel(
             )
         }
         refreshThreadsIfNeeded()
+    }
+
+    fun openNoFolderThread(thread: CodexThread) {
+        if (isSessionMutationInFlight()) {
+            _state.update { it.copy(statusMessage = "Wait for the current session action to finish before opening a chat.") }
+            return
+        }
+        resetSessionRefreshTracking()
+        suppressThreadAutoSelection = false
+        suppressCachedThreadSelection = false
+        _state.update { state ->
+            state.copy(
+                selectedProjectID = null,
+                isShowingAllSessions = true,
+                threads = listOf(thread) + state.noFolderThreads.filterNot { it.id == thread.id },
+            )
+        }
+        openThread(thread)
+    }
+
+    fun startNoFolderSession(onComplete: (Boolean) -> Unit = {}) {
+        if (isSessionMutationInFlight()) {
+            _state.update { it.copy(statusMessage = "A session action is already in progress.") }
+            onComplete(false)
+            return
+        }
+        resetSessionRefreshTracking()
+        suppressThreadAutoSelection = true
+        suppressCachedThreadSelection = true
+        _state.update { state ->
+            state.copy(
+                selectedProjectID = null,
+                isShowingAllSessions = true,
+            )
+        }
+        startNewSession(NewSessionLocation.NoFolder, onComplete)
+    }
+
+    fun showProjectList() {
+        if (!_state.value.isShowingAllSessions) return
+        resetSessionRefreshTracking()
+        suppressThreadAutoSelection = true
+        suppressCachedThreadSelection = true
+        _state.update { state ->
+            val projectListChats = (state.threads + state.noFolderThreads)
+                .filter { it.isFolderless }
+                .distinctBy { it.id }
+            state.copy(
+                selectedProjectID = state.selectedServer?.projects?.firstSavedProjectID,
+                isShowingAllSessions = false,
+                threads = emptyList(),
+                noFolderThreads = projectListChats,
+                selectedThreadID = null,
+                selectedThread = null,
+                conversationSections = emptyList(),
+                diffSnapshot = GitDiffSnapshot.Empty,
+                tokenUsagePercent = null,
+            )
+        }
     }
 
     fun dismissMacOSPrivacyWarningForever() {
@@ -463,6 +541,7 @@ class AppViewModel(
             it.copy(
                 showsArchivedSessions = show,
                 threads = emptyList(),
+                noFolderThreads = emptyList(),
                 selectedThreadID = null,
                 selectedThread = null,
                 conversationSections = emptyList(),
@@ -478,7 +557,7 @@ class AppViewModel(
         return runCatching {
             _state.update { it.copy(statusMessage = "Opening terminal") }
             sshService.openTerminal(
-                cwd = state.selectedThread?.cwd ?: state.selectedProject?.path,
+                cwd = state.selectedThread?.cwd?.takeIf { it.isNotBlank() } ?: state.selectedProject?.path,
                 columns = columns,
                 rows = rows,
                 server = server,
@@ -542,6 +621,9 @@ class AppViewModel(
                 }
                 if (editedSelectedServer || previous == null) {
                     resetSessionRefreshTracking()
+                }
+                if (previous != null) {
+                    invalidateSessionCaches(next.id)
                 }
                 val updated = current.servers.upsert(next)
                 repository.saveServers(updated)
@@ -616,6 +698,7 @@ class AppViewModel(
                         servers = updated,
                         selectedProjectID = project.id,
                         threads = emptyList(),
+                        noFolderThreads = emptyList(),
                         selectedThreadID = null,
                         selectedThread = null,
                         conversationSections = emptyList(),
@@ -882,7 +965,7 @@ class AppViewModel(
                             runCatching { client.resumeThread(threadID) }
                                 .recoverCatching { client.readThread(threadID) }
                                 .getOrNull()
-                        }?.let { hydrated ->
+                        }?.let { markUnscopedChatState(it) }?.let { hydrated ->
                             if (appServer === client) {
                                 hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, threadID)
                             }
@@ -915,6 +998,11 @@ class AppViewModel(
                 val client = appServer
                 if (client != null) {
                     refreshProjectsFromAppServer(server, client, includeRemoteDiscovery = true)
+                    loadNoFolderThreads(
+                        client,
+                        requestServerID = server.id,
+                        includeArchived = _state.value.showsArchivedSessions,
+                    )
                 } else {
                     refreshProjectsFromSsh(server)
                 }
@@ -966,10 +1054,11 @@ class AppViewModel(
                             current
                         } else {
                             val sorted = sortedThreadsPreservingSelectedThread(
-                                loadedThreads = loaded,
+                                loadedThreads = loaded.threads,
                                 state = current,
                                 preserveMissingSelectedThread = true,
                             )
+                            val nextNoFolderThreads = loaded.noFolderThreads ?: current.noFolderThreads
                             val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
                                 selectedThreadIDToHydrate = selectedID
@@ -977,6 +1066,7 @@ class AppViewModel(
                             if (current.selectedThreadID != null && selectedID == null) {
                                 current.copy(
                                     threads = sorted,
+                                    noFolderThreads = nextNoFolderThreads,
                                     selectedThreadID = null,
                                     selectedThread = null,
                                     conversationSections = emptyList(),
@@ -986,7 +1076,10 @@ class AppViewModel(
                                     queuedTurnInputs = emptyList(),
                                 )
                             } else {
-                                current.copy(threads = sorted)
+                                current.copy(
+                                    threads = sorted,
+                                    noFolderThreads = nextNoFolderThreads,
+                                )
                             }
                         }
                     }
@@ -1012,28 +1105,46 @@ class AppViewModel(
         client: CodexAppServerClient,
         state: MobidexUiState,
         pageLimit: Int?,
-    ): List<CodexThread> {
+    ): ThreadScopeLoadResult {
         val project = state.selectedProject
         val cwd = if (state.isShowingAllSessions) null else project?.path
         val sessionPaths = if (state.isShowingAllSessions) emptyList() else project?.sessionPaths ?: emptyList()
         val includeArchived = state.showsArchivedSessions
-        return if (sessionPaths.isEmpty()) {
-            client.listThreads(cwd, includeArchived = includeArchived, pageLimit = pageLimit)
+        fun sortedNoFolderThreads(threads: List<CodexThread>): List<CodexThread> =
+            threads.sortedWith(compareByDescending<CodexThread> { it.updatedAtEpochSeconds }.thenBy { it.id })
+        return if (state.isShowingAllSessions) {
+            val noFolderThreads = sortedNoFolderThreads(
+                unscopedChatThreads(
+                    client.listThreads(null, includeArchived = includeArchived, pageLimit = pageLimit),
+                    state,
+                ),
+            )
+            ThreadScopeLoadResult(
+                threads = noFolderThreads,
+                noFolderThreads = noFolderThreads,
+            )
+        } else if (sessionPaths.isEmpty()) {
+            val loaded = client.listThreads(cwd, includeArchived = includeArchived, pageLimit = pageLimit)
+            if (cwd == null) {
+                return ThreadScopeLoadResult(
+                    threads = emptyList(),
+                    noFolderThreads = sortedNoFolderThreads(unscopedChatThreads(loaded, state)),
+                )
+            }
+            ThreadScopeLoadResult(threads = loaded)
         } else {
             val exactMatches = sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived, pageLimit = pageLimit) }
             val unscoped = client.listThreads(null, includeArchived = includeArchived, pageLimit = pageLimit)
+            val groupedUnscoped = unscoped.map { markUnscopedChatState(it, state) }
             val groupedSessionIDs = SessionListSections.sessionIdsForProject(
-                sessions = unscoped.map { thread ->
-                    CodexThreadSummary(
-                        id = thread.id,
-                        cwd = thread.cwd,
-                        updatedAtEpochSeconds = thread.updatedAtEpochSeconds,
-                    )
-                },
+                sessions = groupedUnscoped.map(::threadSummary),
                 projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
                 projectPath = cwd.orEmpty(),
             )
-            (exactMatches + unscoped.filter { it.id in groupedSessionIDs }).distinctBy { it.id }
+            ThreadScopeLoadResult(
+                threads = (exactMatches + groupedUnscoped.filter { it.id in groupedSessionIDs }).distinctBy { it.id },
+                noFolderThreads = sortedNoFolderThreads(groupedUnscoped.filter { it.isFolderless }),
+            )
         }
     }
 
@@ -1058,10 +1169,11 @@ class AppViewModel(
                             current
                         } else {
                             val sorted = sortedThreadsPreservingSelectedThread(
-                                loadedThreads = loaded,
+                                loadedThreads = loaded.threads,
                                 state = current,
                                 preserveMissingSelectedThread = false,
                             )
+                            val nextNoFolderThreads = loaded.noFolderThreads ?: current.noFolderThreads
                             cacheThreads(cacheKey, sorted)
                             val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
                             if (selectedID != null && !isThreadDetailCacheFresh(cacheKey.serverID, selectedID)) {
@@ -1070,6 +1182,7 @@ class AppViewModel(
                             if (current.selectedThreadID != null && selectedID == null) {
                                 current.copy(
                                     threads = sorted,
+                                    noFolderThreads = nextNoFolderThreads,
                                     selectedThreadID = null,
                                     selectedThread = null,
                                     conversationSections = emptyList(),
@@ -1079,7 +1192,10 @@ class AppViewModel(
                                     queuedTurnInputs = emptyList(),
                                 )
                             } else {
-                                current.copy(threads = sorted)
+                                current.copy(
+                                    threads = sorted,
+                                    noFolderThreads = nextNoFolderThreads,
+                                )
                             }
                         }
                     }
@@ -1147,7 +1263,8 @@ class AppViewModel(
         viewModelScope.launch {
             runCatching { client.resumeThread(requestThreadID) }
                 .recoverCatching { client.readThread(requestThreadID) }
-                .onSuccess { hydrated ->
+                .onSuccess { loaded ->
+                    val hydrated = markUnscopedChatState(loaded)
                     if (appServer === client &&
                         sessionRefreshDetailLoadGeneration == detailLoadGeneration &&
                         _state.value.selectedThread == expectedSelectedThread
@@ -1224,12 +1341,13 @@ class AppViewModel(
     }
 
     private fun threadMatchesScope(thread: CodexThread, state: MobidexUiState): Boolean {
-        if (state.isShowingAllSessions) return true
+        val scopedThread = markUnscopedChatState(thread, state)
+        if (state.isShowingAllSessions) return scopedThread.isFolderless
         val project = state.selectedProject ?: return false
         val paths = project.sessionPaths.ifEmpty { listOf(project.path) }
-        if (thread.cwd in paths) return true
-        return thread.id in SessionListSections.sessionIdsForProject(
-            sessions = listOf(CodexThreadSummary(thread.id, thread.cwd, thread.updatedAtEpochSeconds)),
+        if (scopedThread.cwd in paths) return true
+        return scopedThread.id in SessionListSections.sessionIdsForProject(
+            sessions = listOf(threadSummary(scopedThread)),
             projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
             projectPath = project.path,
         )
@@ -1269,9 +1387,11 @@ class AppViewModel(
             }
         val selectedThread = detail?.thread ?: selectedID?.let { id -> cached.threads.firstOrNull { it.id == id } }
         val sections = selectedThread?.let { rebuildThreadSections(it) }.orEmpty()
+        val noFolderThreads = if (cacheKey.isShowingAllSessions) cached.threads.filter { it.isFolderless } else emptyList()
         _state.update { state ->
             state.copy(
                 threads = cached.threads,
+                noFolderThreads = noFolderThreads,
                 selectedThreadID = selectedID,
                 selectedThread = selectedThread,
                 conversationSections = sections,
@@ -1334,6 +1454,7 @@ class AppViewModel(
             val requestServerID = requestState.selectedServerID
             val requestProjectID = requestState.selectedProjectID
             val shouldPromoteProject = requestState.isShowingAllSessions
+            val requestAllSessions = requestState.isShowingAllSessions
             // Select synchronously (before any suspension) so a slower projection from an
             // earlier tap can never revert a newer selection; sections follow once projected.
             _state.update {
@@ -1352,8 +1473,8 @@ class AppViewModel(
             _state.update { it.copy(conversationSections = projected.sections) }
             runBusy("Opening session") {
                 val client = appServer ?: return@runBusy
-                val hydrated = withContext(projectionDispatcher) { client.resumeThread(thread.id) }
-                hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, thread.id)
+                val hydrated = markUnscopedChatState(withContext(projectionDispatcher) { client.resumeThread(thread.id) })
+                hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, thread.id, requestAllSessions = requestAllSessions)
                 if (shouldPromoteProject) {
                     promoteProjectToProjectList(hydrated)
                 }
@@ -1374,8 +1495,14 @@ class AppViewModel(
             onComplete(false)
             return
         }
-        if (initialState.selectedProject == null) {
+        val startsWithoutFolder = location == NewSessionLocation.NoFolder
+        if (!startsWithoutFolder && initialState.selectedProject == null) {
             _state.update { it.copy(statusMessage = "Select a project before starting a session.") }
+            onComplete(false)
+            return
+        }
+        if (startsWithoutFolder && !initialState.isShowingAllSessions) {
+            _state.update { it.copy(statusMessage = "Use the Chats section to start a chat without a folder.") }
             onComplete(false)
             return
         }
@@ -1402,14 +1529,15 @@ class AppViewModel(
                     val requestServerID = state.selectedServerID
                     val requestProjectID = state.selectedProjectID
                     val requestThreadID = state.selectedThreadID
+                    val requestAllSessions = state.isShowingAllSessions
                     val server = state.selectedServer ?: error("Select a server before starting a session.")
-                    val cwd = state.selectedProject?.path ?: error("Select a project before starting a session.")
+                    val cwd = state.selectedProject?.path
                     var client = appServer
                     if (client == null) {
                         _state.update { it.copy(connectionState = ServerConnectionState.Connecting, statusMessage = "Connecting before starting session") }
                         val connectedClient = try {
                             val credential = credentialStore.loadCredential(server.id)
-                            requireSessionSelection(requestServerID, requestProjectID, requestThreadID)
+                            requireSessionSelection(requestServerID, requestProjectID, requestThreadID, requestAllSessions)
                             sshService.openAppServer(server, credential)
                         } catch (error: Throwable) {
                             if (error is CancellationException) throw error
@@ -1432,29 +1560,34 @@ class AppViewModel(
                         _state.update { it.copy(connectionState = ServerConnectionState.Connected, failureMessage = null, statusMessage = "Server connected.") }
                         client = connectedClient
                     }
-                    requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
+                    requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID, requestAllSessions)
                     val sessionCwd = when (location) {
+                        NewSessionLocation.NoFolder -> null
                         NewSessionLocation.CodexWorktree -> {
                             _state.update { it.copy(statusMessage = "Creating worktree") }
+                            val projectCwd = cwd ?: error("Select a project before starting a session.")
                             val credential = credentialStore.loadCredential(server.id)
-                            requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
+                            requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID, requestAllSessions)
                             withNewSessionOperationTimeout("Creating the worktree timed out after 30 seconds.") {
-                                sshService.createCodexWorktree(cwd, server, credential)
+                                sshService.createCodexWorktree(projectCwd, server, credential)
                             }
                         }
-                        NewSessionLocation.ProjectDirectory -> cwd
+                        NewSessionLocation.ProjectDirectory -> cwd ?: error("Select a project before starting a session.")
                     }
-                    requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
+                    requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID, requestAllSessions)
                     _state.update { it.copy(statusMessage = "Creating session") }
-                    val thread = if (location == NewSessionLocation.CodexWorktree) {
+                    var thread = if (location == NewSessionLocation.CodexWorktree) {
                         withNewSessionOperationTimeout("Creating the session timed out after 30 seconds.") {
                             client.startThread(sessionCwd)
                         }
                     } else {
                         client.startThread(sessionCwd)
                     }
-                    if (location == NewSessionLocation.CodexWorktree) {
+                    if (location == NewSessionLocation.CodexWorktree && sessionCwd != null) {
                         rememberSessionPath(sessionCwd, requestServerID, requestProjectID)
+                    } else if (location == NewSessionLocation.NoFolder) {
+                        rememberUnscopedThreadID(thread.id, requestServerID)
+                        thread = thread.copy(isUnscoped = true)
                     }
                     unlistedStartedThreadIDs += thread.id
                     val adopted = hydrateConversationIfCurrent(
@@ -1462,6 +1595,7 @@ class AppViewModel(
                         requestServerID,
                         requestProjectID,
                         requestThreadID,
+                        requestAllSessions = requestAllSessions,
                         clearPerThreadState = true,
                         acceptedStartedThreadID = thread.id,
                     )
@@ -1470,10 +1604,23 @@ class AppViewModel(
                     suppressThreadAutoSelection = false
                     suppressCachedThreadSelection = false
                     _state.update { current ->
-                        if (appServer !== client || current.selectedServerID != requestServerID || current.selectedProjectID != requestProjectID || current.selectedThreadID != thread.id) {
+                        if (appServer !== client ||
+                            current.selectedServerID != requestServerID ||
+                            current.selectedProjectID != requestProjectID ||
+                            current.isShowingAllSessions != requestAllSessions ||
+                            current.selectedThreadID != thread.id
+                        ) {
                             current
                         } else {
-                            current.copy(threads = (listOf(thread) + current.threads).distinctBy { item -> item.id })
+                            val nextThreads = (listOf(thread) + current.threads).distinctBy { item -> item.id }
+                            current.copy(
+                                threads = nextThreads,
+                                noFolderThreads = if (thread.isFolderless) {
+                                    (listOf(thread) + current.noFolderThreads).distinctBy { item -> item.id }
+                                } else {
+                                    current.noFolderThreads
+                                },
+                            )
                         }
                     }
                     invalidateSessionCaches(requestServerID)
@@ -1510,6 +1657,49 @@ class AppViewModel(
             if (current.selectedServerID == serverID) current.copy(servers = updated) else current
         }
     }
+
+    private suspend fun rememberUnscopedThreadID(threadID: String, serverID: String?) {
+        val normalizedThreadID = threadID.trim()
+        if (normalizedThreadID.isEmpty() || serverID == null) return
+        val state = _state.value
+        val server = state.servers.firstOrNull { it.id == serverID } ?: return
+        val normalizedIDs = ServerRecord.normalizedUnscopedThreadIDs(server.unscopedThreadIDs + normalizedThreadID)
+        if (normalizedIDs == server.unscopedThreadIDs) return
+        val updatedServer = server.copy(
+            unscopedThreadIDs = normalizedIDs,
+            updatedAtEpochSeconds = Instant.now().epochSecond,
+        )
+        val updated = state.servers.upsert(updatedServer)
+        repository.saveServers(updated)
+        invalidateSessionCaches(serverID)
+        _state.update { current ->
+            if (current.selectedServerID == serverID) current.copy(servers = updated) else current
+        }
+    }
+
+    private fun markUnscopedChatState(thread: CodexThread, state: MobidexUiState = _state.value): CodexThread =
+        if (thread.isUnscoped ||
+            thread.isFolderless ||
+            state.selectedServer?.unscopedThreadIDs?.contains(thread.id) == true
+        ) {
+            thread.copy(isUnscoped = true)
+        } else {
+            thread
+        }
+
+    private fun unscopedChatThreads(threads: List<CodexThread>, state: MobidexUiState = _state.value): List<CodexThread> =
+        threads.map { markUnscopedChatState(it, state) }.filter { it.isFolderless }
+
+    private fun threadSummary(thread: CodexThread): CodexThreadSummary =
+        CodexThreadSummary(
+            id = thread.id,
+            cwd = thread.cwd,
+            updatedAtEpochSeconds = thread.updatedAtEpochSeconds,
+            isUnscoped = thread.isFolderless,
+        )
+
+    private fun turnCwd(thread: CodexThread): String? =
+        if (thread.isFolderless) null else thread.cwd
 
     fun sendComposerText(text: String) {
         sendComposerInput(text, emptyList(), onComplete = {})
@@ -1565,20 +1755,27 @@ class AppViewModel(
                     val requestServerID = requestState.selectedServerID
                     val requestProjectID = requestState.selectedProjectID
                     val requestThreadID = requestState.selectedThreadID
+                    val requestAllSessions = requestState.isShowingAllSessions
                     var thread = requestState.selectedThread
                     var createdThread = false
                     if (thread == null) {
                         suppressThreadAutoSelection = true
-                        requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
-                        thread = client.startThread(requestState.selectedProject?.path)
+                        requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID, requestAllSessions)
+                        val startedThread = client.startThread(if (requestAllSessions) null else requestState.selectedProject?.path)
+                        if (requestAllSessions) {
+                            rememberUnscopedThreadID(startedThread.id, requestServerID)
+                            thread = startedThread.copy(isUnscoped = true)
+                        } else {
+                            thread = startedThread
+                        }
                         unlistedStartedThreadIDs += thread.id
                         createdThread = true
-                        if (!hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID, acceptedStartedThreadID = thread.id)) {
+                        if (!hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID, requestAllSessions, acceptedStartedThreadID = thread.id)) {
                             return@runBusy
                         }
                         suppressThreadAutoSelection = false
                     }
-                    if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                    if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id, requestAllSessions)) {
                         return@runBusy
                     }
                     val input = buildList {
@@ -1592,7 +1789,7 @@ class AppViewModel(
                             queuedTurnInputsByThreadID.getOrPut(thread.id) { mutableListOf() }.add(QueuedTurnInput(input = input))
                             refreshQueuedTurnInputs()
                             _state.update {
-                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id, requestAllSessions)) {
                                     it.copy(statusMessage = "Queued message for after the current turn.")
                                 } else {
                                     it
@@ -1608,7 +1805,7 @@ class AppViewModel(
                                 throw error
                             }
                             _state.update {
-                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id, requestAllSessions)) {
                                     it.copy(statusMessage = "Steered active turn.")
                                 } else {
                                     it
@@ -1619,7 +1816,7 @@ class AppViewModel(
                             queuedTurnInputsByThreadID.getOrPut(thread.id) { mutableListOf() }.add(QueuedTurnInput(input = input))
                             refreshQueuedTurnInputs()
                             _state.update {
-                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                                if (requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id, requestAllSessions)) {
                                     it.copy(statusMessage = "Queued message until the active turn is available.")
                                 } else {
                                     it
@@ -1631,9 +1828,9 @@ class AppViewModel(
                         val turn = client.startTurn(
                             threadID = thread.id,
                             input = input,
-                            options = turnOptions(_state.value.selectedReasoningEffort, _state.value.selectedAccessMode, thread.cwd),
+                            options = turnOptions(_state.value.selectedReasoningEffort, _state.value.selectedAccessMode, turnCwd(thread)),
                         ).forDisplay(input)
-                        if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id)) {
+                        if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, thread.id, requestAllSessions)) {
                             return@runBusy
                         }
                         hydrateConversation(thread.copy(status = thread.status.copy(type = if (turn.status == "inProgress") "active" else "idle"), turns = thread.turns.upsert(turn)))
@@ -1661,16 +1858,18 @@ class AppViewModel(
                 refreshQueuedTurnInputs()
                 _state.update { state ->
                     val nextThreads = state.threads.filterNot { it.id == thread.id }
+                    val nextNoFolderThreads = state.noFolderThreads.filterNot { it.id == thread.id }
                     if (state.selectedThreadID == thread.id) {
                         val fallback = nextThreads.firstOrNull()
                         state.copy(
                             threads = nextThreads,
+                            noFolderThreads = nextNoFolderThreads,
                             selectedThreadID = fallback?.id,
                             selectedThread = fallback,
                             conversationSections = fallback?.conversationSections().orEmpty(),
                         )
                     } else {
-                        state.copy(threads = nextThreads)
+                        state.copy(threads = nextThreads, noFolderThreads = nextNoFolderThreads)
                     }
                 }
                 threadListCache.clear()
@@ -1684,11 +1883,16 @@ class AppViewModel(
         viewModelScope.launch {
             runBusy("Unarchiving session") {
                 val client = appServer ?: error("Connect to the server before unarchiving a session.")
-                val restored = client.unarchiveThread(thread.id)
+                val restored = markUnscopedChatState(client.unarchiveThread(thread.id))
                 _state.update { state ->
                     val nextThreads = state.threads.filterNot { it.id == restored.id }.toMutableList()
                     nextThreads.add(0, restored)
-                    state.copy(threads = nextThreads)
+                    val nextNoFolderThreads = if (restored.isFolderless) {
+                        (listOf(restored) + state.noFolderThreads).distinctBy { it.id }
+                    } else {
+                        state.noFolderThreads
+                    }
+                    state.copy(threads = nextThreads, noFolderThreads = nextNoFolderThreads)
                 }
                 threadListCache.clear()
                 refreshThreads()
@@ -1730,7 +1934,7 @@ class AppViewModel(
             var localEchoID: String? = null
             try {
                 val client = appServer ?: error("Connect to the server before steering.")
-                val thread = client.readThread(threadID)
+                val thread = markUnscopedChatState(client.readThread(threadID))
                 if (!requestMatchesCurrentScope(client, requestServerID, requestProjectID, threadID)) {
                     error("The selected session scope changed before the action could finish.")
                 }
@@ -1946,7 +2150,7 @@ class AppViewModel(
             val requestServerID = state.selectedServerID
             val requestProjectID = state.selectedProjectID
             val requestThreadID = state.selectedThreadID
-            val cwd = state.selectedThread?.cwd ?: state.selectedProject?.path ?: return@launch
+            val cwd = state.selectedThread?.cwd?.takeIf { it.isNotBlank() } ?: state.selectedProject?.path ?: return@launch
             val requestID = ++diffSnapshotRequestID
             _state.update { it.copy(isRefreshingChanges = true) }
             runCatching { client?.diffSnapshot(cwd) ?: GitDiffSnapshot.Empty }
@@ -2136,7 +2340,7 @@ class AppViewModel(
         return client.listLoadedThreadIDs(limit = 1_000)
             .filter { seen.add(it) }
             .mapNotNull { threadID ->
-                runCatching { client.readThreadSummary(threadID) }
+                runCatching { markUnscopedChatState(client.readThreadSummary(threadID)) }
                     .getOrElse { error ->
                         if (canIgnoreForLoadedThreadSummary(error)) null else throw error
                     }
@@ -2147,6 +2351,31 @@ class AppViewModel(
                     .thenByDescending { it.updatedAtEpochSeconds }
                     .thenBy { it.id }
             )
+    }
+
+    private suspend fun loadNoFolderThreads(
+        client: CodexAppServerClient,
+        requestServerID: String,
+        includeArchived: Boolean,
+    ) {
+        val loaded = client.listThreads(
+            null,
+            includeArchived = includeArchived,
+            pageLimit = sessionListInitialPageLimit,
+        )
+        _state.update { current ->
+            if (appServer === client &&
+                current.selectedServerID == requestServerID &&
+                current.showsArchivedSessions == includeArchived
+            ) {
+                current.copy(
+                    noFolderThreads = unscopedChatThreads(loaded, current)
+                        .sortedWith(compareByDescending<CodexThread> { it.updatedAtEpochSeconds }.thenBy { it.id }),
+                )
+            } else {
+                current
+            }
+        }
     }
 
     private fun canIgnoreForLoadedThreadSummary(error: Throwable): Boolean {
@@ -2166,9 +2395,7 @@ class AppViewModel(
         return ProjectCatalog.refreshedProjects(
             existingProjects = existing.map { it.toSharedProject() },
             discoveredProjects = discoveredProjects ?: existing.discoveredRemoteProjects(),
-            openSessions = openSessions.map {
-                mobidex.shared.CodexThreadSummary(it.id, it.cwd, it.updatedAtEpochSeconds)
-            },
+            openSessions = openSessions.map(::threadSummary),
         ).map { shared ->
             val previous = existingByPath[shared.path]
             ProjectRecord(
@@ -2237,21 +2464,26 @@ class AppViewModel(
     }
 
     fun sessionSections(searchText: String): List<AndroidSessionListSection> {
+        return sessionSections(searchText, noFolderOnly = false)
+    }
+
+    fun noFolderSessionSections(searchText: String): List<AndroidSessionListSection> {
+        return sessionSections(searchText, noFolderOnly = true)
+    }
+
+    private fun sessionSections(searchText: String, noFolderOnly: Boolean): List<AndroidSessionListSection> {
         val state = _state.value
         val query = searchText.trim()
         val matchingThreads = state.threads.filter { thread ->
-            query.isEmpty() ||
-                thread.title.contains(query, ignoreCase = true) ||
-                thread.cwd.contains(query, ignoreCase = true)
+            (!noFolderOnly || thread.isFolderless) &&
+                (query.isEmpty() ||
+                    thread.title.contains(query, ignoreCase = true) ||
+                    thread.folderLabel.contains(query, ignoreCase = true))
         }
         val threadsByID = matchingThreads.associateBy { it.id }
         return SessionListSections.from(
             sessions = matchingThreads.map {
-                CodexThreadSummary(
-                    id = it.id,
-                    cwd = it.cwd,
-                    updatedAtEpochSeconds = it.updatedAtEpochSeconds,
-                )
+                threadSummary(it)
             },
             projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
         ).map { section ->
@@ -2396,7 +2628,7 @@ class AppViewModel(
                 runCatching { client.resumeThread(threadID) }
                     .recoverCatching { client.readThread(threadID) }
                     .getOrNull()
-                    ?.let { hydrateConversationIfCurrent(it, serverID, requestProjectID, threadID) }
+                    ?.let { hydrateConversationIfCurrent(markUnscopedChatState(it), serverID, requestProjectID, threadID) }
             }
             val refreshGeneration = beginSessionRefresh()
             var refreshHandedOff = false
@@ -2437,7 +2669,7 @@ class AppViewModel(
                 showTurnError(error.toThreadItem("turn-error-${params.string("turnId") ?: "live-${error.message.hashCode()}"}", willRetry), error.message, willRetry)
             }
             "thread/started" -> params.obj("thread")?.let {
-                val thread = parseThread(it)
+                val thread = markUnscopedChatState(parseThread(it))
                 if (threadMatchesCurrentScope(thread) && (_state.value.selectedThreadID == null || _state.value.selectedThreadID == thread.id)) {
                     hydrateConversation(thread)
                 }
@@ -2491,7 +2723,7 @@ class AppViewModel(
                             // Audit B6: readThread response parsing happens off-main too. The
                             // suspension means the user may have switched thread/server before
                             // the read returns — hydrate only if the selection is still current.
-                            val hydrated = withContext(projectionDispatcher) { client.readThread(threadID) }
+                            val hydrated = markUnscopedChatState(withContext(projectionDispatcher) { client.readThread(threadID) })
                             if (appServer === client) {
                                 hydrateConversationIfCurrent(hydrated, requestServerID, requestProjectID, threadID)
                             }
@@ -2572,6 +2804,7 @@ class AppViewModel(
     }
 
     private suspend fun promoteProjectToProjectList(thread: CodexThread) {
+        if (thread.isFolderless) return
         val state = _state.value
         val server = state.selectedServer ?: return
         val existing = server.projects.firstOrNull { it.path == thread.cwd || thread.cwd in it.sessionPaths }
@@ -2597,13 +2830,17 @@ class AppViewModel(
         requestServerID: String?,
         requestProjectID: String?,
         requestThreadID: String?,
+        requestAllSessions: Boolean? = null,
         clearPerThreadState: Boolean = false,
         acceptedStartedThreadID: String? = null,
     ): Boolean {
         fun selectionMatches(state: MobidexUiState): Boolean {
             val threadMatches = state.selectedThreadID == requestThreadID ||
                 (requestThreadID == null && acceptedStartedThreadID != null && state.selectedThreadID == acceptedStartedThreadID)
-            return state.selectedServerID == requestServerID && state.selectedProjectID == requestProjectID && threadMatches
+            return state.selectedServerID == requestServerID &&
+                state.selectedProjectID == requestProjectID &&
+                (requestAllSessions == null || state.isShowingAllSessions == requestAllSessions) &&
+                threadMatches
         }
 
         val initial = _state.value
@@ -2669,7 +2906,7 @@ class AppViewModel(
                     return
                 }
                 val state = _state.value
-                val thread = state.selectedThread?.takeIf { it.id == threadID } ?: client.readThread(threadID)
+                val thread = state.selectedThread?.takeIf { it.id == threadID } ?: markUnscopedChatState(client.readThread(threadID))
                 if (thread.status.isActive) {
                     queuedTurnInputsByThreadID.getOrPut(threadID) { mutableListOf() }.add(0, queuedInput)
                     inFlightQueuedInput = null
@@ -2679,7 +2916,7 @@ class AppViewModel(
                 val turn = client.startTurn(
                     threadID = thread.id,
                     input = queuedInput.input,
-                    options = turnOptions(state.selectedReasoningEffort, state.selectedAccessMode, thread.cwd),
+                    options = turnOptions(state.selectedReasoningEffort, state.selectedAccessMode, turnCwd(thread)),
                 ).forDisplay(queuedInput.input)
                 inFlightQueuedInput = null
                 if (state.selectedThreadID == threadID) {
@@ -2703,11 +2940,13 @@ class AppViewModel(
         requestServerID: String?,
         requestProjectID: String?,
         requestThreadID: String?,
+        requestAllSessions: Boolean? = null,
     ): Boolean {
         val state = _state.value
         return appServer === client &&
             state.selectedServerID == requestServerID &&
             state.selectedProjectID == requestProjectID &&
+            (requestAllSessions == null || state.isShowingAllSessions == requestAllSessions) &&
             state.selectedThreadID == requestThreadID
     }
 
@@ -2716,8 +2955,9 @@ class AppViewModel(
         requestServerID: String?,
         requestProjectID: String?,
         requestThreadID: String?,
+        requestAllSessions: Boolean? = null,
     ) {
-        check(requestMatchesCurrentScope(client, requestServerID, requestProjectID, requestThreadID)) {
+        check(requestMatchesCurrentScope(client, requestServerID, requestProjectID, requestThreadID, requestAllSessions)) {
             "The selected session scope changed before the action could finish."
         }
     }
@@ -2726,11 +2966,13 @@ class AppViewModel(
         requestServerID: String?,
         requestProjectID: String?,
         requestThreadID: String?,
+        requestAllSessions: Boolean? = null,
     ) {
         val state = _state.value
         check(
             state.selectedServerID == requestServerID &&
                 state.selectedProjectID == requestProjectID &&
+                (requestAllSessions == null || state.isShowingAllSessions == requestAllSessions) &&
                 state.selectedThreadID == requestThreadID
         ) {
             "The selected session scope changed before the action could finish."
@@ -2748,14 +2990,17 @@ class AppViewModel(
 
     private fun threadMatchesCurrentScope(thread: CodexThread): Boolean {
         val state = _state.value
-        if (state.selectedThreadID == thread.id) return true
+        val scopedThread = markUnscopedChatState(thread, state)
+        if (state.isShowingAllSessions) return scopedThread.isFolderless
+        if (state.selectedThreadID == scopedThread.id) return true
         if (state.selectedThreadID != null) return false
         val project = state.selectedProject
-        val paths = project?.sessionPaths.orEmpty()
-        if (paths.isEmpty() || thread.cwd in paths) return true
-        val projectPath = project?.path ?: return false
-        return thread.id in SessionListSections.sessionIdsForProject(
-            sessions = listOf(CodexThreadSummary(thread.id, thread.cwd, thread.updatedAtEpochSeconds)),
+            ?: return false
+        val paths = project.sessionPaths.ifEmpty { listOf(project.path) }
+        if (scopedThread.cwd in paths) return true
+        val projectPath = project.path
+        return scopedThread.id in SessionListSections.sessionIdsForProject(
+            sessions = listOf(threadSummary(scopedThread)),
             projects = state.selectedServer?.projects?.map { it.toSharedProject() }.orEmpty(),
             projectPath = projectPath,
         )
@@ -3079,6 +3324,7 @@ class AppViewModel(
 private fun MobidexUiState.clearingSessionScope(): MobidexUiState =
     copy(
         threads = emptyList(),
+        noFolderThreads = emptyList(),
         selectedThreadID = null,
         selectedThread = null,
         conversationSections = emptyList(),

@@ -55,7 +55,11 @@ struct ConversationView: View {
                             composer
                         }
                 case .changes:
-                    SessionChangesView(cwd: thread.cwd)
+                    if thread.isFolderless {
+                        ContentUnavailableView("No Folder", systemImage: "folder.badge.questionmark")
+                    } else {
+                        SessionChangesView(cwd: thread.cwd)
+                    }
                 }
             } else if let project = model.selectedProject {
                 if model.isStartingNewSession {
@@ -226,7 +230,7 @@ struct ConversationView: View {
                 Text(thread.title)
                     .font(.headline)
                     .lineLimit(1)
-                Text(thread.cwd)
+                Text(thread.folderLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

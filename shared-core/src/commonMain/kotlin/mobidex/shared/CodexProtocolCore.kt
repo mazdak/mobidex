@@ -114,6 +114,7 @@ data class CodexTurnOptions(
     val jsonFields: Map<String, JsonValue>
         get() {
             val fields = linkedMapOf<String, JsonValue>()
+            val normalizedCwd = cwd?.takeIf { it.isNotBlank() }
             reasoningEffort?.let { fields["effort"] = jsonString(it.wireValue) }
             when (accessMode) {
                 CodexAccessMode.FullAccess -> {
@@ -125,7 +126,7 @@ data class CodexTurnOptions(
                     fields["sandboxPolicy"] = jsonObject(
                         mapOf(
                             "type" to jsonString("workspaceWrite"),
-                            "writableRoots" to jsonArray(cwd?.let { listOf(jsonString(it)) } ?: emptyList()),
+                            "writableRoots" to jsonArray(normalizedCwd?.let { listOf(jsonString(it)) } ?: emptyList()),
                             "networkAccess" to jsonBool(true),
                             "excludeTmpdirEnvVar" to jsonBool(false),
                             "excludeSlashTmp" to jsonBool(false),
@@ -270,7 +271,7 @@ object CodexRpcRequests {
             "archived" to jsonBool(archived),
             "sourceKinds" to userFacingThreadSourceKinds,
         )
-        if (!cwd.isNullOrEmpty()) params["cwd"] = jsonString(cwd)
+        cwd?.takeIf { it.isNotBlank() }?.let { params["cwd"] = jsonString(it) }
         cursor?.let { params["cursor"] = jsonString(it) }
         return CodexRpcRequest(id = id, method = "thread/list", params = jsonObject(params))
     }
@@ -332,7 +333,7 @@ object CodexRpcRequests {
     fun startThread(id: Long, cwd: String? = null): CodexRpcRequest = CodexRpcRequest(
         id = id,
         method = "thread/start",
-        params = jsonObject(cwd?.let { linkedMapOf("cwd" to jsonString(it)) } ?: linkedMapOf()),
+        params = jsonObject(cwd?.takeIf { it.isNotBlank() }?.let { linkedMapOf("cwd" to jsonString(it)) } ?: linkedMapOf()),
     )
 
     fun startTurn(

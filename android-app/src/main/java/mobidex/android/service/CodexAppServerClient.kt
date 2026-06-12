@@ -101,7 +101,7 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
             cursor = obj["nextCursor"]?.jsonPrimitive?.contentOrNull
             pageCount += 1
         } while (cursor != null && pageCount < (pageLimit ?: Int.MAX_VALUE))
-        return if (cwd.isNullOrEmpty()) threads else threads.filter { it.cwd == cwd }
+        return if (cwd.isNullOrBlank()) threads else threads.filter { it.cwd == cwd }
     }
 
     suspend fun listLoadedThreadIDs(limit: Int = 1_000): List<String> {

@@ -33,6 +33,16 @@ struct MobidexApp: App {
     }
 
     private static func makeModel() -> AppViewModel {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MOBIDEX_DEMO_FOLDERLESS"] == "1" {
+            return AppViewModel(
+                repository: InMemoryServerRepository(),
+                credentialStore: InMemoryCredentialStore(),
+                sshService: CitadelSSHService(),
+                loadServersOnInit: false
+            )
+        }
+        #endif
         if ProcessInfo.processInfo.environment["MOBIDEX_SMOKE"] == "1" {
             return AppViewModel(
                 repository: InMemoryServerRepository(),
@@ -69,5 +79,10 @@ struct MobidexApp: App {
         async let loadServers: Void = model.loadServersIfNeeded()
         await dismissSplashIfNeeded()
         await loadServers
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MOBIDEX_DEMO_FOLDERLESS"] == "1" {
+            model.seedFolderlessDemoData()
+        }
+        #endif
     }
 }

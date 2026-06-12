@@ -209,6 +209,7 @@ private struct ThreadLoadScope: Equatable, Hashable {
     var projectID: UUID?
     var cwd: String?
     var sessionPaths: Set<String>
+    var isShowingAllSessions: Bool
     var includeArchivedSessions: Bool
 }
 
@@ -216,6 +217,11 @@ private struct CachedThreadList {
     var threads: [CodexThread]
     var selectedThreadID: String?
     var fetchedAt: Date
+}
+
+private struct ThreadListLoadResult {
+    var threads: [CodexThread]
+    var noFolderThreads: [CodexThread]?
 }
 
 private struct ThreadDetailCacheKey: Hashable {
@@ -251,6 +257,7 @@ private enum ActiveTurnSendBehavior {
 }
 
 enum NewSessionLocation: Equatable {
+    case noFolder
     case codexWorktree
     case projectDirectory
 }
@@ -288,6 +295,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var selectedProjectID: UUID?
     @Published private(set) var isShowingAllSessions = false
     @Published private(set) var threads: [CodexThread] = []
+    @Published private(set) var noFolderThreads: [CodexThread] = []
     @Published private(set) var selectedThreadID: String?
     @Published private(set) var selectedThread: CodexThread?
     @Published private(set) var conversationSections: [ConversationSection] = []
@@ -492,11 +500,15 @@ final class AppViewModel: ObservableObject {
     }
 
     var canCreateSession: Bool {
-        appServer != nil && selectedProject != nil && !isSessionMutationInFlight
+        appServer != nil && canStartCodexSessionInCurrentScope && !isSessionMutationInFlight
     }
 
     var canChooseNewSessionLocation: Bool {
-        selectedServer != nil && selectedProject != nil && !isNewSessionBlockedBySessionAction
+        canStartCodexSessionInCurrentScope && !isNewSessionBlockedBySessionAction
+    }
+
+    var canStartNoFolderSession: Bool {
+        selectedServer?.backendType == .codexAppServer && !isNewSessionBlockedBySessionAction
     }
 
     var isStartingNewSession: Bool {
@@ -510,8 +522,19 @@ final class AppViewModel: ObservableObject {
             || isOperationActive(.respondingToApproval)
     }
 
+    private var canStartCodexSessionInCurrentScope: Bool {
+        selectedServer?.backendType == .codexAppServer && (selectedProject != nil || isShowingAllSessions)
+    }
+
     var sessionSections: [SessionListSection] {
         SessionListSections.sections(threads: threads, projects: selectedServer?.projects ?? [])
+    }
+
+    var noFolderSessionSections: [SessionListSection] {
+        SessionListSections.sections(
+            threads: threads.filter(\.isFolderless),
+            projects: selectedServer?.projects ?? []
+        )
     }
 
     var contextUsageFraction: Double? {
@@ -564,6 +587,7 @@ final class AppViewModel: ObservableObject {
         connectionState = .disconnected
         statusMessage = nil
         resetSessionState(clearThreads: true)
+        noFolderThreads = []
         pendingApprovals = []
         // Full ACP teardown (mirrors closeConnection): leaving the events task running or the
         // client unclosed lets a stale disconnect/serverRequest corrupt the next connection's
@@ -643,6 +667,36 @@ final class AppViewModel: ObservableObject {
             return
         }
         resetSessionState(clearThreads: true)
+    }
+
+    func showProjectList() {
+        guard isShowingAllSessions else {
+            return
+        }
+        var seenChatIDs = Set<String>()
+        let projectListChats = sortedThreads((threads + noFolderThreads).filter { thread in
+            thread.isFolderless && seenChatIDs.insert(thread.id).inserted
+        })
+        isShowingAllSessions = false
+        suppressThreadAutoSelection = true
+        suppressCachedThreadSelection = true
+        invalidateSessionRefreshes()
+        selectedProjectID = selectedServer?.projects.firstAddedProjectID
+        resetSessionState(clearThreads: true)
+        noFolderThreads = projectListChats
+    }
+
+    func openNoFolderThread(_ thread: CodexThread) async {
+        selectAllSessions()
+        let thread = markUnscopedChatState(thread)
+        threads = sortedThreads([thread] + noFolderThreads.filter { $0.id != thread.id })
+        await openThread(thread)
+    }
+
+    @discardableResult
+    func startNoFolderSession() async -> String? {
+        selectAllSessions()
+        return await startNewSession(location: .noFolder)
     }
 
     @discardableResult
@@ -752,6 +806,9 @@ final class AppViewModel: ObservableObject {
                 throw error
             }
             servers = nextServers
+            if previousEndpoint != nil {
+                invalidateSessionCaches(for: next.id)
+            }
             if shouldDisconnectSavedSelection {
                 await disconnect()
             }
@@ -1208,6 +1265,11 @@ final class AppViewModel: ObservableObject {
         guard let serverID = selectedServerID else {
             return
         }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["MOBIDEX_DEMO_FOLDERLESS"] == "1" {
+            return
+        }
+        #endif
         await autoConnectSelectedServer(serverID)
     }
 
@@ -1239,6 +1301,86 @@ final class AppViewModel: ObservableObject {
             statusMessage = error.localizedDescription
         }
     }
+
+    #if DEBUG
+    @MainActor
+    func seedFolderlessDemoData() {
+        let serverID = UUID(uuidString: "00000000-0000-0000-0000-00000000D0C5")!
+        let appProject = ProjectRecord(
+            path: "/Users/demo/code/mobidex",
+            activeChatCount: 1,
+            lastActiveChatAt: Date(timeIntervalSince1970: 1_770_000_500)
+        )
+        let analyticsProject = ProjectRecord(path: "/Users/demo/code/resq_analytics")
+        let server = ServerRecord(
+            id: serverID,
+            displayName: "Demo Codex",
+            host: "demo.local",
+            username: "demo",
+            authMethod: .password,
+            projects: [appProject, analyticsProject],
+            unscopedThreadIDs: ["demo-unscoped-home"],
+            createdAt: Date(timeIntervalSince1970: 1_770_000_000),
+            updatedAt: Date(timeIntervalSince1970: 1_770_000_500)
+        )
+        let unscopedHome = CodexThread(
+            id: "demo-unscoped-home",
+            preview: "Plan Close API migration",
+            cwd: "/Users/demo",
+            status: .idle,
+            updatedAt: Date(timeIntervalSince1970: 1_770_000_600),
+            createdAt: Date(timeIntervalSince1970: 1_770_000_000),
+            isUnscoped: true,
+            turns: [
+                CodexTurn(
+                    id: "turn-demo-unscoped-home",
+                    items: [
+                        .userMessage(id: "item-demo-user", text: "Sketch the Close API migration plan."),
+                        .agentMessage(id: "item-demo-agent", text: "Demo chat started without attaching a project folder.")
+                    ],
+                    status: "completed",
+                    error: nil
+                )
+            ]
+        )
+        let blankFolderless = CodexThread(
+            id: "demo-folderless-blank",
+            preview: "Set Up SSH Between Devices",
+            cwd: "",
+            status: .idle,
+            updatedAt: Date(timeIntervalSince1970: 1_770_000_550),
+            createdAt: Date(timeIntervalSince1970: 1_770_000_000),
+            turns: [
+                CodexTurn(
+                    id: "turn-demo-folderless-blank",
+                    items: [
+                        .userMessage(id: "item-demo-blank-user", text: "Help me set up SSH between devices."),
+                        .agentMessage(id: "item-demo-blank-agent", text: "Demo blank-cwd folderless chat. It should appear in the same Chats section.")
+                    ],
+                    status: "completed",
+                    error: nil
+                )
+            ]
+        )
+
+        servers = [server]
+        selectedServerID = serverID
+        selectedProjectID = appProject.id
+        isShowingAllSessions = false
+        threads = []
+        noFolderThreads = sortedThreads([unscopedHome, blankFolderless])
+        selectedThreadID = nil
+        selectedThread = nil
+        selectedThreadTokenUsage = nil
+        liveItems = []
+        resetConversationSections(items: [])
+        changedFiles = []
+        diffSnapshot = .empty
+        pendingApprovals = []
+        connectionState = .disconnected
+        statusMessage = "Folderless demo data loaded."
+    }
+    #endif
 
     private func autoConnectSelectedServer(_ serverID: UUID) async {
         guard selectedServerID == serverID,
@@ -1354,6 +1496,10 @@ final class AppViewModel: ObservableObject {
             return
         }
 
+        if syncActiveChatCounts {
+            suppressThreadAutoSelection = true
+            suppressCachedThreadSelection = true
+        }
         syncSucceeded = await runOperation(.refreshingSessions, status: "Refreshing sessions") {
             try await loadThreads(forceReload: true)
         } && syncSucceeded
@@ -1373,6 +1519,9 @@ final class AppViewModel: ObservableObject {
                 syncActiveChatCounts: true,
                 includeRemoteDiscovery: true
             )
+            if let appServer {
+                try await loadNoFolderThreads(appServer: appServer)
+            }
         }
     }
 
@@ -1386,7 +1535,7 @@ final class AppViewModel: ObservableObject {
         do {
             statusMessage = "Opening terminal"
             let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
-            let cwd = selectedThread?.cwd ?? selectedProject?.path
+            let cwd = selectedThread?.cwd.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? selectedProject?.path
             let session = try await terminalService.openTerminal(cwd: cwd, columns: columns, rows: rows, server: selectedServer, credential: credential)
             statusMessage = nil
             return session
@@ -1444,7 +1593,9 @@ final class AppViewModel: ObservableObject {
             guard let appServer else {
                 return
             }
-            let hydrated = try await resumeThreadForAttachment(thread.id, appServer: appServer)
+            let hydrated = markUnscopedChatState(
+                try await resumeThreadForAttachment(thread.id, appServer: appServer)
+            )
             guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
                 return
             }
@@ -1459,15 +1610,20 @@ final class AppViewModel: ObservableObject {
     @discardableResult
     func startNewSession(location: NewSessionLocation = .codexWorktree) async -> String? {
         guard let selectedServer else { return nil }
-        guard let selectedProject else {
+        let startsWithoutFolder = location == .noFolder
+        guard startsWithoutFolder || selectedProject != nil else {
             statusMessage = AppViewModelError.missingProject.localizedDescription
+            return nil
+        }
+        guard !startsWithoutFolder || isShowingAllSessions else {
+            statusMessage = "Use the Chats section to start a chat without a folder."
             return nil
         }
         guard !isNewSessionBlockedBySessionAction else {
             statusMessage = AppViewModelError.newSessionBlocked.localizedDescription
             return nil
         }
-        let cwd = selectedProject.path
+        let cwd = selectedProject?.path
         let scope = currentThreadLoadScope
         var createdThreadID: String?
         suppressThreadAutoSelection = true
@@ -1494,17 +1650,20 @@ final class AppViewModel: ObservableObject {
                 )
             }
             guard selectedServerID == selectedServer.id,
-                  selectedProjectID == selectedProject.id,
                   currentThreadLoadScope == scope else {
                 throw AppViewModelError.selectionChanged
             }
-            let sessionCwd: String
+            let sessionCwd: String?
             switch location {
+            case .noFolder:
+                sessionCwd = nil
             case .codexWorktree:
+                guard let cwd else {
+                    throw AppViewModelError.missingProject
+                }
                 statusMessage = "Creating worktree"
                 let credential = try await loadCredentialFromStore(serverID: selectedServer.id)
                 guard selectedServerID == selectedServer.id,
-                      selectedProjectID == selectedProject.id,
                       currentThreadLoadScope == scope else {
                     throw AppViewModelError.selectionChanged
                 }
@@ -1515,15 +1674,17 @@ final class AppViewModel: ObservableObject {
                     try await self.sshService.createCodexWorktree(from: cwd, server: selectedServer, credential: credential)
                 }
             case .projectDirectory:
+                guard let cwd else {
+                    throw AppViewModelError.missingProject
+                }
                 sessionCwd = cwd
             }
             guard selectedServerID == selectedServer.id,
-                  selectedProjectID == selectedProject.id,
                   currentThreadLoadScope == scope else {
                 throw AppViewModelError.selectionChanged
             }
             statusMessage = "Creating session"
-            let thread = try await withTimeout(
+            var thread = try await withTimeout(
                 seconds: sessionStartOperationTimeoutSeconds,
                 timeoutMessage: "Creating the session timed out after \(timeoutSeconds) seconds."
             ) {
@@ -1532,8 +1693,13 @@ final class AppViewModel: ObservableObject {
             guard currentThreadLoadScope == scope else {
                 return
             }
-            if location == .codexWorktree {
+            if location == .codexWorktree,
+               let sessionCwd,
+               let selectedProject {
                 rememberSessionPath(sessionCwd, serverID: selectedServer.id, projectID: selectedProject.id)
+            } else if location == .noFolder {
+                rememberUnscopedThreadID(thread.id, serverID: selectedServer.id)
+                thread.isUnscoped = true
             }
             unlistedStartedThreadIDs.insert(thread.id)
             selectedThreadID = thread.id
@@ -1546,14 +1712,20 @@ final class AppViewModel: ObservableObject {
             suppressCachedThreadSelection = false
             createdThreadID = thread.id
             threads = sortedThreads([thread] + threads.filter { $0.id != thread.id })
+            if thread.isFolderless {
+                noFolderThreads = sortedThreads([thread] + noFolderThreads.filter { $0.id != thread.id })
+            }
             invalidateSessionCaches(for: selectedServerID)
             cacheThreadList(threads, scope: currentThreadLoadScope)
             cacheThreadDetail(thread: thread, liveItems: liveItems, sections: conversationSections)
-            statusMessage = location == .codexWorktree ? "New session created in a worktree." : "New session created."
+            statusMessage = switch location {
+            case .noFolder: "New chat created."
+            case .codexWorktree: "New session created in a worktree."
+            case .projectDirectory: "New session created."
+            }
         }
         if createdThreadID == nil,
            selectedServerID == selectedServer.id,
-           selectedProjectID == selectedProject.id,
            currentThreadLoadScope == scope {
             suppressThreadAutoSelection = false
         }
@@ -1585,6 +1757,47 @@ final class AppViewModel: ObservableObject {
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    private func rememberUnscopedThreadID(_ threadID: String, serverID: UUID?) {
+        let threadID = threadID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !threadID.isEmpty, let serverID else { return }
+        var nextServers = servers
+        guard let serverIndex = nextServers.firstIndex(where: { $0.id == serverID }) else {
+            return
+        }
+        let normalizedIDs = ServerRecord.normalizedUnscopedThreadIDs(
+            nextServers[serverIndex].unscopedThreadIDs + [threadID]
+        )
+        guard normalizedIDs != nextServers[serverIndex].unscopedThreadIDs else {
+            return
+        }
+        nextServers[serverIndex].unscopedThreadIDs = normalizedIDs
+        nextServers[serverIndex].updatedAt = .now
+        servers = nextServers
+        invalidateSessionCaches(for: serverID)
+        do {
+            try persistServers(nextServers)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func markUnscopedChatState(_ thread: CodexThread, server: ServerRecord? = nil) -> CodexThread {
+        var thread = thread
+        let server = server ?? selectedServer
+        if thread.isUnscoped ||
+            CodexFolderlessPaths.isFolderless(thread.cwd) ||
+            server?.unscopedThreadIDs.contains(thread.id) == true {
+            thread.isUnscoped = true
+        }
+        return thread
+    }
+
+    private func unscopedChatThreads(from threads: [CodexThread], server: ServerRecord? = nil) -> [CodexThread] {
+        threads
+            .map { markUnscopedChatState($0, server: server) }
+            .filter(\.isFolderless)
     }
 
     private func waitForNewSessionConnectionStep(
@@ -1730,7 +1943,7 @@ final class AppViewModel: ObservableObject {
             defer {
                 endSelectedThreadLoad(threadID: selectedThreadID, scope: scope)
             }
-            let thread = try await appServer.readThread(threadID: selectedThreadID)
+            let thread = markUnscopedChatState(try await appServer.readThread(threadID: selectedThreadID))
             guard currentThreadLoadScope == scope, self.selectedThreadID == selectedThreadID else {
                 throw AppViewModelError.selectionChanged
             }
@@ -1771,6 +1984,7 @@ final class AppViewModel: ObservableObject {
             try await appServer.archiveThread(threadID: archivedID)
             queuedTurnInputsByThreadID.removeValue(forKey: archivedID)
             threads.removeAll { $0.id == archivedID }
+            noFolderThreads.removeAll { $0.id == archivedID }
             threadListCache.removeAll()
             threadDetailCache.removeValue(forKey: threadDetailCacheKey(threadID: archivedID))
             if selectedThreadID == archivedID {
@@ -1796,11 +2010,14 @@ final class AppViewModel: ObservableObject {
             return
         }
         await runOperation(.openingThread, status: "Unarchiving session") {
-            let restored = try await appServer.unarchiveThread(threadID: thread.id)
+            let restored = markUnscopedChatState(try await appServer.unarchiveThread(threadID: thread.id))
             if let index = threads.firstIndex(where: { $0.id == restored.id }) {
                 threads[index] = restored
             } else {
                 threads.insert(restored, at: 0)
+            }
+            if restored.isFolderless {
+                noFolderThreads = sortedThreads([restored] + noFolderThreads.filter { $0.id != restored.id })
             }
             threadListCache.removeAll()
             await refreshThreadListAfterEvent()
@@ -1913,6 +2130,10 @@ final class AppViewModel: ObservableObject {
                 return
             } else {
                 thread = try await appServer.startThread(cwd: scope.cwd)
+                if scope.isShowingAllSessions {
+                    rememberUnscopedThreadID(thread.id, serverID: selectedServerID)
+                    thread.isUnscoped = true
+                }
                 unlistedStartedThreadIDs.insert(thread.id)
                 let selectionMatchesStartedThread = selectedThreadID == startingThreadID
                     || (startingThreadID == nil && selectedThreadID == thread.id)
@@ -1930,7 +2151,7 @@ final class AppViewModel: ObservableObject {
                         defer {
                             endSelectedThreadLoad(threadID: thread.id, scope: scope)
                         }
-                        let hydrated = try await appServer.readThread(threadID: thread.id)
+                        let hydrated = markUnscopedChatState(try await appServer.readThread(threadID: thread.id))
                         guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
                             return
                         }
@@ -1950,7 +2171,7 @@ final class AppViewModel: ObservableObject {
                     defer {
                         endSelectedThreadLoad(threadID: thread.id, scope: scope)
                     }
-                    let hydrated = try await appServer.readThread(threadID: thread.id)
+                    let hydrated = markUnscopedChatState(try await appServer.readThread(threadID: thread.id))
                     guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
                         return
                     }
@@ -1981,7 +2202,7 @@ final class AppViewModel: ObservableObject {
                 let turn = try await appServer.startTurn(
                     threadID: thread.id,
                     input: input,
-                    options: currentTurnOptions(cwd: thread.cwd)
+                    options: currentTurnOptions(cwd: turnCwd(for: thread))
                 )
                 let displayTurn = Self.turnForDisplay(turn, input: input)
                 guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
@@ -2003,7 +2224,7 @@ final class AppViewModel: ObservableObject {
                     defer {
                         endSelectedThreadLoad(threadID: thread.id, scope: scope)
                     }
-                    let hydrated = try await appServer.readThread(threadID: thread.id)
+                    let hydrated = markUnscopedChatState(try await appServer.readThread(threadID: thread.id))
                     guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
                         return
                     }
@@ -2212,6 +2433,7 @@ final class AppViewModel: ObservableObject {
                 projectID: nil,
                 cwd: nil,
                 sessionPaths: [],
+                isShowingAllSessions: true,
                 includeArchivedSessions: showsArchivedSessions
             )
         }
@@ -2220,6 +2442,7 @@ final class AppViewModel: ObservableObject {
             projectID: selectedProjectID,
             cwd: selectedProject?.path,
             sessionPaths: Set(selectedProject?.sessionPaths ?? selectedProject.map { [$0.path] } ?? []),
+            isShowingAllSessions: false,
             includeArchivedSessions: showsArchivedSessions
         )
     }
@@ -2274,6 +2497,7 @@ final class AppViewModel: ObservableObject {
         }
         let previousThreadID = selectedThreadID
         threads = cachedList.threads
+        noFolderThreads = scope.isShowingAllSessions ? sortedThreads(cachedList.threads.filter(\.isFolderless)) : []
         selectedThreadID = cachedSelectedThreadID(in: cachedList)
         pendingApprovals = []
         if previousThreadID != selectedThreadID {
@@ -2442,6 +2666,17 @@ final class AppViewModel: ObservableObject {
         )
     }
 
+    private func turnCwd(for thread: CodexThread) -> String? {
+        thread.isFolderless ? nil : thread.cwd
+    }
+
+    private func selectedTurnCwd(fallbackScope scope: ThreadLoadScope) -> String? {
+        guard let selectedThread else {
+            return scope.cwd
+        }
+        return turnCwd(for: selectedThread)
+    }
+
     private func saveCredentialToStore(_ credential: SSHCredential, serverID: UUID) async throws {
         let credentialStore = credentialStore
         try await Task.detached(priority: .userInitiated) {
@@ -2507,6 +2742,24 @@ final class AppViewModel: ObservableObject {
         try await listOpenSessionSummaries(appServer: appServer)
     }
 
+    private func loadNoFolderThreads(appServer: CodexAppServerClient) async throws {
+        let requestServerID = selectedServerID
+        let includeArchived = showsArchivedSessions
+        let loaded = try await appServer.listThreads(
+            cwd: nil,
+            includeArchived: includeArchived,
+            pageLimit: sessionListInitialPageLimit
+        )
+        guard self.appServer === appServer,
+              selectedServerID == requestServerID,
+              showsArchivedSessions == includeArchived else {
+            return
+        }
+        noFolderThreads = sortedThreads(
+            unscopedChatThreads(from: loaded)
+        )
+    }
+
     private func listOpenSessionSummaries(appServer: CodexAppServerClient) async throws -> [CodexThread] {
         let loadedThreadIDs = try await appServer.listLoadedThreadIDs(limit: 1_000)
         guard !loadedThreadIDs.isEmpty else {
@@ -2517,7 +2770,7 @@ final class AppViewModel: ObservableObject {
         var seen = Set<String>()
         for threadID in loadedThreadIDs where seen.insert(threadID).inserted {
             do {
-                let thread = try await appServer.readThreadSummary(threadID: threadID)
+                let thread = markUnscopedChatState(try await appServer.readThreadSummary(threadID: threadID))
                 guard thread.isUserFacingSession else {
                     continue
                 }
@@ -2548,17 +2801,20 @@ final class AppViewModel: ObservableObject {
         }
         sessionRefreshListLoadGeneration &+= 1
         let listLoadGeneration = sessionRefreshListLoadGeneration
-        let loadedThreads = try await listThreads(matching: scope, appServer: appServer, pageLimit: sessionListInitialPageLimit)
+        let loadResult = try await listThreads(matching: scope, appServer: appServer, pageLimit: sessionListInitialPageLimit)
         guard self.appServer === appServer,
               sessionRefreshListLoadGeneration == listLoadGeneration,
               currentThreadLoadScope == scope else {
             return
         }
         let prioritizedThreads = sortedThreadsPreservingSelectedThread(
-            loadedThreads,
+            loadResult.threads,
             scope: scope,
             preserveMissingSelectedThread: true
         )
+        if let loadedNoFolderThreads = loadResult.noFolderThreads {
+            noFolderThreads = loadedNoFolderThreads
+        }
         threads = prioritizedThreads
         loadCompleteThreadListAfterInitialSessionRefresh(
             scope: scope,
@@ -2633,17 +2889,20 @@ final class AppViewModel: ObservableObject {
                       currentThreadLoadScope == scope else {
                     return
                 }
-                let loadedThreads = try await listThreads(matching: scope, appServer: appServer)
+                let loadResult = try await listThreads(matching: scope, appServer: appServer)
                 guard self.appServer === appServer,
                       sessionRefreshListLoadGeneration == listLoadGeneration,
                       currentThreadLoadScope == scope else {
                     return
                 }
                 let sorted = sortedThreadsPreservingSelectedThread(
-                    loadedThreads,
+                    loadResult.threads,
                     scope: scope,
                     preserveMissingSelectedThread: false
                 )
+                if let loadedNoFolderThreads = loadResult.noFolderThreads {
+                    noFolderThreads = loadedNoFolderThreads
+                }
                 threads = sorted
                 cacheThreadList(sorted, scope: scope)
                 selectThreadAfterCompleteListLoad(
@@ -2740,7 +2999,7 @@ final class AppViewModel: ObservableObject {
                 endSelectedThreadLoad(threadID: threadID, scope: scope)
             }
             do {
-                let hydrated = try await appServer.readThread(threadID: threadID)
+                let hydrated = markUnscopedChatState(try await appServer.readThread(threadID: threadID))
                 guard self.appServer === appServer,
                       sessionRefreshDetailLoadGeneration == detailLoadGeneration,
                       currentThreadLoadScope == scope,
@@ -2773,6 +3032,9 @@ final class AppViewModel: ObservableObject {
 
     private func promoteProjectToProjectList(for thread: CodexThread) {
         guard let selectedServerID else { return }
+        guard !thread.isFolderless else {
+            return
+        }
         var nextServers = servers
         guard let serverIndex = nextServers.firstIndex(where: { $0.id == selectedServerID }) else {
             return
@@ -2805,6 +3067,13 @@ final class AppViewModel: ObservableObject {
             }
             return lhs.id < rhs.id
         }
+    }
+
+    private func noFolderThreadsMergingBoundedRefresh(_ loadedThreads: [CodexThread]) -> [CodexThread] {
+        var seen = Set<String>()
+        return sortedThreads((loadedThreads + noFolderThreads).filter { thread in
+            thread.isFolderless && seen.insert(thread.id).inserted
+        })
     }
 
     private func sortedThreadsPreservingSelectedThread(
@@ -2982,6 +3251,7 @@ final class AppViewModel: ObservableObject {
             selectedThreadTokenUsage = tokenUsage
         case "thread/started":
             if let thread = try? decode(CodexThread.self, from: params?["thread"]) {
+                let thread = markUnscopedChatState(thread)
                 let scope = currentThreadLoadScope
                 if threadMatchesScope(thread, scope: scope), selectedThreadID == nil {
                     selectedThreadID = thread.id
@@ -3001,28 +3271,39 @@ final class AppViewModel: ObservableObject {
     private func refreshSelectedThreadAfterEvent() async {
         guard let selectedThreadID, let appServer else { return }
         let scope = currentThreadLoadScope
+        let listLoadGeneration = sessionRefreshListLoadGeneration
         do {
             beginSelectedThreadLoad(threadID: selectedThreadID)
             defer {
                 endSelectedThreadLoad(threadID: selectedThreadID, scope: scope)
             }
-            let thread = try await appServer.readThread(threadID: selectedThreadID)
-            guard currentThreadLoadScope == scope, self.selectedThreadID == selectedThreadID else {
+            let thread = markUnscopedChatState(try await appServer.readThread(threadID: selectedThreadID))
+            guard self.appServer === appServer,
+                  sessionRefreshListLoadGeneration == listLoadGeneration,
+                  currentThreadLoadScope == scope,
+                  self.selectedThreadID == selectedThreadID else {
                 return
             }
             hydrateConversation(from: thread)
-            let loadedThreads = try await listThreads(matching: scope, appServer: appServer)
-            guard currentThreadLoadScope == scope else {
+            let loadResult = try await listThreads(matching: scope, appServer: appServer)
+            guard self.appServer === appServer,
+                  sessionRefreshListLoadGeneration == listLoadGeneration,
+                  currentThreadLoadScope == scope else {
                 return
             }
             let sorted = sortedThreadsPreservingSelectedThread(
-                loadedThreads,
+                loadResult.threads,
                 scope: scope,
                 preserveMissingSelectedThread: false
             )
             threads = sorted
+            if scope.isShowingAllSessions {
+                noFolderThreads = sorted.filter(\.isFolderless)
+            } else if let loadedNoFolderThreads = loadResult.noFolderThreads {
+                noFolderThreads = loadedNoFolderThreads
+            }
             cacheThreadList(sorted, scope: scope)
-            if let selectedSummary = loadedThreads.first(where: { $0.id == selectedThreadID }),
+            if let selectedSummary = loadResult.threads.first(where: { $0.id == selectedThreadID }),
                selectedSummary.status.isActive {
                 applySelectedThreadStatus(selectedSummary.status)
             }
@@ -3050,17 +3331,21 @@ final class AppViewModel: ObservableObject {
     private func performThreadListRefresh() async {
         guard let appServer else { return }
         let scope = currentThreadLoadScope
+        let listLoadGeneration = sessionRefreshListLoadGeneration
         do {
             // Event-driven refreshes only need the most recent pages; full loads still
             // paginate to exhaustion via loadThreads.
-            let loadedThreads = try await listThreads(matching: scope, appServer: appServer, pageLimit: sessionListInitialPageLimit)
-            guard currentThreadLoadScope == scope else {
+            let loadResult = try await listThreads(matching: scope, appServer: appServer, pageLimit: sessionListInitialPageLimit)
+            guard self.appServer === appServer,
+                  sessionRefreshListLoadGeneration == listLoadGeneration,
+                  currentThreadLoadScope == scope else {
                 return
             }
             // Merge, don't replace: the bounded refresh covers only the newest pages, and a
             // prior full load may have brought in older sessions that must not vanish. The
             // trade-off (a deleted/archived old session lingering until the next full load)
             // is reconciled by loadThreads, which still paginates to exhaustion.
+            let loadedThreads = loadResult.threads
             let refreshedIDs = Set(loadedThreads.map(\.id))
             let retainedOlder = threads.filter { !refreshedIDs.contains($0.id) }
             let sorted = sortedThreadsPreservingSelectedThread(
@@ -3070,6 +3355,11 @@ final class AppViewModel: ObservableObject {
                 listedThreadIDs: refreshedIDs
             )
             threads = sorted
+            if scope.isShowingAllSessions {
+                noFolderThreads = sorted.filter(\.isFolderless)
+            } else if let loadedNoFolderThreads = loadResult.noFolderThreads {
+                noFolderThreads = noFolderThreadsMergingBoundedRefresh(loadedNoFolderThreads)
+            }
             cacheThreadList(sorted, scope: scope)
         } catch {
             statusMessage = error.localizedDescription
@@ -3214,8 +3504,12 @@ final class AppViewModel: ObservableObject {
     }
 
     private func threadMatchesScope(_ thread: CodexThread, scope: ThreadLoadScope) -> Bool {
+        let thread = markUnscopedChatState(thread)
+        if scope.isShowingAllSessions {
+            return thread.isFolderless
+        }
         guard !scope.sessionPaths.isEmpty else {
-            return true
+            return false
         }
         if scope.sessionPaths.contains(thread.cwd) {
             return true
@@ -3234,13 +3528,31 @@ final class AppViewModel: ObservableObject {
         matching scope: ThreadLoadScope,
         appServer: CodexAppServerClient,
         pageLimit: Int? = nil
-    ) async throws -> [CodexThread] {
-        guard !scope.sessionPaths.isEmpty else {
-            return try await appServer.listThreads(
+    ) async throws -> ThreadListLoadResult {
+        if scope.isShowingAllSessions {
+            let loaded = try await appServer.listThreads(
                 cwd: nil,
                 includeArchived: scope.includeArchivedSessions,
                 pageLimit: pageLimit
             )
+            let noFolder = sortedThreads(
+                unscopedChatThreads(from: loaded)
+            )
+            return ThreadListLoadResult(threads: noFolder, noFolderThreads: noFolder)
+        }
+        guard !scope.sessionPaths.isEmpty else {
+            let loaded = try await appServer.listThreads(
+                cwd: scope.cwd,
+                includeArchived: scope.includeArchivedSessions,
+                pageLimit: pageLimit
+            )
+            if scope.cwd == nil {
+                return ThreadListLoadResult(
+                    threads: [],
+                    noFolderThreads: sortedThreads(unscopedChatThreads(from: loaded))
+                )
+            }
+            return ThreadListLoadResult(threads: loaded)
         }
         var merged: [CodexThread] = []
         var seen = Set<String>()
@@ -3254,6 +3566,14 @@ final class AppViewModel: ObservableObject {
                 merged.append(thread)
             }
         }
+        let sortedMergedThreads: () -> [CodexThread] = {
+            merged.sorted { lhs, rhs in
+                if lhs.updatedAt != rhs.updatedAt {
+                    return lhs.updatedAt > rhs.updatedAt
+                }
+                return lhs.id < rhs.id
+            }
+        }
         if let projectPath = scope.cwd,
            let selectedServer {
             let unscopedThreads = try await appServer.listThreads(
@@ -3261,21 +3581,23 @@ final class AppViewModel: ObservableObject {
                 includeArchived: scope.includeArchivedSessions,
                 pageLimit: pageLimit
             )
+            let groupedThreads = unscopedThreads.map { markUnscopedChatState($0, server: selectedServer) }
             let groupedSessionIDs = SharedKMPBridge.sessionIDsForProject(
-                threads: unscopedThreads,
+                threads: groupedThreads,
                 projects: selectedServer.projects,
                 projectPath: projectPath
             )
-            for thread in unscopedThreads where groupedSessionIDs.contains(thread.id) && seen.insert(thread.id).inserted {
+            for thread in groupedThreads where groupedSessionIDs.contains(thread.id) && seen.insert(thread.id).inserted {
                 merged.append(thread)
             }
+            return ThreadListLoadResult(
+                threads: sortedMergedThreads(),
+                noFolderThreads: sortedThreads(groupedThreads.filter(\.isFolderless))
+            )
         }
-        return merged.sorted { lhs, rhs in
-            if lhs.updatedAt != rhs.updatedAt {
-                return lhs.updatedAt > rhs.updatedAt
-            }
-            return lhs.id < rhs.id
-        }
+        return ThreadListLoadResult(
+            threads: sortedMergedThreads()
+        )
     }
 
     private func hydrateConversation(from thread: CodexThread, cacheDetail: Bool = true) {
@@ -3838,7 +4160,7 @@ final class AppViewModel: ObservableObject {
             defer {
                 endSelectedThreadLoad(threadID: threadID, scope: scope)
             }
-            let thread = try await appServer.readThread(threadID: threadID)
+            let thread = markUnscopedChatState(try await appServer.readThread(threadID: threadID))
             guard generation == connectionGeneration,
                   currentThreadLoadScope == scope,
                   selectedThreadID == threadID
@@ -3896,7 +4218,7 @@ final class AppViewModel: ObservableObject {
             let turn = try await appServer.startTurn(
                 threadID: threadID,
                 input: queuedInput.input,
-                options: currentTurnOptions(cwd: selectedThread?.cwd ?? scope.cwd)
+                options: currentTurnOptions(cwd: selectedTurnCwd(fallbackScope: scope))
             )
             let displayTurn = Self.turnForDisplay(turn, input: queuedInput.input)
             queuedTurnSent = true
@@ -3927,7 +4249,7 @@ final class AppViewModel: ObservableObject {
                 defer {
                     endSelectedThreadLoad(threadID: thread.id, scope: scope)
                 }
-                let hydrated = try await appServer.readThread(threadID: thread.id)
+                let hydrated = markUnscopedChatState(try await appServer.readThread(threadID: thread.id))
                 guard currentThreadLoadScope == scope, selectedThreadID == thread.id else {
                     return
                 }
@@ -4197,6 +4519,7 @@ final class AppViewModel: ObservableObject {
         cancelActiveTurnRefresh()
         if clearThreads {
             threads = []
+            noFolderThreads = []
         }
         selectedThreadID = nil
         selectedThread = nil

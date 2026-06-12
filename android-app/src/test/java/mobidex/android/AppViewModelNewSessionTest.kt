@@ -47,6 +47,7 @@ import mobidex.android.service.CodexLineTransport
 import mobidex.android.model.conversationSections
 import mobidex.android.service.MobidexSshService
 import mobidex.android.service.RemoteTerminalSession
+import mobidex.shared.CodexAccessMode
 import mobidex.shared.ConversationSectionKind
 import mobidex.shared.RemoteDirectoryListing
 import mobidex.shared.RemoteProject
@@ -117,6 +118,114 @@ class AppViewModelNewSessionTest {
         assertEquals("thread-new", model.state.value.selectedThreadID)
         assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)
         assertEquals(listOf("thread-new"), model.state.value.threads.map { it.id })
+    }
+
+    @Test
+    fun startNoFolderSessionFromProjectListOmitsCwd() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app")
+        val server = server(project)
+        val transport = ScriptedAppServerTransport()
+        val model = viewModel(server, FakeSshService(transport))
+        advanceUntilIdle()
+
+        var completed = false
+        model.startNoFolderSession { completed = it }
+        waitUntil { completed }
+
+        assertTrue(completed, "state=${model.state.value}, methods=${transport.sentMethods}")
+        assertEquals(listOf<String?>(null), transport.startThreadCwds)
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+        assertEquals(appServerDefaultCwd, model.state.value.selectedThread?.cwd)
+        assertEquals("No Folder", model.state.value.selectedThread?.folderLabel)
+        assertEquals(true, model.state.value.selectedThread?.isFolderless)
+        assertEquals(listOf("thread-new"), model.state.value.noFolderThreads.map { it.id })
+        assertEquals(listOf("thread-new"), model.state.value.selectedServer?.unscopedThreadIDs)
+
+        val notificationListCount = transport.sentMethods.count { it == "thread/list" }
+        transport.notifyThreadStarted("thread-new", appServerDefaultCwd)
+        waitUntil { transport.sentMethods.count { it == "thread/list" } > notificationListCount }
+        assertEquals("No Folder", model.state.value.selectedThread?.folderLabel)
+        assertEquals(true, model.state.value.selectedThread?.isFolderless)
+
+        model.setAccessMode(CodexAccessMode.WorkspaceWrite)
+        var sendCompleted = false
+        model.sendComposerInput("Follow up", emptyList()) { sendCompleted = it }
+        waitUntil { transport.startTurnParams.isNotEmpty() }
+        val turnParams = transport.startTurnParams.last()
+        assertEquals("thread-new", turnParams["threadId"]?.jsonPrimitive?.contentOrNull)
+        val sandboxPolicy = turnParams["sandboxPolicy"]?.jsonObject
+        assertEquals("workspaceWrite", sandboxPolicy?.get("type")?.jsonPrimitive?.contentOrNull)
+        assertEquals(0, (sandboxPolicy?.get("writableRoots") as? JsonArray)?.size)
+        waitUntil { sendCompleted }
+    }
+
+    @Test
+    fun noFolderChatsIgnoreFolderThreadStartedEvents() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app")
+        val server = server(project)
+        val transport = ScriptedAppServerTransport()
+        val model = viewModel(server, FakeSshService(transport))
+        advanceUntilIdle()
+
+        model.connectSelectedServer()
+        waitUntil {
+            model.state.value.connectionState == ServerConnectionState.Connected &&
+                !model.state.value.isRefreshingSessions &&
+                transport.sentMethods.any { it == "thread/list" }
+        }
+        val connectedListCount = transport.sentMethods.count { it == "thread/list" }
+
+        model.selectAllSessionsAndRefresh()
+        waitUntil {
+            model.state.value.isShowingAllSessions &&
+                model.state.value.connectionState == ServerConnectionState.Connected &&
+                !model.state.value.isRefreshingSessions &&
+                transport.sentMethods.count { it == "thread/list" } > connectedListCount
+        }
+        assertEquals(null, model.state.value.selectedThreadID)
+        val listCount = transport.sentMethods.count { it == "thread/list" }
+
+        transport.notify(
+            "thread/started",
+            buildJsonObject {
+                put("thread", threadJson("thread-folder", "/srv/app"))
+            },
+        )
+        waitUntil { transport.sentMethods.count { it == "thread/list" } > listCount }
+
+        assertEquals(null, model.state.value.selectedThreadID)
+        assertEquals(null, model.state.value.selectedThread)
+    }
+
+    @Test
+    fun noProjectScopeIgnoresFolderThreadStartedEvents() = runTest(dispatcher) {
+        val server = server(emptyList())
+        val transport = ScriptedAppServerTransport()
+        val model = viewModel(server, FakeSshService(transport))
+        advanceUntilIdle()
+
+        model.connectSelectedServer()
+        waitUntil {
+            model.state.value.connectionState == ServerConnectionState.Connected &&
+                !model.state.value.isRefreshingSessions &&
+                transport.sentMethods.any { it == "thread/list" }
+        }
+        assertEquals(null, model.state.value.selectedProjectID)
+        assertEquals(null, model.state.value.selectedThreadID)
+        assertTrue(model.state.value.threads.isEmpty())
+        val listCount = transport.sentMethods.count { it == "thread/list" }
+
+        transport.notify(
+            "thread/started",
+            buildJsonObject {
+                put("thread", threadJson("thread-folder", "/srv/app"))
+            },
+        )
+        waitUntil { transport.sentMethods.count { it == "thread/list" } > listCount }
+
+        assertEquals(null, model.state.value.selectedThreadID)
+        assertEquals(null, model.state.value.selectedThread)
+        assertTrue(model.state.value.threads.isEmpty())
     }
 
     @Test
@@ -364,12 +473,15 @@ class AppViewModelNewSessionTest {
         )
 
     private fun server(project: ProjectRecord): ServerRecord =
+        server(listOf(project))
+
+    private fun server(projects: List<ProjectRecord>): ServerRecord =
         ServerRecord(
             displayName = "Devbox",
             host = "example.com",
             username = "ubuntu",
             authMethod = ServerAuthMethod.Password,
-            projects = listOf(project),
+            projects = projects,
         )
 
     private fun thread(id: String, cwd: String, preview: String = "New work"): CodexThread =
@@ -381,6 +493,17 @@ class AppViewModelNewSessionTest {
             updatedAtEpochSeconds = 1_770_000_300,
             createdAtEpochSeconds = 1_770_000_000,
         )
+
+    private fun threadJson(id: String, cwd: String): JsonObject =
+        buildJsonObject {
+            put("id", JsonPrimitive(id))
+            put("preview", JsonPrimitive(id))
+            put("cwd", JsonPrimitive(cwd))
+            put("status", buildJsonObject { put("type", JsonPrimitive("idle")) })
+            put("updatedAt", JsonPrimitive(1_770_000_300))
+            put("createdAt", JsonPrimitive(1_770_000_000))
+            put("turns", JsonArray(emptyList()))
+        }
 }
 
 private class FakeServerRepository(initialServers: List<ServerRecord>) : ServerRepository {
@@ -447,6 +570,8 @@ private class FakeSshService(
         error("Terminal is not used by these tests.")
 }
 
+private const val appServerDefaultCwd = "/home/mazdak"
+
 private class ScriptedAppServerTransport(
     private val startThreadGate: CompletableDeferred<Unit>? = null,
     private val startTurnGate: CompletableDeferred<Unit>? = null,
@@ -458,6 +583,7 @@ private class ScriptedAppServerTransport(
     private val threadCwds = mutableMapOf<String, String>()
     val sentMethods = mutableListOf<String>()
     val startThreadCwds = mutableListOf<String?>()
+    val startTurnParams = mutableListOf<JsonObject>()
 
     override val inboundLines: Flow<String> = inbound.receiveAsFlow()
 
@@ -472,8 +598,9 @@ private class ScriptedAppServerTransport(
                 startThreadGate?.await()
                 val cwd = request["params"]?.jsonObject?.get("cwd")?.jsonPrimitive?.contentOrNull
                 startThreadCwds += cwd
-                threadCwds["thread-new"] = cwd ?: "/srv/app"
-                respond(id, buildJsonObject { put("thread", threadJson("thread-new", cwd ?: "/srv/app")) })
+                val threadCwd = cwd ?: appServerDefaultCwd
+                threadCwds["thread-new"] = threadCwd
+                respond(id, buildJsonObject { put("thread", threadJson("thread-new", threadCwd)) })
             }
             "thread/list" -> {
                 val gate = if (threadListGates.isEmpty()) null else threadListGates.removeFirst()
@@ -487,6 +614,7 @@ private class ScriptedAppServerTransport(
                 respond(id, buildJsonObject { put("thread", threadJson(threadID, threadCwds[threadID] ?: "/srv/app")) })
             }
             "turn/start" -> {
+                startTurnParams += request["params"]?.jsonObject ?: buildJsonObject { }
                 startTurnGate?.await()
                 respond(id, buildJsonObject {
                     put("turn", buildJsonObject {

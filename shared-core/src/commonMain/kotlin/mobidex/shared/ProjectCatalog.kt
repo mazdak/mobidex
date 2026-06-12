@@ -58,6 +58,7 @@ object ProjectCatalog {
         val ambiguousCodexWorktreeNames = mutableSetOf<String>()
 
         fun addCodexWorktreeCandidate(path: String) {
+            if (CodexFolderlessPaths.isFolderlessCwd(path)) return
             if (isCodexWorktreePath(path)) return
             val name = path.substringAfterLast('/')
             if (name in projectPathByCodexWorktreeName && projectPathByCodexWorktreeName[name] != path) {
@@ -74,6 +75,7 @@ object ProjectCatalog {
             addCodexWorktreeCandidate(record.path)
         }
         for (session in sessions) {
+            if (session.isUnscoped) continue
             addCodexWorktreeCandidate(session.cwd)
         }
         for (name in ambiguousCodexWorktreeNames) {
@@ -81,6 +83,7 @@ object ProjectCatalog {
         }
 
         for (session in sessions) {
+            if (session.isUnscoped || CodexFolderlessPaths.isFolderlessCwd(session.cwd)) continue
             val projectPath = projectPathBySessionPath[session.cwd]
                 ?: codexWorktreeMainProjectPath(session.cwd, projectPathByCodexWorktreeName)
                 ?: session.cwd

@@ -36,6 +36,7 @@ data class ServerRecord(
     val acpLaunchCommand: String = RemoteAcpCommand.defaultLaunchCommand,
     val authMethod: ServerAuthMethod,
     val projects: List<ProjectRecord> = emptyList(),
+    val unscopedThreadIDs: List<String> = emptyList(),
     val createdAtEpochSeconds: Long = Instant.now().epochSecond,
     val updatedAtEpochSeconds: Long = Instant.now().epochSecond,
     val backendType: BackendType = BackendType.CodexAppServer,
@@ -53,6 +54,7 @@ data class ServerRecord(
                 codexPath = launchConfig.codexPath,
                 executionPath = launchConfig.executionPath,
                 acpLaunchCommand = acpLaunchCommand.trim().ifEmpty { RemoteAcpCommand.defaultLaunchCommand },
+                unscopedThreadIDs = normalizedUnscopedThreadIDs(unscopedThreadIDs),
                 updatedAtEpochSeconds = Instant.now().epochSecond,
                 backendType = backendType,
             )
@@ -63,6 +65,16 @@ data class ServerRecord(
             codexPath = codexPath,
             executionPath = executionPath,
         )
+
+    companion object {
+        fun normalizedUnscopedThreadIDs(ids: List<String>): List<String> {
+            val seen = linkedSetOf<String>()
+            return ids.mapNotNull { id ->
+                val trimmed = id.trim()
+                if (trimmed.isNotEmpty() && seen.add(trimmed)) trimmed else null
+            }
+        }
+    }
 }
 
 @Serializable

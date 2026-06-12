@@ -7,6 +7,7 @@ import mobidex.shared.CodexSessionProjection
 import mobidex.shared.CodexSessionThread
 import mobidex.shared.CodexSessionTurn
 import mobidex.shared.ConversationSection
+import mobidex.shared.CodexFolderlessPaths
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -22,12 +23,19 @@ data class CodexThread(
     val name: String? = null,
     val sourceKind: String? = null,
     val isArchived: Boolean = false,
+    val isUnscoped: Boolean = false,
     val turns: List<CodexTurn> = emptyList(),
 ) {
     val title: String
         get() = name?.trim()?.ifEmpty { null }
             ?: preview.trim().ifEmpty { null }
             ?: cwd.trimEnd('/').substringAfterLast('/').ifEmpty { id }
+
+    val folderLabel: String
+        get() = if (isFolderless) "No Folder" else cwd.trim()
+
+    val isFolderless: Boolean
+        get() = isUnscoped || CodexFolderlessPaths.isFolderlessCwd(cwd)
 
     val updatedAt: Instant
         get() = Instant.ofEpochSecond(updatedAtEpochSeconds)

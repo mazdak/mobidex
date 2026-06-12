@@ -228,13 +228,13 @@ struct ProjectSessionListView: View {
                             onArchive: { thread in
                                 Task {
                                     await model.archiveThread(thread)
-                                    visibleSessionSections = model.sessionSections
+                                    visibleSessionSections = visibleSessionSectionsForCurrentScope
                                 }
                             },
                             onUnarchive: { thread in
                                 Task {
                                     await model.unarchiveThread(thread)
-                                    visibleSessionSections = model.sessionSections
+                                    visibleSessionSections = visibleSessionSectionsForCurrentScope
                                 }
                             },
                             onOpen: { thread in
@@ -268,18 +268,24 @@ struct ProjectSessionListView: View {
                         let sections = projectSections(from: server.projects)
                         ProjectSectionsContent(
                             sections: sections,
+                            noFolderThreads: filteredNoFolderThreads,
+                            selectedThreadID: model.selectedThreadID,
                             unavailableTitle: projectsUnavailableTitle(server: server, sections: sections),
                             serverContentDisabled: serverContentDisabled,
                             contentOpacity: contentOpacity,
+                            onOpenNoFolderThread: { thread in
+                                promoteDetailIfCompact()
+                                Task { await model.openNoFolderThread(thread) }
+                            },
                             onOpenProject: { project in
                                 sessionsProjectID = project.id
                                 visibleSessionSections = []
                                 model.selectProject(project.id)
-                                visibleSessionSections = model.sessionSections
+                                visibleSessionSections = visibleSessionSectionsForCurrentScope
                                 isSessionRefreshRequested = true
                                 Task {
                                     await model.refreshThreadsIfNeeded()
-                                    visibleSessionSections = model.sessionSections
+                                    visibleSessionSections = visibleSessionSectionsForCurrentScope
                                     isSessionRefreshRequested = false
                                 }
                             }
@@ -303,7 +309,7 @@ struct ProjectSessionListView: View {
                 }
                 .onChange(of: model.isRefreshingSessions) { wasRefreshing, isRefreshing in
                     guard wasRefreshing, !isRefreshing, sessionsProjectID != nil else { return }
-                    visibleSessionSections = model.sessionSections
+                    visibleSessionSections = visibleSessionSectionsForCurrentScope
                 }
                 .onChange(of: server.id) { _, _ in
                     sessionsProjectID = nil
@@ -318,14 +324,19 @@ struct ProjectSessionListView: View {
                             sessionsProjectID = nil
                             visibleSessionSections = []
                             sessionSearchText = ""
+                            model.showProjectList()
                         },
-                        canCreateSession: model.canChooseNewSessionLocation,
+                        canCreateSession: sessionsProjectID == nil ? model.canStartNoFolderSession : model.canChooseNewSessionLocation,
                         isStartingSession: model.isStartingNewSession,
+                        showsNoFolderOption: sessionsProjectID == nil,
                         onStartInNewWorktree: {
                             Task { await startNewSessionAndPromote(location: .codexWorktree) }
                         },
                         onStartInProjectDirectory: {
                             Task { await startNewSessionAndPromote(location: .projectDirectory) }
+                        },
+                        onStartWithoutFolder: {
+                            Task { await startNewSessionAndPromote(location: .noFolder) }
                         },
                         showingProjectAdd: $showingProjectAdd,
                         showingTerminal: $showingTerminal,
@@ -376,6 +387,7 @@ struct ProjectSessionListView: View {
                     sessionsProjectID = nil
                     visibleSessionSections = []
                     sessionSearchText = ""
+                    model.showProjectList()
                 }
             }
     }
@@ -385,7 +397,7 @@ struct ProjectSessionListView: View {
         isSessionRefreshRequested = true
         Task {
             await model.refreshThreads()
-            visibleSessionSections = model.sessionSections
+            visibleSessionSections = visibleSessionSectionsForCurrentScope
             isSessionRefreshRequested = false
         }
     }
@@ -442,6 +454,10 @@ struct ProjectSessionListView: View {
         serverContentDisabled ? 0.42 : 1
     }
 
+    private var visibleSessionSectionsForCurrentScope: [SessionListSection] {
+        model.isShowingAllSessions ? model.noFolderSessionSections : model.sessionSections
+    }
+
     private var statusColor: Color {
         switch model.connectionState {
         case .connected: .green
@@ -462,6 +478,9 @@ struct ProjectSessionListView: View {
         if isSessionRefreshRequested || model.isRefreshingSessions {
             return nil
         }
+        if model.connectionState == .connected && model.isShowingAllSessions {
+            return "Start a chat without a folder."
+        }
         if model.selectedProject != nil, model.connectionState == .connected {
             return "Start a new session for this project."
         }
@@ -477,8 +496,12 @@ struct ProjectSessionListView: View {
 
     @MainActor
     private func startNewSessionAndPromote(location: NewSessionLocation) async {
-        let createdThreadID = await model.startNewSession(location: location)
-        visibleSessionSections = model.sessionSections
+        let createdThreadID = if location == .noFolder {
+            await model.startNoFolderSession()
+        } else {
+            await model.startNewSession(location: location)
+        }
+        visibleSessionSections = visibleSessionSectionsForCurrentScope
         guard createdThreadID != nil, model.selectedThreadID == createdThreadID else {
             return
         }
@@ -494,7 +517,7 @@ struct ProjectSessionListView: View {
     }
 
     private var searchPrompt: String {
-        sessionsProjectID == nil ? "Search Projects" : "Search Sessions"
+        sessionsProjectID == nil ? "Search Projects and Chats" : "Search Sessions"
     }
 
     private var navigationTitle: String {
@@ -535,16 +558,23 @@ struct ProjectSessionListView: View {
         return sections.compactMap { section in
             let threads = section.threads.filter {
                 $0.title.localizedCaseInsensitiveContains(query) ||
-                    $0.cwd.localizedCaseInsensitiveContains(query)
+                    $0.folderLabel.localizedCaseInsensitiveContains(query)
             }
             guard !threads.isEmpty else { return nil }
             return SessionListSection(id: section.id, title: section.title, threads: threads)
         }
     }
 
+    private var filteredNoFolderThreads: [CodexThread] {
+        let threads = model.noFolderThreads.filter { !model.showsArchivedSessions ? !$0.isArchived : true }
+        let query = trimmedProjectSearch
+        guard !query.isEmpty else { return threads }
+        return threads.filter { $0.title.localizedCaseInsensitiveContains(query) }
+    }
+
     private func projectsUnavailableTitle(server: ServerRecord, sections: ProjectListSections) -> String {
         if !trimmedProjectSearch.isEmpty {
-            return "No Matching Projects"
+            return "No Matching Items"
         }
         if model.isDiscoveringProjects {
             return "Loading Projects"
@@ -571,9 +601,12 @@ private struct LoadingSection: View {
 
 private struct ProjectSectionsContent: View {
     let sections: ProjectListSections
+    let noFolderThreads: [CodexThread]
+    let selectedThreadID: String?
     let unavailableTitle: String
     let serverContentDisabled: Bool
     let contentOpacity: Double
+    let onOpenNoFolderThread: (CodexThread) -> Void
     let onOpenProject: (ProjectRecord) -> Void
 
     @ViewBuilder
@@ -586,7 +619,15 @@ private struct ProjectSectionsContent: View {
             onOpenProject: onOpenProject
         )
 
-        if sections.isEmpty {
+        NoFolderChatsSection(
+            threads: noFolderThreads,
+            selectedThreadID: selectedThreadID,
+            serverContentDisabled: serverContentDisabled,
+            contentOpacity: contentOpacity,
+            onOpenThread: onOpenNoFolderThread
+        )
+
+        if sections.isEmpty && noFolderThreads.isEmpty {
             Section {
                 ContentUnavailableView(
                     unavailableTitle,
@@ -597,6 +638,33 @@ private struct ProjectSectionsContent: View {
                     .listRowSeparator(.hidden)
             }
         }
+    }
+}
+
+private struct NoFolderChatsSection: View {
+    let threads: [CodexThread]
+    let selectedThreadID: String?
+    let serverContentDisabled: Bool
+    let contentOpacity: Double
+    let onOpenThread: (CodexThread) -> Void
+
+    @ViewBuilder
+    var body: some View {
+        Section {
+            ForEach(threads) { thread in
+                Button {
+                    onOpenThread(thread)
+                } label: {
+                    ThreadRow(thread: thread, selected: thread.id == selectedThreadID)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("noFolderThreadRow")
+            }
+        } header: {
+            Text("Chats")
+        }
+        .disabled(serverContentDisabled)
+        .opacity(contentOpacity)
     }
 }
 
@@ -700,8 +768,10 @@ private struct SelectedServerToolbar: ToolbarContent {
     let onBackToProjects: () -> Void
     let canCreateSession: Bool
     let isStartingSession: Bool
+    let showsNoFolderOption: Bool
     let onStartInNewWorktree: () -> Void
     let onStartInProjectDirectory: () -> Void
+    let onStartWithoutFolder: () -> Void
     @Binding var showingProjectAdd: Bool
     @Binding var showingTerminal: Bool
     @Binding var showingDiagnostics: Bool
@@ -720,13 +790,23 @@ private struct SelectedServerToolbar: ToolbarContent {
         ToolbarItemGroup(placement: .topBarTrailing) {
             RefreshServerButton(showingProjectSessions: showingProjectSessions, disabled: disabled)
             if !showingProjectSessions {
+                NewSessionButton(
+                    canCreateSession: canCreateSession,
+                    isStartingSession: isStartingSession,
+                    showsNoFolderOption: showsNoFolderOption,
+                    onStartInNewWorktree: onStartInNewWorktree,
+                    onStartInProjectDirectory: onStartInProjectDirectory,
+                    onStartWithoutFolder: onStartWithoutFolder
+                )
                 AddProjectButton(showingProjectAdd: $showingProjectAdd, disabled: disabled)
             } else {
                 NewSessionButton(
                     canCreateSession: canCreateSession,
                     isStartingSession: isStartingSession,
+                    showsNoFolderOption: showsNoFolderOption,
                     onStartInNewWorktree: onStartInNewWorktree,
-                    onStartInProjectDirectory: onStartInProjectDirectory
+                    onStartInProjectDirectory: onStartInProjectDirectory,
+                    onStartWithoutFolder: onStartWithoutFolder
                 )
             }
             SelectedServerMenu(
@@ -820,37 +900,55 @@ private struct ProjectSessionScopeRow: View {
 private struct NewSessionButton: View {
     let canCreateSession: Bool
     let isStartingSession: Bool
+    let showsNoFolderOption: Bool
     let onStartInNewWorktree: () -> Void
     let onStartInProjectDirectory: () -> Void
+    let onStartWithoutFolder: () -> Void
 
     var body: some View {
-        Menu {
+        if showsNoFolderOption {
             Button {
-                onStartInNewWorktree()
+                onStartWithoutFolder()
             } label: {
-                Label("Start in New Worktree", systemImage: "arrow.triangle.branch")
+                if isStartingSession {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "plus.bubble")
+                }
             }
-            Button {
-                onStartInProjectDirectory()
+            .disabled(!canCreateSession || isStartingSession)
+            .accessibilityLabel(isStartingSession ? "Starting New Chat" : "New Chat")
+            .accessibilityIdentifier("newChatButton")
+        } else {
+            Menu {
+                Button {
+                    onStartInNewWorktree()
+                } label: {
+                    Label("Start in New Worktree", systemImage: "arrow.triangle.branch")
+                }
+                Button {
+                    onStartInProjectDirectory()
+                } label: {
+                    Label("Start in Project Directory", systemImage: "folder")
+                }
             } label: {
-                Label("Start in Project Directory", systemImage: "folder")
+                if isStartingSession {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "plus.bubble")
+                }
             }
-        } label: {
-            if isStartingSession {
-                ProgressView()
-                    .controlSize(.small)
-            } else {
-                Image(systemName: "plus.bubble")
-            }
+            .disabled(!canCreateSession || isStartingSession)
+            .accessibilityLabel(isStartingSession ? "Starting New Session" : "New Session")
+            .accessibilityIdentifier("projectNewSessionButton")
         }
-        .disabled(!canCreateSession || isStartingSession)
-        .accessibilityLabel(isStartingSession ? "Starting New Session" : "New Session")
-        .accessibilityIdentifier("projectNewSessionButton")
     }
 }
 
 private struct SessionsContent: View {
-    let selectedProject: ProjectRecord
+    let selectedProject: ProjectRecord?
     @Binding var showsArchivedSessions: Bool
     let sections: [SessionListSection]
     let selectedThreadID: String?
@@ -863,7 +961,11 @@ private struct SessionsContent: View {
     @ViewBuilder
     var body: some View {
         Section {
-            ProjectSessionScopeRow(project: selectedProject)
+            if let selectedProject {
+                ProjectSessionScopeRow(project: selectedProject)
+            } else {
+                AllChatsScopeRow()
+            }
             Toggle("Show archived sessions", isOn: $showsArchivedSessions)
                 .font(.subheadline)
         }
@@ -879,6 +981,25 @@ private struct SessionsContent: View {
         )
         .disabled(serverContentDisabled)
         .opacity(contentOpacity)
+    }
+}
+
+private struct AllChatsScopeRow: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Chats")
+                    .font(.subheadline.weight(.semibold))
+                Text("Chats without a folder.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -1132,7 +1253,7 @@ struct ThreadRow: View {
                 Text(thread.title)
                     .font(.subheadline.weight(selected ? .semibold : .regular))
                     .lineLimit(2)
-                Text(thread.cwd)
+                Text(thread.folderLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

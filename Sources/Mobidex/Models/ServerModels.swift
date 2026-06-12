@@ -54,6 +54,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
     var acpLaunchCommand: String
     var authMethod: ServerAuthMethod
     var projects: [ProjectRecord]
+    var unscopedThreadIDs: [String]
     var createdAt: Date
     var updatedAt: Date
     var backendType: BackendType
@@ -69,6 +70,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         case acpLaunchCommand
         case authMethod
         case projects
+        case unscopedThreadIDs
         case createdAt
         case updatedAt
         case backendType
@@ -85,6 +87,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         acpLaunchCommand: String = SharedKMPBridge.defaultAcpLaunchCommand,
         authMethod: ServerAuthMethod,
         projects: [ProjectRecord] = [],
+        unscopedThreadIDs: [String] = [],
         createdAt: Date = .now,
         updatedAt: Date = .now,
         backendType: BackendType = .codexAppServer
@@ -103,6 +106,7 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
         self.acpLaunchCommand = acpLaunchCommand.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? SharedKMPBridge.defaultAcpLaunchCommand
         self.authMethod = authMethod
         self.projects = projects
+        self.unscopedThreadIDs = Self.normalizedUnscopedThreadIDs(unscopedThreadIDs)
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.backendType = backendType
@@ -126,6 +130,9 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
             .nonEmpty ?? SharedKMPBridge.defaultAcpLaunchCommand
         authMethod = try container.decode(ServerAuthMethod.self, forKey: .authMethod)
         projects = try container.decodeIfPresent([ProjectRecord].self, forKey: .projects) ?? []
+        unscopedThreadIDs = Self.normalizedUnscopedThreadIDs(
+            try container.decodeIfPresent([String].self, forKey: .unscopedThreadIDs) ?? []
+        )
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         backendType = try container.decodeIfPresent(BackendType.self, forKey: .backendType) ?? .codexAppServer
@@ -141,6 +148,17 @@ struct ServerRecord: Identifiable, Codable, Equatable, Hashable {
 
     var appServerProxyCommand: String {
         SharedKMPBridge.appServerProxyCommand(codexPath: codexPath, executionPath: executionPath)
+    }
+
+    static func normalizedUnscopedThreadIDs(_ ids: [String]) -> [String] {
+        var seen = Set<String>()
+        return ids.compactMap { id in
+            let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else {
+                return nil
+            }
+            return trimmed
+        }
     }
 }
 

@@ -858,7 +858,8 @@ enum SharedKMPBridge {
         SharedCodexThreadSummary(
             id: thread.id,
             cwd: thread.cwd,
-            updatedAtEpochSeconds: Int64(thread.updatedAt.timeIntervalSince1970)
+            updatedAtEpochSeconds: Int64(thread.updatedAt.timeIntervalSince1970),
+            isUnscoped: thread.isFolderless
         )
     }
 

@@ -11,6 +11,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
     var sourceKind: String?
     var turns: [CodexTurn]
     var isArchived: Bool
+    var isUnscoped: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -36,6 +37,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         name: String? = nil,
         sourceKind: String? = nil,
         isArchived: Bool = false,
+        isUnscoped: Bool = false,
         turns: [CodexTurn] = []
     ) {
         self.id = id
@@ -47,6 +49,7 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         self.name = name
         self.sourceKind = sourceKind
         self.isArchived = isArchived
+        self.isUnscoped = isUnscoped
         self.turns = turns
     }
 
@@ -54,13 +57,14 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         preview = try container.decodeIfPresent(String.self, forKey: .preview) ?? ""
-        cwd = try container.decode(String.self, forKey: .cwd)
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd) ?? ""
         status = try container.decode(CodexThreadStatus.self, forKey: .status)
         updatedAt = Date(timeIntervalSince1970: TimeInterval(try container.decode(Int.self, forKey: .updatedAt)))
         createdAt = Date(timeIntervalSince1970: TimeInterval(try container.decode(Int.self, forKey: .createdAt)))
         name = try container.decodeIfPresent(String.self, forKey: .name)
         sourceKind = try Self.decodeSourceKind(from: container)
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .archived) ?? false
+        isUnscoped = false
         turns = try container.decodeIfPresent([CodexTurn].self, forKey: .turns) ?? []
     }
 
@@ -87,11 +91,25 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
             ?? id
     }
 
+    var folderLabel: String {
+        isFolderless ? "No Folder" : cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isFolderless: Bool {
+        isUnscoped || CodexFolderlessPaths.isFolderless(cwd)
+    }
+
     var isUserFacingSession: Bool {
         guard let sourceKind else {
             return true
         }
         return !sourceKind.hasPrefix("subAgent")
+    }
+}
+
+enum CodexFolderlessPaths {
+    static func isFolderless(_ cwd: String) -> Bool {
+        cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
