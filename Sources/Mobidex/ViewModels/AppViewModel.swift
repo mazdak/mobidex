@@ -368,6 +368,9 @@ final class AppViewModel: ObservableObject {
     // (via the same SharedKMPBridge.conversationSections(from:) the debug preview already uses) so Grok
     // chunks render as identical rich UI elements in the normal ConversationView.
     // Zero changes to any Codex paths. Reuses AcpClient actor + mapper + raw-exec + (post-simplification) auth model.
+    private var threadListRefreshTask: Task<Void, Never>?
+    private var threadListRefreshPending = false
+
     private var acpClient: AcpClient?
     private var acpCollectorTask: Task<Void, Never>?
     private var acpEventsTask: Task<Void, Never>?
@@ -2077,6 +2080,9 @@ final class AppViewModel: ObservableObject {
         }
         eventTask?.cancel()
         eventTask = nil
+        threadListRefreshTask?.cancel()
+        threadListRefreshTask = nil
+        threadListRefreshPending = false
         acpCollectorTask?.cancel()
         acpCollectorTask = nil
         acpEventsTask?.cancel()
@@ -2948,10 +2954,28 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refreshThreadListAfterEvent() async {
+        // Coalesce: an agentic turn completes dozens of items, and each used to fire a full
+        // paginated thread/list sweep (audit P2). Leading-edge refresh, then at most one
+        // refresh per cooldown window while events keep arriving.
+        threadListRefreshPending = true
+        guard threadListRefreshTask == nil else { return }
+        threadListRefreshTask = Task { [weak self] in
+            defer { self?.threadListRefreshTask = nil }
+            while let self, !Task.isCancelled, self.threadListRefreshPending {
+                self.threadListRefreshPending = false
+                await self.performThreadListRefresh()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    private func performThreadListRefresh() async {
         guard let appServer else { return }
         let scope = currentThreadLoadScope
         do {
-            let loadedThreads = try await listThreads(matching: scope, appServer: appServer)
+            // Event-driven refreshes only need the most recent pages; full loads still
+            // paginate to exhaustion via loadThreads.
+            let loadedThreads = try await listThreads(matching: scope, appServer: appServer, pageLimit: sessionListInitialPageLimit)
             guard currentThreadLoadScope == scope else {
                 return
             }

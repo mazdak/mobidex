@@ -984,21 +984,14 @@ enum SharedKMPBridge {
         }
     }
 
+    // Bulk marshalling via the KMP NSData helpers: one memcpy per direction instead of
+    // per-byte interop calls (audit P2 — the WS path crosses these for every chunk).
     private static func toSharedByteArray(_ data: Data) -> SharedKotlinByteArray {
-        let array = SharedKotlinByteArray(size: Int32(data.count))
-        for (index, byte) in data.enumerated() {
-            array.set(index: Int32(index), value: Int8(bitPattern: byte))
-        }
-        return array
+        MobidexShared.ByteArrayBridgingKt.toByteArray(data)
     }
 
     private static func data(from array: SharedKotlinByteArray) -> Data {
-        var bytes: [UInt8] = []
-        bytes.reserveCapacity(Int(array.size))
-        for index in 0..<array.size {
-            bytes.append(UInt8(bitPattern: array.get(index: index)))
-        }
-        return Data(bytes)
+        array.toNSData()
     }
 
     private static func swiftInt(from value: KotlinLong?) -> Int? {
