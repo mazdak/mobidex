@@ -115,7 +115,48 @@ object AcpRpcRequests {
             )
         ),
     )
+
+    /** Lists past sessions (agents advertising the `list` session capability). */
+    fun sessionList(id: Long): CodexRpcRequest =
+        CodexRpcRequest(id = id, method = "session/list", params = jsonObject(emptyMap()))
+
+    /**
+     * Reopens a past session: history replays as ordinary session/update notifications,
+     * then the result arrives (with mode/model state). Verified live against claude-code-acp.
+     */
+    fun sessionLoad(id: Long, sessionId: String, cwd: String): CodexRpcRequest = CodexRpcRequest(
+        id = id,
+        method = "session/load",
+        params = jsonObject(
+            linkedMapOf(
+                "sessionId" to jsonString(sessionId),
+                "cwd" to jsonString(cwd),
+                "mcpServers" to jsonArray(emptyList()),
+            )
+        ),
+    )
 }
+
+// --- Past sessions (session/list result) ---
+
+data class AcpSessionSummary(
+    val sessionId: String,
+    val cwd: String?,
+    val title: String?,
+    val updatedAt: String?,
+)
+
+/** Extracts the past-session list from a session/list result (`sessions: [{sessionId, cwd, title, updatedAt}]`). */
+fun acpSessionList(result: JsonValue?): List<AcpSessionSummary> =
+    ((result?.get("sessions") as? JsonValue.ArrayValue)?.value.orEmpty()).mapNotNull { entry ->
+        val sessionId = entry["sessionId"]?.stringValue ?: return@mapNotNull null
+        AcpSessionSummary(
+            sessionId = sessionId,
+            cwd = entry["cwd"]?.stringValue,
+            title = entry["title"]?.stringValue,
+            updatedAt = entry["updatedAt"]?.stringValue,
+        )
+    }
 
 // --- Session model state (from the session/new result) ---
 
@@ -181,6 +222,7 @@ data class AcpSessionUpdate(
 sealed interface AcpContentChunk {
     val type: String
 
+    data class UserMessageChunk(val delta: String, override val type: String = "user_message_chunk") : AcpContentChunk
     data class AgentMessageChunk(val delta: String, override val type: String = "agent_message_chunk") : AcpContentChunk
     data class AgentThoughtChunk(val delta: String, val summary: String? = null, override val type: String = "agent_thought_chunk") : AcpContentChunk
     data class ToolCall(
@@ -341,6 +383,9 @@ object AcpProtocolCore {
             ?: json.stringValue
             ?: return null
         return when (t) {
+            "user_message_chunk" -> {
+                AcpContentChunk.UserMessageChunk(delta = textContent(json), type = t)
+            }
             "agent_message_chunk", "agentMessageChunk", "message", "text" -> {
                 AcpContentChunk.AgentMessageChunk(delta = textContent(json), type = t)
             }
@@ -433,6 +478,10 @@ object AcpProtocolCore {
  */
 fun AcpContentChunk.toCodexSessionItem(itemId: String = "acp-chunk"): CodexSessionItem? =
     when (this) {
+        is AcpContentChunk.UserMessageChunk -> {
+            // Emitted during session/load replay; live turns echo user input locally instead.
+            if (delta.isNotEmpty()) CodexSessionItem.UserMessage(id = itemId, text = delta) else null
+        }
         is AcpContentChunk.AgentMessageChunk -> {
             if (delta.isNotEmpty()) CodexSessionItem.AgentMessage(id = itemId, text = delta) else null
         }
@@ -481,6 +530,7 @@ fun AcpContentChunk.toCodexSessionItem(itemId: String = "acp-chunk"): CodexSessi
 fun AcpRpcInboundClassification.toCodexSessionItems(): List<CodexSessionItem> {
     val chunk = sessionUpdate?.chunk ?: return emptyList()
     val itemId = when (chunk) {
+        is AcpContentChunk.UserMessageChunk -> "acp-user"
         is AcpContentChunk.AgentMessageChunk -> "acp-message"
         is AcpContentChunk.AgentThoughtChunk -> "acp-thought"
         is AcpContentChunk.ToolCall -> chunk.toolCallId ?: "acp-tool"
@@ -501,6 +551,11 @@ fun AcpRpcInboundClassification.toCodexSessionItems(): List<CodexSessionItem> {
 fun List<CodexSessionItem>.appendingAcpSessionItem(item: CodexSessionItem): List<CodexSessionItem> {
     val last = lastOrNull()
     when (item) {
+        is CodexSessionItem.UserMessage -> {
+            if (last is CodexSessionItem.UserMessage && last.id == item.id) {
+                return dropLast(1) + last.copy(text = last.text + item.text)
+            }
+        }
         is CodexSessionItem.AgentMessage -> {
             if (last is CodexSessionItem.AgentMessage && last.id == item.id) {
                 return dropLast(1) + last.copy(text = last.text + item.text)

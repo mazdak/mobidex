@@ -114,6 +114,76 @@ class AcpProtocolCoreTest {
     }
 
     @Test
+    fun sessionListAndLoadHaveSpecShapes() {
+        assertEquals("session/list", AcpRpcRequests.sessionList(1).method)
+
+        val load = AcpRpcRequests.sessionLoad(2, sessionId = "s1", cwd = "/work")
+        assertEquals("session/load", load.method)
+        val params = load.params as? JsonValue.ObjectValue
+        assertEquals("s1", params?.get("sessionId")?.stringValue)
+        assertEquals("/work", params?.get("cwd")?.stringValue)
+        assertEquals(emptyList(), (params?.get("mcpServers") as? JsonValue.ArrayValue)?.value)
+    }
+
+    @Test
+    fun parsesSessionListResult() {
+        val result = jsonObject(
+            mapOf(
+                "sessions" to jsonArray(
+                    listOf(
+                        jsonObject(
+                            mapOf(
+                                "sessionId" to jsonString("s1"),
+                                "cwd" to jsonString("/home/dev"),
+                                "title" to jsonString("Fix the parser"),
+                                "updatedAt" to jsonString("2026-06-09T18:02:28.383Z"),
+                            )
+                        ),
+                        jsonObject(mapOf("sessionId" to jsonString("s2"))),
+                        jsonObject(mapOf("title" to jsonString("missing id, skipped"))),
+                    )
+                )
+            )
+        )
+        val sessions = acpSessionList(result)
+        assertEquals(listOf("s1", "s2"), sessions.map { it.sessionId })
+        assertEquals("Fix the parser", sessions.first().title)
+        assertEquals(emptyList(), acpSessionList(jsonObject(emptyMap())))
+        assertEquals(emptyList(), acpSessionList(null))
+    }
+
+    @Test
+    fun userMessageChunksMapAndCoalesceForSessionReplay() {
+        val envelope = AcpRpcInboundEnvelope(
+            method = "session/update",
+            params = jsonObject(
+                mapOf(
+                    "sessionId" to jsonString("s1"),
+                    "update" to jsonObject(
+                        mapOf(
+                            "sessionUpdate" to jsonString("user_message_chunk"),
+                            "content" to jsonObject(mapOf("type" to jsonString("text"), "text" to jsonString("Fix the bug"))),
+                        )
+                    ),
+                )
+            )
+        )
+        val items = AcpProtocolCore.classifyInbound(envelope)!!.toCodexSessionItems()
+        val user = items.single() as CodexSessionItem.UserMessage
+        assertEquals("acp-user", user.id)
+        assertEquals("Fix the bug", user.text)
+
+        var list = emptyList<CodexSessionItem>()
+        list = list.appendingAcpSessionItem(CodexSessionItem.UserMessage(id = "acp-user", text = "Fix "))
+        list = list.appendingAcpSessionItem(CodexSessionItem.UserMessage(id = "acp-user", text = "the bug"))
+        list = list.appendingAcpSessionItem(CodexSessionItem.AgentMessage(id = "acp-message", text = "On it."))
+        list = list.appendingAcpSessionItem(CodexSessionItem.UserMessage(id = "acp-user", text = "Thanks"))
+        assertEquals(3, list.size)
+        assertEquals("Fix the bug", (list[0] as CodexSessionItem.UserMessage).text)
+        assertEquals("Thanks", (list[2] as CodexSessionItem.UserMessage).text)
+    }
+
+    @Test
     fun sessionCancelParamsCarrySessionId() {
         val params = AcpRpcRequests.sessionCancelParams("s9")
         assertEquals("s9", params["sessionId"]?.stringValue)
@@ -245,7 +315,7 @@ class AcpProtocolCoreTest {
 
     @Test
     fun unknownSpecVariantsProduceNoUiItems() {
-        for (variant in listOf("available_commands_update", "current_mode_update", "user_message_chunk")) {
+        for (variant in listOf("available_commands_update", "current_mode_update")) {
             val envelope = AcpRpcInboundEnvelope(
                 method = "session/update",
                 params = jsonObject(

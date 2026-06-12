@@ -216,6 +216,38 @@ enum SharedKMPBridge {
         params(from: MobidexShared.AcpRpcRequests.shared.sessionSetModel(id: 0, sessionId: sessionId, modelId: modelId))
     }
 
+    static func acpSessionListParams() -> JSONValue? {
+        params(from: MobidexShared.AcpRpcRequests.shared.sessionList(id: 0))
+    }
+
+    static func acpSessionLoadParams(sessionId: String, cwd: String) -> JSONValue? {
+        params(from: MobidexShared.AcpRpcRequests.shared.sessionLoad(id: 0, sessionId: sessionId, cwd: cwd))
+    }
+
+    // ISO8601DateFormatter is documented thread-safe; the type just isn't marked Sendable.
+    nonisolated(unsafe) private static let acpSessionDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    /// Past sessions from a session/list result.
+    static func acpPastSessions(result: JSONValue?) -> [AcpPastSession] {
+        let summaries = MobidexShared.AcpProtocolCoreKt.acpSessionList(result: result.map(toSharedJSONValue))
+        return summaries.compactMap { entry -> AcpPastSession? in
+            guard let summary = entry as? MobidexShared.AcpSessionSummary else { return nil }
+            let updatedAt = summary.updatedAt.flatMap {
+                acpSessionDateFormatter.date(from: $0) ?? ISO8601DateFormatter().date(from: $0)
+            }
+            return AcpPastSession(
+                sessionId: summary.sessionId,
+                cwd: summary.cwd,
+                title: summary.title,
+                updatedAt: updatedAt
+            )
+        }
+    }
+
     /// Model state the agent advertised in a session/new result (empty options = no switching).
     static func acpSessionModels(result: JSONValue?) -> (options: [AcpModelOption], currentModelId: String?) {
         guard let models = MobidexShared.AcpProtocolCoreKt.acpSessionModels(sessionNewResult: result.map(toSharedJSONValue)) else {

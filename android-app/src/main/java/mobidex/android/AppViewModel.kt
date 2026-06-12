@@ -36,6 +36,7 @@ import mobidex.android.data.ServerRepository
 import mobidex.android.data.SharedPreferencesHostKeyStore
 import mobidex.android.data.SharedPreferencesServerRepository
 import mobidex.android.model.CodexThread
+import mobidex.android.model.CodexThreadStatus
 import mobidex.android.model.CodexThreadItem
 import mobidex.android.model.CodexTurn
 import mobidex.android.model.PendingApproval
@@ -756,6 +757,15 @@ class AppViewModel(
                     )
                 }
 
+                // Past sessions (agents advertising session/list) populate the normal session
+                // list so they can be reopened via session/load; empty for agents without it.
+                val pastSessions = client.listSessions()
+                if (generation == acpConnectGeneration && acpClient === client && pastSessions.isNotEmpty()) {
+                    _state.update { state ->
+                        state.copy(threads = pastSessions.map { it.toPlaceholderThread() })
+                    }
+                }
+
                 acpJob = launch {
                     launch {
                         client.sessionItems.collect { item ->
@@ -1307,6 +1317,10 @@ class AppViewModel(
             _state.update { it.copy(statusMessage = "Wait for the current session action to finish before opening another session.") }
             return
         }
+        acpClient?.let { client ->
+            openAcpSession(client, thread)
+            return
+        }
         viewModelScope.launch {
             suppressThreadAutoSelection = false
             suppressCachedThreadSelection = false
@@ -1811,6 +1825,39 @@ class AppViewModel(
             val turnID = state.activeTurnID ?: return@launch
             runBusy("Interrupting") {
                 appServer?.interrupt(thread.id, turnID)
+            }
+        }
+    }
+
+    /** Reopens a past ACP session: history replays through the normal item collector. */
+    private fun openAcpSession(client: AcpClient, thread: CodexThread) {
+        viewModelScope.launch {
+            val cwd = _state.value.selectedProject?.path ?: thread.cwd.ifBlank { null }
+            if (cwd == null) {
+                _state.update { it.copy(statusMessage = "Select a project before reopening an ACP session.") }
+                return@launch
+            }
+            runBusy("Loading session") {
+                // Replay arrives through client.sessionItems; clear the live surface first.
+                _acpSessionItems.value = emptyList()
+                acpSections.reset(emptyList())
+                _state.update {
+                    it.copy(
+                        selectedThreadID = thread.id,
+                        conversationSections = emptyList(),
+                        pendingApprovals = emptyList(),
+                    )
+                }
+                val session = client.loadSession(sessionId = thread.id, cwd = cwd)
+                if (acpClient === client) {
+                    acpSessionId = session.sessionId
+                    _state.update { state ->
+                        state.copy(
+                            acpModels = session.models ?: state.acpModels,
+                            statusMessage = "Reopened ACP session ${session.sessionId}.",
+                        )
+                    }
+                }
             }
         }
     }
@@ -3148,6 +3195,19 @@ private const val MACOS_PRIVACY_WARNING_DISMISSED_KEY = "dismissedMacOSPrivacyWa
 private const val STREAMED_SECTIONS_FLUSH_WINDOW_MILLIS = 50L
 private const val MAX_CACHED_THREAD_DETAILS = 8 // mirrors the iOS detail-cache cap
 private const val MAX_CACHED_THREAD_LISTS = 16
+
+/** Maps a past ACP session summary into the session-list model the UI already renders. */
+private fun mobidex.shared.AcpSessionSummary.toPlaceholderThread(): CodexThread {
+    val updatedEpoch = updatedAt?.let { runCatching { Instant.parse(it).epochSecond }.getOrNull() } ?: 0L
+    return CodexThread(
+        id = sessionId,
+        preview = title?.trim().orEmpty().ifEmpty { "ACP session" },
+        cwd = cwd.orEmpty(),
+        status = CodexThreadStatus(type = "idle"),
+        updatedAtEpochSeconds = updatedEpoch,
+        createdAtEpochSeconds = updatedEpoch,
+    )
+}
 
 /**
  * Evicts in iteration order until the map is within [cap], never evicting [protect].

@@ -30,7 +30,9 @@ import mobidex.shared.AcpRpcRequests
 import mobidex.shared.CodexSessionItem
 import mobidex.shared.JsonValue
 import mobidex.shared.AcpSessionModels
+import mobidex.shared.AcpSessionSummary
 import mobidex.shared.acpAuthMethodIds
+import mobidex.shared.acpSessionList
 import mobidex.shared.acpSessionModels
 import mobidex.shared.encodeJsonLine
 import mobidex.shared.toCodexSessionItems
@@ -132,6 +134,25 @@ class AcpClient(
     suspend fun setModel(sessionId: String, modelId: String) {
         check(!closed) { "ACP client is closed." }
         sendRequestAndAwait(AcpRpcRequests.sessionSetModel(id = nextId(), sessionId = sessionId, modelId = modelId))
+    }
+
+    /** Past sessions, when the agent supports listing (empty for agents that answer method-not-found). */
+    suspend fun listSessions(): List<AcpSessionSummary> {
+        check(!closed) { "ACP client is closed." }
+        return runCatching {
+            acpSessionList(sendRequestAndAwait(AcpRpcRequests.sessionList(id = nextId())).toSharedJsonValue())
+        }.getOrElse { emptyList() }
+    }
+
+    /**
+     * Reopens a past session. Its history replays through [sessionItems] as ordinary
+     * session/update notifications before the result resolves.
+     */
+    suspend fun loadSession(sessionId: String, cwd: String): AcpSession {
+        check(!closed) { "ACP client is closed." }
+        val result = sendRequestAndAwait(AcpRpcRequests.sessionLoad(id = nextId(), sessionId = sessionId, cwd = cwd))
+        currentSessionId = sessionId
+        return AcpSession(sessionId = sessionId, models = acpSessionModels(result.toSharedJsonValue()))
     }
 
     /** Fire-and-forget: the prompt result (stopReason) only arrives when the whole turn ends. */

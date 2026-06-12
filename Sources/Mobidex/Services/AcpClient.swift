@@ -18,6 +18,27 @@ struct AcpSessionInfo: Sendable {
     let currentModelId: String?
 }
 
+/// A past session the agent can reopen via session/load.
+struct AcpPastSession: Identifiable, Sendable {
+    var id: String { sessionId }
+    let sessionId: String
+    let cwd: String?
+    let title: String?
+    let updatedAt: Date?
+
+    /// Session-list model the UI already renders.
+    func asPlaceholderThread() -> CodexThread {
+        CodexThread(
+            id: sessionId,
+            preview: (title?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "ACP session",
+            cwd: cwd ?? "",
+            status: .idle,
+            updatedAt: updatedAt ?? .distantPast,
+            createdAt: updatedAt ?? .distantPast
+        )
+    }
+}
+
 /// Thin ACP client for driving spec-compliant stdio agents (`grok agent stdio`,
 /// `bunx @zed-industries/claude-code-acp`, ...) over a raw line transport on iOS.
 ///
@@ -115,6 +136,28 @@ actor AcpClient {
             method: "session/set_model",
             params: SharedKMPBridge.acpSessionSetModelParams(sessionId: sessionId, modelId: modelId)
         )
+    }
+
+    /// Past sessions, when the agent supports listing (empty for agents that answer method-not-found).
+    func listSessions() async -> [AcpPastSession] {
+        guard !isClosed else { return [] }
+        guard let result = try? await request(method: "session/list", params: SharedKMPBridge.acpSessionListParams()) else {
+            return []
+        }
+        return SharedKMPBridge.acpPastSessions(result: result)
+    }
+
+    /// Reopens a past session. Its history replays through `sessionItems` as ordinary
+    /// session/update notifications before the result resolves.
+    func loadSession(sessionId: String, cwd: String) async throws -> AcpSessionInfo {
+        guard !isClosed else { throw CodexAppServerClientError.disconnected }
+        let result = try await request(
+            method: "session/load",
+            params: SharedKMPBridge.acpSessionLoadParams(sessionId: sessionId, cwd: cwd)
+        )
+        currentSessionId = sessionId
+        let models = SharedKMPBridge.acpSessionModels(result: result)
+        return AcpSessionInfo(sessionId: sessionId, modelOptions: models.options, currentModelId: models.currentModelId)
     }
 
     func sendPrompt(sessionId: String, text: String) async throws {

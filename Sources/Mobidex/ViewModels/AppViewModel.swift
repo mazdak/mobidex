@@ -1105,6 +1105,13 @@ final class AppViewModel: ObservableObject {
 
             statusMessage = "ACP agent session connected."
 
+            // Past sessions (agents advertising session/list) populate the normal session
+            // list so they can be reopened via session/load; empty for agents without it.
+            let pastSessions = await client.listSessions()
+            if self.acpClient === client, !pastSessions.isEmpty {
+                threads = pastSessions.map { $0.asPlaceholderThread() }
+            }
+
             acpCollectorTask = Task { [weak self] in
                 guard let self else { return }
                 for await item in client.sessionItems {
@@ -1417,6 +1424,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func openThread(_ thread: CodexThread) async {
+        if let acpClient {
+            await openAcpSession(client: acpClient, thread: thread)
+            return
+        }
         let scope = currentThreadLoadScope
         let shouldPromoteProject = isShowingAllSessions
         suppressThreadAutoSelection = false
@@ -2029,6 +2040,29 @@ final class AppViewModel: ObservableObject {
         }
         await runOperation(.interrupting, status: "Interrupting") {
             try await appServer.interrupt(threadID: selectedThread.id, turnID: activeTurnID)
+        }
+    }
+
+    /// Reopens a past ACP session: history replays through the normal item collector.
+    private func openAcpSession(client: AcpClient, thread: CodexThread) async {
+        guard let cwd = selectedProject?.path ?? thread.cwd.nonEmpty else {
+            statusMessage = "Select a project before reopening an ACP session."
+            return
+        }
+        await runOperation(.openingThread, status: "Loading session") {
+            // Replay arrives through client.sessionItems; clear the live surface first.
+            acpItems = []
+            resetConversationSections(items: [])
+            pendingApprovals = []
+            selectedThreadID = thread.id
+            let session = try await client.loadSession(sessionId: thread.id, cwd: cwd)
+            guard self.acpClient === client else { return }
+            acpSessionId = session.sessionId
+            if !session.modelOptions.isEmpty {
+                acpModelOptions = session.modelOptions
+                acpCurrentModelId = session.currentModelId
+            }
+            statusMessage = "Reopened ACP session."
         }
     }
 
@@ -4262,8 +4296,9 @@ final class AppViewModel: ObservableObject {
         guard let value else {
             throw CodexAppServerClientError.invalidResponse
         }
-        let data = try jsonEncoder.encode(value)
-        return try jsonDecoder.decode(T.self, from: data)
+        // Direct tree decode: the old encode-to-Data + JSONDecoder round trip serialized
+        // multi-100KB turn payloads on the main actor at every turn boundary (audit P2).
+        return try JSONValueDecoding.decode(T.self, from: value)
     }
 
     @discardableResult

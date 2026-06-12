@@ -11,6 +11,7 @@
 		06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E0FA08A15DD69F21460E28B /* ProjectAddView.swift */; };
 		0CB79C877E00950E3115252B /* AdwaitaMonoNerdFont-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 04B85E03FE1BDABF48ED3DF1 /* AdwaitaMonoNerdFont-LICENSE.txt */; };
 		10BA0070BDE5B83F3721FD57 /* SSHClientService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43AB39944ABF583A29C1AB6A /* SSHClientService.swift */; };
+		10CC37A740525685EF681255 /* JSONValueDecoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBCB5969DD83FE0ADEA36877 /* JSONValueDecoder.swift */; };
 		20D05737CC6F677BB7C946EF /* index.html in Resources */ = {isa = PBXBuildFile; fileRef = A9E203F76163440875A08EB6 /* index.html */; };
 		2285C8CF4F6F556DBCD714D5 /* ConversationMarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1342E3749B84624F282C2BB /* ConversationMarkdownRenderer.swift */; };
 		2F63409CB4571EFBEC15FFB8 /* SplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B4A95D6997F1824BDB826C9 /* SplashView.swift */; };
@@ -128,6 +129,7 @@
 		EE657824A573C8FCE57210E8 /* SessionProjectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProjectionTests.swift; sourceTree = "<group>"; };
 		F45F4AA8B639F92DD2A66EDD /* SessionListProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionListProjection.swift; sourceTree = "<group>"; };
 		F6A214A65C0D1B8E443F51C0 /* Mobidex.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mobidex.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FBCB5969DD83FE0ADEA36877 /* JSONValueDecoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValueDecoder.swift; sourceTree = "<group>"; };
 		FD173BE099A8B5B43F253561 /* ProjectCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectCatalog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -217,6 +219,7 @@
 				55BCBB84C98AA5E8F2995DED /* CodexSessionProjection.swift */,
 				7FFEE6E89AB7883BE87D5EAA /* DiffModels.swift */,
 				CD0F20BD6482ACD9456BFFC9 /* GitDiffParsing.swift */,
+				FBCB5969DD83FE0ADEA36877 /* JSONValueDecoder.swift */,
 				FD173BE099A8B5B43F253561 /* ProjectCatalog.swift */,
 				44BED278D1B41DAB45E1B55D /* ProjectListProjection.swift */,
 				F45F4AA8B639F92DD2A66EDD /* SessionListProjection.swift */,
@@ -468,6 +471,7 @@
 				CF30371B3B835A966C08BE4A /* CredentialStore.swift in Sources */,
 				EA630B6ECD0E0A9C99137981 /* DiffModels.swift in Sources */,
 				F4A7A3770E87E4147A6663BD /* GitDiffParsing.swift in Sources */,
+				10CC37A740525685EF681255 /* JSONValueDecoder.swift in Sources */,
 				744CCE5CD63E51851C3BCB76 /* MobidexApp.swift in Sources */,
 				3D02EE812C214072E99C6F9A /* MobidexLaunchSmoke.swift in Sources */,
 				06D76CED6568798E4D616230 /* ProjectAddView.swift in Sources */,
