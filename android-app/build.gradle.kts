@@ -5,6 +5,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 android {
@@ -15,9 +16,31 @@ android {
         applicationId = "com.mazdak.mobidex.android"
         minSdk = 35
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // Tracks the iOS TestFlight build numbering so team builds are identifiable.
+        versionCode = 47
+        versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // Release signing is optional: configured only when .secrets/android-signing.properties
+    // exists (storeFile/storePassword/keyAlias/keyPassword). Keystore lives outside git.
+    val signingProperties = rootProject.file(".secrets/android-signing.properties")
+    if (signingProperties.exists()) {
+        val properties = Properties()
+        signingProperties.inputStream().use { properties.load(it) }
+        signingConfigs {
+            create("release") {
+                storeFile = rootProject.file(".secrets/" + properties.getProperty("storeFile"))
+                storePassword = properties.getProperty("storePassword")
+                keyAlias = properties.getProperty("keyAlias")
+                keyPassword = properties.getProperty("keyPassword")
+            }
+        }
+        buildTypes {
+            release {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
 
     buildFeatures {
