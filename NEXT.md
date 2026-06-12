@@ -1,5 +1,15 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## Mission Checklist (active, 2026-06-12: audit P2 leftovers + ACP session resume)
+
+- [ ] J1. iOS: KotlinByteArray marshalling via bulk copy instead of per-byte interop on the WebSocket path (SharedKMPBridge toSharedByteArray / data(from:)).
+- [ ] J2. iOS: debounce the thread-list refresh fired per completed item (refreshThreadListAfterEvent) + bound pagination with a pageLimit.
+- [ ] J3. iOS: eliminate the double JSON round-trip in decode() at turn/thread boundaries (JSONValue → model directly, or decode from the raw line).
+- [ ] J4. ACP session resume: verify session/list–session/load wire behavior empirically against claude-code-acp (framework box) + grok docs, then design + implement reopen-past-ACP-sessions on both platforms.
+- [ ] J5. Codex review passes; validation; merge + push.
+
+Also done this morning: Android release signing (optional .secrets/android-signing.properties; keystore generated, gitignored; pass in .secrets/android-keystore-pass.txt), versionCode/Name aligned to TestFlight numbering; signed APK Mobidex-1.0-47-release.apk built, verified (v2), delivered for team distribution.
+
 ## Mission Checklist (active, 2026-06-11: audit Phase 3 — memory hygiene)
 
 - [ ] I1. shared-core: WebSocket frame/assembled-message size caps (throw codec exception, kill connection) + tests; delete the dormant unsynchronized `nextRequest` id counter from the AcpProtocolCore singleton (clients own their cores).
@@ -76,6 +86,14 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C6. Validation after fixes: shared-core AcpProtocolCoreTest 25/25, Android compileDebugKotlin + AcpGrokClientSmokeTest (authenticate answered with spec `"result":null`) green, verify-ios-build green.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
+
+## asc TestFlight submission (internal + external build 47) - 2026-06-12
+
+- Executed from `master` at `8401e62` (`fix(memory): harden phase-3 per codex review findings`); origin/master confirmed in sync (one transient GitHub SSH push failure earlier, retried successfully).
+- Internal: build 47, BUILD_ID `5626aa84-0e75-4a1d-aaf7-a42cd74b4a55`, run `.asc/runs/testflight-20260612T131556Z-01a85dbb.json`, status ok (compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260612T132149Z-b42dd924.json`, status ok (beta review + External Testers).
+- Contents over 46: audit Phase 3 memory hygiene (streamed uploads, thumbnail cache, tmp cleanup, cache caps/prunes on both platforms, WS payload caps, debug-path teardown/deletion) + codex hardening fixes.
+- Companion Android release APK `Mobidex-1.0-47-release.apk` (signed, v2-verified) built from the same code + Android signing config; delivered for team distribution.
 
 ## asc TestFlight submission (internal + external build 46) - 2026-06-11
 
