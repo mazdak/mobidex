@@ -2,11 +2,11 @@
 
 ## Mission Checklist (active, 2026-06-12: audit P2 leftovers + ACP session resume)
 
-- [ ] J1. iOS: KotlinByteArray marshalling via bulk copy instead of per-byte interop on the WebSocket path (SharedKMPBridge toSharedByteArray / data(from:)).
-- [ ] J2. iOS: debounce the thread-list refresh fired per completed item (refreshThreadListAfterEvent) + bound pagination with a pageLimit.
-- [ ] J3. iOS: eliminate the double JSON round-trip in decode() at turn/thread boundaries (JSONValue → model directly, or decode from the raw line).
-- [ ] J4. ACP session resume: verify session/list–session/load wire behavior empirically against claude-code-acp (framework box) + grok docs, then design + implement reopen-past-ACP-sessions on both platforms.
-- [ ] J5. Codex review passes; validation; merge + push.
+- [x] J1. iOS bulk byte marshalling: iosMain `ByteArrayBridging` (memcpy/NSData) replaces per-byte KotlinByteArray interop on the WS path.
+- [x] J2. iOS thread-list refresh: leading-edge + 2s-cooldown coalescing; event refreshes bounded to initial pages and MERGED with already-loaded older sessions (codex P2 fix — bounded results must not truncate the list; deleted/archived stragglers reconcile on full loads).
+- [x] J3. iOS `JSONValueDecoding`: direct Decodable decoding over the parsed JSONValue tree (no encode/decode round trip at turn boundaries); verified against the actual decode() call-site models.
+- [x] J4. ACP session resume: `session/list`/`session/load` verified live against claude-code-acp (replay arrives as ordinary session/update incl. user_message_chunk; load result carries mode/model state). Past sessions populate the normal session list after ACP connect on both platforms; tapping replays via session/load through the existing collectors; the session's own cwd wins over the selected project (codex P2 fix); user_message_chunk maps + coalesces on BOTH platforms (codex P1: the Swift mapper mirror initially lacked it — fixed with mirror-parity accumulator merge).
+- [x] J5. Codex passes: default review 2×P2 (event-refresh truncation; load cwd) + targeted pass 1×P1 (Swift user-chunk gap) + 1×P2 (stale-retain trade-off, documented) — all addressed. Validation: shared 30 + Android full suite green; iOS app+tests build; simulator at flake baseline — and the 28th failure (`testThreadDetailCachePrunesOlderSessions`) was proven PRE-EXISTING by re-running the suite at pre-Phase-3 master (867893a), where it also fails. Merged + pushed.
 
 Also done this morning: Android release signing (optional .secrets/android-signing.properties; keystore generated, gitignored; pass in .secrets/android-keystore-pass.txt), versionCode/Name aligned to TestFlight numbering; signed APK Mobidex-1.0-47-release.apk built, verified (v2), delivered for team distribution.
 

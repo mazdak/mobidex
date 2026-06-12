@@ -2045,7 +2045,9 @@ final class AppViewModel: ObservableObject {
 
     /// Reopens a past ACP session: history replays through the normal item collector.
     private func openAcpSession(client: AcpClient, thread: CodexThread) async {
-        guard let cwd = selectedProject?.path ?? thread.cwd.nonEmpty else {
+        // The session's own cwd wins: listed sessions can span working directories, and
+        // session/load must target where that conversation actually ran.
+        guard let cwd = thread.cwd.nonEmpty ?? selectedProject?.path else {
             statusMessage = "Select a project before reopening an ACP session."
             return
         }
@@ -3013,7 +3015,13 @@ final class AppViewModel: ObservableObject {
             guard currentThreadLoadScope == scope else {
                 return
             }
-            let sorted = sortedThreads(loadedThreads)
+            // Merge, don't replace: the bounded refresh covers only the newest pages, and a
+            // prior full load may have brought in older sessions that must not vanish. The
+            // trade-off (a deleted/archived old session lingering until the next full load)
+            // is reconciled by loadThreads, which still paginates to exhaustion.
+            let refreshedIDs = Set(loadedThreads.map(\.id))
+            let retainedOlder = threads.filter { !refreshedIDs.contains($0.id) }
+            let sorted = sortedThreads(loadedThreads + retainedOlder)
             threads = sorted
             cacheThreadList(sorted, scope: scope)
         } catch {

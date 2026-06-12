@@ -165,6 +165,7 @@ enum SharedKMPBridge {
     typealias SharedAcpRpcInboundEnvelope = MobidexShared.AcpRpcInboundEnvelope
     typealias SharedAcpSessionUpdate = MobidexShared.AcpSessionUpdate
     typealias SharedAcpContentChunk = MobidexShared.AcpContentChunk
+    typealias SharedAcpContentChunkUserMessageChunk = MobidexShared.AcpContentChunkUserMessageChunk
     typealias SharedAcpContentChunkAgentMessageChunk = MobidexShared.AcpContentChunkAgentMessageChunk
     typealias SharedAcpContentChunkAgentThoughtChunk = MobidexShared.AcpContentChunkAgentThoughtChunk
     typealias SharedAcpContentChunkToolCall = MobidexShared.AcpContentChunkToolCall
@@ -345,6 +346,11 @@ enum SharedKMPBridge {
     private static func acpChunkToThreadItem(_ chunk: SharedAcpContentChunk) -> CodexThreadItem? {
         // Mirror the KMP mapper (toCodexSessionItem + toCodexSessionItems): same item kinds and the
         // same stable per-kind ids so appendingAcpThreadItem can coalesce deltas and resolve tool cards.
+        if let u = chunk as? SharedAcpContentChunkUserMessageChunk {
+            // Emitted during session/load replay; live turns echo user input locally instead.
+            guard !u.delta.isEmpty else { return nil }
+            return .userMessage(id: "acp-user", text: u.delta)
+        }
         if let m = chunk as? SharedAcpContentChunkAgentMessageChunk {
             let text = m.delta
             guard !text.isEmpty else { return nil }
@@ -388,6 +394,10 @@ enum SharedKMPBridge {
     /// - anything else appends
     static func appendingAcpThreadItem(_ items: [CodexThreadItem], _ item: CodexThreadItem) -> [CodexThreadItem] {
         switch item {
+        case .userMessage(let id, let text):
+            if case .userMessage(let lastID, let lastText) = items.last, lastID == id {
+                return items.dropLast() + [.userMessage(id: id, text: lastText + text)]
+            }
         case .agentMessage(let id, let text):
             if case .agentMessage(let lastID, let lastText) = items.last, lastID == id {
                 return items.dropLast() + [.agentMessage(id: id, text: lastText + text)]

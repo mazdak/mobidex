@@ -1832,7 +1832,9 @@ class AppViewModel(
     /** Reopens a past ACP session: history replays through the normal item collector. */
     private fun openAcpSession(client: AcpClient, thread: CodexThread) {
         viewModelScope.launch {
-            val cwd = _state.value.selectedProject?.path ?: thread.cwd.ifBlank { null }
+            // The session's own cwd wins: listed sessions can span working directories, and
+            // session/load must target where that conversation actually ran.
+            val cwd = thread.cwd.ifBlank { null } ?: _state.value.selectedProject?.path
             if (cwd == null) {
                 _state.update { it.copy(statusMessage = "Select a project before reopening an ACP session.") }
                 return@launch
