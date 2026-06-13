@@ -87,6 +87,14 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 48) - 2026-06-13
+
+- Executed from `master` at `a66e74d` (`fix(acp): codex review fixes for session resume + refresh merge`); origin in sync.
+- Internal: build 48, BUILD_ID `917262c0-e3ea-47a6-9454-3315429dcc40`, run `.asc/runs/testflight-20260613T013725Z-b3a3dcbb.json`, status ok (compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260613T014220Z-086e9985.json`, status ok (beta review + External Testers).
+- Contents over 47: ACP session resume (session/list populates the session list after ACP connect; session/load replays history, model picker refresh, session-cwd-wins), bulk KMP byte marshalling, debounced+merged thread-list refresh, direct JSONValue Decodable decoding — plus all codex-review fixes.
+- Companion Android team APK `Mobidex-1.0-48-release.apk` (versionCode 48, signed, verified) delivered.
+
 ## asc TestFlight submission (internal + external build 47) - 2026-06-12
 
 - Executed from `master` at `8401e62` (`fix(memory): harden phase-3 per codex review findings`); origin/master confirmed in sync (one transient GitHub SSH push failure earlier, retried successfully).

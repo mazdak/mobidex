@@ -17,7 +17,7 @@ android {
         minSdk = 35
         targetSdk = 36
         // Tracks the iOS TestFlight build numbering so team builds are identifiable.
-        versionCode = 47
+        versionCode = 48
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
