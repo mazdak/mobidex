@@ -110,6 +110,38 @@ struct CodexThread: Identifiable, Decodable, Equatable, Sendable {
 enum CodexFolderlessPaths {
     static func isFolderless(_ cwd: String) -> Bool {
         cwd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || folderlessCodexRoot(for: cwd) != nil
+    }
+
+    static func folderlessCodexRoot(for cwd: String) -> String? {
+        let trimmed = cwd
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/\\"))
+        guard !trimmed.isEmpty else { return nil }
+        let original = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = trimmed
+            .replacingOccurrences(of: "\\", with: "/")
+            .split(separator: "/")
+            .map(String.init)
+        guard let documentsIndex = parts.lastIndex(of: "Documents"),
+              documentsIndex > 0,
+              documentsIndex + 1 < parts.count,
+              parts[documentsIndex + 1] == "Codex"
+        else {
+            return nil
+        }
+        let codexIndex = documentsIndex + 1
+        if codexIndex + 1 < parts.count,
+           (!Self.isCodexChatDateFolder(parts[codexIndex + 1]) || codexIndex + 2 >= parts.count) {
+            return nil
+        }
+        let prefix = original.hasPrefix("/") ? "/" : ""
+        return prefix + parts.prefix(codexIndex + 1).joined(separator: "/")
+    }
+
+    private static func isCodexChatDateFolder(_ value: String) -> Bool {
+        let pattern = #"^\d{4}-\d{2}-\d{2}$"#
+        return value.range(of: pattern, options: .regularExpression) != nil
     }
 }
 

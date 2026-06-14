@@ -55,19 +55,27 @@ final class CodexProtocolTests: XCTestCase {
         transport.receive("""
         {"id":\(id),"result":{"data":[
           {"id":"thread-no-folder","preview":"General chat","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]},
-          {"id":"thread-docs","preview":"Generated Codex chat","cwd":"/Users/me/Documents/Codex/2026-06-12/example-chat","status":{"type":"idle"},"updatedAt":1770000200,"createdAt":1770000000,"turns":[]}
+          {"id":"thread-docs","preview":"Generated Codex chat","cwd":"/Users/me/Documents/Codex/2026-06-12/example-chat","status":{"type":"idle"},"updatedAt":1770000200,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-docs-date-project","preview":"Date project","cwd":"/Users/me/Documents/Codex/2026-06-12","status":{"type":"idle"},"updatedAt":1770000150,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-docs-project","preview":"Real project","cwd":"/Users/me/Documents/Codex/my-project","status":{"type":"idle"},"updatedAt":1770000100,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}
         """)
 
         let threads = try await task.value
-        XCTAssertEqual(threads.count, 2)
+        XCTAssertEqual(threads.count, 4)
         let thread = try XCTUnwrap(threads.first { $0.id == "thread-no-folder" })
         XCTAssertEqual(thread.id, "thread-no-folder")
         XCTAssertEqual(thread.cwd, "")
         XCTAssertEqual(thread.folderLabel, "No Folder")
         let docsThread = try XCTUnwrap(threads.first { $0.id == "thread-docs" })
-        XCTAssertEqual(docsThread.folderLabel, "/Users/me/Documents/Codex/2026-06-12/example-chat")
-        XCTAssertFalse(docsThread.isFolderless)
+        XCTAssertEqual(docsThread.folderLabel, "No Folder")
+        XCTAssertTrue(docsThread.isFolderless)
+        let docsDateProjectThread = try XCTUnwrap(threads.first { $0.id == "thread-docs-date-project" })
+        XCTAssertEqual(docsDateProjectThread.folderLabel, "/Users/me/Documents/Codex/2026-06-12")
+        XCTAssertFalse(docsDateProjectThread.isFolderless)
+        let docsProjectThread = try XCTUnwrap(threads.first { $0.id == "thread-docs-project" })
+        XCTAssertEqual(docsProjectThread.folderLabel, "/Users/me/Documents/Codex/my-project")
+        XCTAssertFalse(docsProjectThread.isFolderless)
         await client.close()
     }
 

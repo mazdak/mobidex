@@ -72,6 +72,7 @@ import mobidex.android.service.turnOptions
 import mobidex.shared.AcpProtocolCore
 import mobidex.shared.appendingAcpSessionItem
 import mobidex.shared.CodexAccessMode
+import mobidex.shared.CodexFolderlessPaths
 import mobidex.shared.CodexInputItem
 import mobidex.shared.CodexReasoningEffortOption
 import mobidex.shared.CodexSessionCachePolicy
@@ -1340,6 +1341,12 @@ class AppViewModel(
         )
     }
 
+    private fun inferredFolderlessCodexRoot(): String? =
+        _state.value.noFolderThreads
+            .asSequence()
+            .mapNotNull { CodexFolderlessPaths.folderlessCodexRoot(it.cwd) }
+            .firstOrNull()
+
     private fun threadMatchesScope(thread: CodexThread, state: MobidexUiState): Boolean {
         val scopedThread = markUnscopedChatState(thread, state)
         if (state.isShowingAllSessions) return scopedThread.isFolderless
@@ -1562,7 +1569,7 @@ class AppViewModel(
                     }
                     requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID, requestAllSessions)
                     val sessionCwd = when (location) {
-                        NewSessionLocation.NoFolder -> null
+                        NewSessionLocation.NoFolder -> inferredFolderlessCodexRoot()
                         NewSessionLocation.CodexWorktree -> {
                             _state.update { it.copy(statusMessage = "Creating worktree") }
                             val projectCwd = cwd ?: error("Select a project before starting a session.")

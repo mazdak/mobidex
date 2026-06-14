@@ -658,6 +658,7 @@ final class AppViewModel: ObservableObject {
         guard !isShowingAllSessions || selectedProjectID != nil else {
             return
         }
+        let retainedNoFolderThreads = noFolderThreads
         isShowingAllSessions = true
         suppressThreadAutoSelection = true
         suppressCachedThreadSelection = true
@@ -667,6 +668,7 @@ final class AppViewModel: ObservableObject {
             return
         }
         resetSessionState(clearThreads: true)
+        noFolderThreads = retainedNoFolderThreads
     }
 
     func showProjectList() {
@@ -1656,7 +1658,7 @@ final class AppViewModel: ObservableObject {
             let sessionCwd: String?
             switch location {
             case .noFolder:
-                sessionCwd = nil
+                sessionCwd = inferredFolderlessCodexRoot()
             case .codexWorktree:
                 guard let cwd else {
                     throw AppViewModelError.missingProject
@@ -3074,6 +3076,13 @@ final class AppViewModel: ObservableObject {
         return sortedThreads((loadedThreads + noFolderThreads).filter { thread in
             thread.isFolderless && seen.insert(thread.id).inserted
         })
+    }
+
+    private func inferredFolderlessCodexRoot() -> String? {
+        noFolderThreads
+            .lazy
+            .compactMap { CodexFolderlessPaths.folderlessCodexRoot(for: $0.cwd) }
+            .first
     }
 
     private func sortedThreadsPreservingSelectedThread(

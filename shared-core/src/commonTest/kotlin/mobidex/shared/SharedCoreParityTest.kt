@@ -187,11 +187,21 @@ class SharedCoreParityTest {
             openSessions = listOf(
                 CodexThreadSummary(id = "no-folder", cwd = "", updatedAtEpochSeconds = 30),
                 CodexThreadSummary(id = "unscoped", cwd = "/home/me", updatedAtEpochSeconds = 40, isUnscoped = true),
-                CodexThreadSummary(id = "regular-docs", cwd = "/Users/me/Documents/Codex/2026-06-12/example-chat", updatedAtEpochSeconds = 50),
+                CodexThreadSummary(id = "desktop-chat", cwd = "/Users/me/Documents/Codex/2026-06-12/example-chat", updatedAtEpochSeconds = 50),
+                CodexThreadSummary(id = "regular-docs", cwd = "/Users/me/Documents/Notes/example-chat", updatedAtEpochSeconds = 60),
+                CodexThreadSummary(id = "codex-project", cwd = "/Users/me/Documents/Codex/my-project", updatedAtEpochSeconds = 70),
+                CodexThreadSummary(id = "codex-date-project", cwd = "/Users/me/Documents/Codex/2026-06-12", updatedAtEpochSeconds = 80),
             ),
         )
 
-        assertEquals(listOf("/Users/me/Documents/Codex/2026-06-12/example-chat"), refreshed.map { it.path })
+        assertEquals(
+            listOf(
+                "/Users/me/Documents/Codex/2026-06-12",
+                "/Users/me/Documents/Codex/my-project",
+                "/Users/me/Documents/Notes/example-chat",
+            ),
+            refreshed.map { it.path },
+        )
     }
 
     @Test
@@ -233,14 +243,20 @@ class SharedCoreParityTest {
             sessions = listOf(
                 CodexThreadSummary(id = "folder", cwd = "/srv/app", updatedAtEpochSeconds = 20),
                 CodexThreadSummary(id = "unscoped-home", cwd = "/home/me", updatedAtEpochSeconds = 50, isUnscoped = true),
+                CodexThreadSummary(id = "desktop-chat", cwd = "/Users/me/Documents/Codex/2026-06-12/example-chat", updatedAtEpochSeconds = 45),
+                CodexThreadSummary(id = "codex-project", cwd = "/Users/me/Documents/Codex/my-project", updatedAtEpochSeconds = 35),
+                CodexThreadSummary(id = "codex-date-project", cwd = "/Users/me/Documents/Codex/2026-06-12", updatedAtEpochSeconds = 30),
                 CodexThreadSummary(id = "no-folder-new", cwd = "", updatedAtEpochSeconds = 40),
                 CodexThreadSummary(id = "no-folder-old", cwd = " ", updatedAtEpochSeconds = 10),
             ),
             projects = listOf(ProjectRecord(path = "/srv/app")),
         )
 
-        assertEquals(listOf("No Folder", "app"), sections.map { it.title })
-        assertEquals(listOf("unscoped-home", "no-folder-new", "no-folder-old"), sections.first().sessionIds)
+        assertEquals(
+            listOf("No Folder", "/Users/me/Documents/Codex/my-project", "/Users/me/Documents/Codex/2026-06-12", "app"),
+            sections.map { it.title },
+        )
+        assertEquals(listOf("unscoped-home", "desktop-chat", "no-folder-new", "no-folder-old"), sections.first().sessionIds)
         assertEquals(
             emptyList(),
             SessionListSections.sessionIdsForProject(

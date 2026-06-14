@@ -954,13 +954,14 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(params["cwd"])
         transport.receive("""
         {"id":\(initialUnscopedList.id),"result":{"data":[
+          {"id":"thread-desktop-chat","preview":"Desktop chat","cwd":"/Users/me/Documents/Codex/2026-06-12/example-chat","status":{"type":"idle"},"updatedAt":1770000500,"createdAt":1770000000,"turns":[]},
           {"id":"thread-no-folder","preview":"No folder work","status":{"type":"idle"},"updatedAt":1770000450,"createdAt":1770000000,"turns":[]},
           {"id":"thread-app","preview":"App work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}
         """)
         await connectTask.value
         await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
-        XCTAssertEqual(viewModel.noFolderThreads.map(\.id), ["thread-no-folder"])
+        XCTAssertEqual(viewModel.noFolderThreads.map(\.id), ["thread-desktop-chat", "thread-no-folder"])
         XCTAssertNil(viewModel.selectedThreadID)
 
         viewModel.selectProject(appProject.id)
@@ -1004,6 +1005,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(params["cwd"])
         transport.receive("""
         {"id":\(toolsList.id),"result":{"data":[
+          {"id":"thread-desktop-chat","preview":"Desktop chat","cwd":"/Users/me/Documents/Codex/2026-06-12/example-chat","status":{"type":"idle"},"updatedAt":1770000500,"createdAt":1770000000,"turns":[]},
           {"id":"thread-no-folder","preview":"No folder work","status":{"type":"idle"},"updatedAt":1770000450,"createdAt":1770000000,"turns":[]},
           {"id":"thread-tools","preview":"Tools work","cwd":"/srv/tools","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
           {"id":"thread-app","preview":"App work","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
@@ -1012,8 +1014,8 @@ final class AppViewModelTests: XCTestCase {
         await refreshTask.value
 
         XCTAssertFalse(viewModel.isRefreshingSessions)
-        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-no-folder"])
-        XCTAssertEqual(viewModel.noFolderThreads.map(\.id), ["thread-no-folder"])
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-desktop-chat", "thread-no-folder"])
+        XCTAssertEqual(viewModel.noFolderThreads.map(\.id), ["thread-desktop-chat", "thread-no-folder"])
         XCTAssertNil(viewModel.selectedThreadID)
         XCTAssertNil(viewModel.selectedThread)
         XCTAssertTrue(viewModel.conversationSections.isEmpty)
@@ -1917,7 +1919,7 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
-    func testStartNoFolderSessionFromProjectListOmitsCwd() async throws {
+    func testStartNoFolderSessionUsesObservedCodexChatRoot() async throws {
         let project = ProjectRecord(path: "/srv/app", isAdded: true)
         let server = ServerRecord(
             displayName: "Build Box",
@@ -1944,7 +1946,13 @@ final class AppViewModelTests: XCTestCase {
         let list = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = list.nextCursor
         transport.receive(#"{"id":\#(list.id),"result":{"data":[],"nextCursor":null}}"#)
-        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
+        let unscopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = unscopedList.nextCursor
+        transport.receive("""
+        {"id":\(unscopedList.id),"result":{"data":[
+          {"id":"thread-desktop-chat","preview":"Desktop chat","cwd":"/Users/mazdak/Documents/Codex/2026-06-14/desktop-chat","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
         await connectTask.value
 
         XCTAssertTrue(viewModel.canStartNoFolderSession)
@@ -1964,12 +1972,12 @@ final class AppViewModelTests: XCTestCase {
         let newSessionTask = Task { await viewModel.startNoFolderSession() }
         let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
         let params = try requestParams(for: startThread, in: transport)
-        XCTAssertNil(params["cwd"])
+        XCTAssertEqual(params["cwd"] as? String, "/Users/mazdak/Documents/Codex")
         transport.receive("""
         {"id":\(startThread.id),"result":{"thread":{
           "id":"thread-no-folder",
           "preview":"No folder chat",
-          "cwd":"/home/mazdak",
+          "cwd":"/Users/mazdak/Documents/Codex",
           "status":{"type":"idle"},
           "updatedAt":1770000400,
           "createdAt":1770000400,
@@ -1979,9 +1987,9 @@ final class AppViewModelTests: XCTestCase {
 
         let createdThreadID = await newSessionTask.value
         XCTAssertEqual(createdThreadID, "thread-no-folder")
-        XCTAssertEqual(viewModel.selectedThread?.cwd, "/home/mazdak")
+        XCTAssertEqual(viewModel.selectedThread?.cwd, "/Users/mazdak/Documents/Codex")
         XCTAssertEqual(viewModel.selectedThread?.folderLabel, "No Folder")
-        XCTAssertEqual(viewModel.noFolderThreads.map(\.id), ["thread-no-folder"])
+        XCTAssertEqual(viewModel.noFolderThreads.map(\.id), ["thread-no-folder", "thread-desktop-chat"])
         XCTAssertEqual(try repository.loadServers().first?.unscopedThreadIDs, ["thread-no-folder"])
         XCTAssertEqual(viewModel.statusMessage, "New chat created.")
 

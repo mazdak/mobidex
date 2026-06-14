@@ -160,6 +160,54 @@ class AppViewModelNewSessionTest {
     }
 
     @Test
+    fun startNoFolderSessionUsesObservedCodexChatRoot() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app")
+        val server = server(project)
+        val desktopChat = threadJson(
+            id = "thread-desktop-chat",
+            cwd = "/Users/mazdak/Documents/Codex/2026-06-14/desktop-chat",
+        )
+        val transport = ScriptedAppServerTransport(
+            threadListResponseProvider = { request ->
+                val cwd = request["params"]?.jsonObject?.get("cwd")?.jsonPrimitive?.contentOrNull
+                if (cwd == null) listOf(desktopChat) else emptyList()
+            },
+        )
+        val model = viewModel(server, FakeSshService(transport))
+        advanceUntilIdle()
+
+        model.connectSelectedServer()
+        waitUntil {
+            model.state.value.connectionState == ServerConnectionState.Connected &&
+                !model.state.value.isRefreshingSessions &&
+                transport.sentMethods.any { it == "thread/list" }
+        }
+
+        val connectedListCount = transport.sentMethods.count { it == "thread/list" }
+        model.selectAllSessionsAndRefresh()
+        waitUntil {
+            model.state.value.isShowingAllSessions &&
+                !model.state.value.isRefreshingSessions &&
+                transport.sentMethods.count { it == "thread/list" } > connectedListCount
+        }
+        assertEquals(
+            listOf("thread-desktop-chat"),
+            model.state.value.noFolderThreads.map { it.id },
+            "state=${model.state.value}, methods=${transport.sentMethods}",
+        )
+
+        var completed = false
+        model.startNoFolderSession { completed = it }
+        waitUntil { completed }
+
+        assertTrue(completed, "state=${model.state.value}, methods=${transport.sentMethods}")
+        assertEquals("/Users/mazdak/Documents/Codex", transport.startThreadCwds.last())
+        assertEquals("/Users/mazdak/Documents/Codex", model.state.value.selectedThread?.cwd)
+        assertEquals("No Folder", model.state.value.selectedThread?.folderLabel)
+        assertEquals(listOf("thread-new", "thread-desktop-chat"), model.state.value.noFolderThreads.map { it.id })
+    }
+
+    @Test
     fun noFolderChatsIgnoreFolderThreadStartedEvents() = runTest(dispatcher) {
         val project = ProjectRecord(path = "/srv/app")
         val server = server(project)
@@ -577,6 +625,7 @@ private class ScriptedAppServerTransport(
     private val startTurnGate: CompletableDeferred<Unit>? = null,
     private val threadListGates: ArrayDeque<CompletableDeferred<Unit>?> = ArrayDeque(),
     private val threadListResponses: ArrayDeque<List<JsonObject>> = ArrayDeque(),
+    private val threadListResponseProvider: ((JsonObject) -> List<JsonObject>?)? = null,
 ) : CodexLineTransport {
     private val inbound = Channel<String>(Channel.UNLIMITED)
     private val observedMethods = mutableMapOf<String, CompletableDeferred<Unit>>()
@@ -605,7 +654,8 @@ private class ScriptedAppServerTransport(
             "thread/list" -> {
                 val gate = if (threadListGates.isEmpty()) null else threadListGates.removeFirst()
                 gate?.await()
-                val threads = threadListResponses.removeFirstOrNull()
+                val threads = threadListResponseProvider?.invoke(request)
+                    ?: threadListResponses.removeFirstOrNull()
                     ?: listOf(threadJson("thread-new", "/srv/app"))
                 respond(id, buildJsonObject { put("data", JsonArray(threads)) })
             }
