@@ -230,6 +230,8 @@ class AppViewModel(
     private var sessionRefreshGeneration = 0L
     private var sessionRefreshListLoadGeneration = 0L
     private var sessionRefreshDetailLoadGeneration = 0L
+    private var sessionMutationGeneration = 0L
+    private val unlistedStartedThreadIDs = mutableSetOf<String>()
     private val sessionListInitialPageLimit = 1
     private var isSendingInput = false
     private var isStartingSession = false
@@ -1201,8 +1203,11 @@ class AppViewModel(
     ): List<CodexThread> {
         val selectedID = state.selectedThreadID
         val selectedThread = state.selectedThread
+        unlistedStartedThreadIDs.removeAll(loadedThreads.map { it.id }.toSet())
+        val shouldPreserveMissingSelectedThread = preserveMissingSelectedThread ||
+            (selectedID != null && selectedID in unlistedStartedThreadIDs)
         val threads = if (
-            preserveMissingSelectedThread &&
+            shouldPreserveMissingSelectedThread &&
             selectedID != null &&
             selectedThread?.id == selectedID &&
             loadedThreads.none { it.id == selectedID } &&
@@ -1375,7 +1380,9 @@ class AppViewModel(
             return
         }
         isStartingSession = true
+        sessionMutationGeneration += 1
         suppressThreadAutoSelection = true
+        resetSessionRefreshTracking()
         _state.update {
             it.copy(
                 isStartingNewSession = true,
@@ -1446,6 +1453,10 @@ class AppViewModel(
                     } else {
                         client.startThread(sessionCwd)
                     }
+                    if (location == NewSessionLocation.CodexWorktree) {
+                        rememberSessionPath(sessionCwd, requestServerID, requestProjectID)
+                    }
+                    unlistedStartedThreadIDs += thread.id
                     val adopted = hydrateConversationIfCurrent(
                         thread,
                         requestServerID,
@@ -1480,6 +1491,26 @@ class AppViewModel(
         }
     }
 
+    private suspend fun rememberSessionPath(sessionPath: String, serverID: String?, projectID: String?) {
+        if (sessionPath.isBlank() || serverID == null || projectID == null) return
+        val state = _state.value
+        val server = state.servers.firstOrNull { it.id == serverID } ?: return
+        val project = server.projects.firstOrNull { it.id == projectID } ?: return
+        val normalizedSessionPaths = ProjectRecord.normalizedSessionPaths(project.sessionPaths + sessionPath, project.path)
+        if (normalizedSessionPaths == project.sessionPaths) return
+        val updatedProject = project.copy(sessionPaths = normalizedSessionPaths)
+        val updatedServer = server.copy(
+            projects = server.projects.map { if (it.id == projectID) updatedProject else it },
+            updatedAtEpochSeconds = Instant.now().epochSecond,
+        )
+        val updated = state.servers.upsert(updatedServer)
+        repository.saveServers(updated)
+        invalidateSessionCaches(serverID)
+        _state.update { current ->
+            if (current.selectedServerID == serverID) current.copy(servers = updated) else current
+        }
+    }
+
     fun sendComposerText(text: String) {
         sendComposerInput(text, emptyList(), onComplete = {})
     }
@@ -1496,6 +1527,7 @@ class AppViewModel(
                 return@launch
             }
             isSendingInput = true
+            sessionMutationGeneration += 1
             var didSubmitInput = false
             try {
                 runBusy(if (attachmentUris.isEmpty()) "Sending" else "Uploading attachments") {
@@ -1539,6 +1571,7 @@ class AppViewModel(
                         suppressThreadAutoSelection = true
                         requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID)
                         thread = client.startThread(requestState.selectedProject?.path)
+                        unlistedStartedThreadIDs += thread.id
                         createdThread = true
                         if (!hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID, acceptedStartedThreadID = thread.id)) {
                             return@runBusy
@@ -2394,6 +2427,8 @@ class AppViewModel(
     }
 
     private suspend fun handleNotification(method: String, params: JsonElement?) {
+        val notificationSessionMutationGeneration = sessionMutationGeneration
+        val sessionMutationWasInFlight = isSessionMutationInFlight()
         when (method) {
             "error" -> {
                 if (!eventTargetsSelectedThread(params)) return
@@ -2406,7 +2441,7 @@ class AppViewModel(
                 if (threadMatchesCurrentScope(thread) && (_state.value.selectedThreadID == null || _state.value.selectedThreadID == thread.id)) {
                     hydrateConversation(thread)
                 }
-                refreshThreads()
+                refreshThreadsFromNotification(notificationSessionMutationGeneration, sessionMutationWasInFlight)
                 appServer?.let { client -> refreshProjectsForCurrentScope(client, _state.value.selectedServerID) }
             }
             "turn/started", "turn/completed" -> {
@@ -2446,7 +2481,7 @@ class AppViewModel(
                     return
                 }
                 if (method == "turn/completed") {
-                    refreshThreads()
+                    refreshThreadsFromNotification(notificationSessionMutationGeneration, sessionMutationWasInFlight)
                     if (targetsSelectedThread) {
                         val client = appServer
                         val requestServerID = _state.value.selectedServerID
@@ -2489,7 +2524,7 @@ class AppViewModel(
                     state.copy(selectedThread = next)
                 }
                 cacheCurrentSelectedThreadDetail()
-                refreshThreads()
+                refreshThreadsFromNotification(notificationSessionMutationGeneration, sessionMutationWasInFlight)
             }
             "thread/tokenUsage/updated" -> {
                 if (!eventTargetsSelectedThread(params)) return
@@ -2501,7 +2536,16 @@ class AppViewModel(
                 val requestID = params?.jsonObject?.get("requestId")?.toString()
                 _state.update { it.copy(pendingApprovals = it.pendingApprovals.filterNot { approval -> approval.id == requestID }) }
             }
-            else -> if (method.startsWith("thread/")) refreshThreads()
+            else -> if (method.startsWith("thread/")) refreshThreadsFromNotification(notificationSessionMutationGeneration, sessionMutationWasInFlight)
+        }
+    }
+
+    private fun refreshThreadsFromNotification(notificationSessionMutationGeneration: Long, sessionMutationWasInFlight: Boolean) {
+        if (!sessionMutationWasInFlight &&
+            notificationSessionMutationGeneration == sessionMutationGeneration &&
+            !isSessionMutationInFlight()
+        ) {
+            refreshThreads()
         }
     }
 

@@ -1,21 +1,30 @@
 # Mission
 
-Mission: Review changes against master merge base 8929571a6860474df39ff392a8f7a8c98a7968ed and report prioritized actionable findings.
+Mission: Emulate the iOS "new worktree then start session" flow against the Linux server and determine where the path fails, if it fails.
 
 Done criteria:
-- Inspect repo instructions and current diff.
-- Identify discrete introduced bugs with precise locations.
-- Return findings in required JSON schema.
+- Create or reuse a remote worktree using the same shape as the iOS path.
+- Start a Codex app-server thread in that worktree over SSH/stdio.
+- Compare list/start behavior with the original project cwd.
+- Record whether the failure is in worktree creation, app-server thread start, list scoping, or app-side state/grouping.
 
 Guardrails:
-- Do not modify production code.
-- Keep review comments brief and actionable.
-- Only flag issues introduced by the patch that the author would likely fix.
+- Keep remote changes limited to a test worktree and test thread/session.
+- Clean up or archive test artifacts when safe.
+- Do not discard the Android race fix already in progress.
 
 Checklist:
-- [x] Inspect diff against merge base.
-- [x] Analyze changed code for bugs.
-- [x] Produce JSON review verdict.
+- [x] Verify the remote test worktree exists.
+- [x] Start a thread in the remote worktree via app-server stdio.
+- [x] Compare thread/list results for worktree cwd and original project cwd.
+- [x] Interpret the result against the iOS launch flow.
+- [x] Patch confirmed app-side state/model gaps.
+- [x] Run focused verification and subagent review.
 
 Critical learnings:
-- iOS build and shared-core tests pass, but review found correctness issues in session refresh and ACP session reopening.
+- User confirmed `uuidgen` exists on both Mac and Linux hosts; read-only SSH probing also found `/usr/bin/uuidgen` and `/usr/bin/mktemp` on `framework.tail866988.ts.net`.
+- The old iOS shell shape successfully created `/home/mazdak/.codex/worktrees/7e89/mobile` from `/home/mazdak/Code/mobile`, so worktree creation itself is not currently failing on this server for that repo.
+- Live app-server emulation on `framework.tail866988.ts.net` showed `thread/start` succeeds for both `/home/mazdak/.codex/worktrees/7e89/mobile` and `/home/mazdak/Code/mobile`; `thread/loaded/list` and `thread/read(includeTurns:false)` can see the new no-turn threads, but scoped `thread/list` returns empty until a first user message materializes the rollout.
+- Fix: newly-created Codex worktree paths are now recorded in the owning project's `sessionPaths`, and newly-started threads are temporarily preserved when `thread/list` has not surfaced them yet.
+- Review follow-up: event-driven iOS refreshes now use the same preservation path, and worktree failure logs no longer prevent removing failed empty worktree bases.
+- Cleanup: the temporary remote test worktree `/home/mazdak/.codex/worktrees/7e89/mobile` was removed.

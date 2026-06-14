@@ -342,6 +342,7 @@ final class AppViewModel: ObservableObject {
     private var selectedThreadLoadingCounts: [String: Int] = [:]
     private var sessionRefreshListLoadGeneration = 0
     private var sessionRefreshDetailLoadGeneration = 0
+    private var unlistedStartedThreadIDs = Set<String>()
     private var queuedTurnInputsByThreadID: [String: [QueuedTurnInput]] = [:]
     private var isConnectingAppServer = false
     private var didLoadServers = false
@@ -1531,6 +1532,10 @@ final class AppViewModel: ObservableObject {
             guard currentThreadLoadScope == scope else {
                 return
             }
+            if location == .codexWorktree {
+                rememberSessionPath(sessionCwd, serverID: selectedServer.id, projectID: selectedProject.id)
+            }
+            unlistedStartedThreadIDs.insert(thread.id)
             selectedThreadID = thread.id
             selectedThreadTokenUsage = nil
             changedFiles = []
@@ -1553,6 +1558,33 @@ final class AppViewModel: ObservableObject {
             suppressThreadAutoSelection = false
         }
         return createdThreadID
+    }
+
+    private func rememberSessionPath(_ sessionPath: String, serverID: UUID, projectID: UUID) {
+        guard !sessionPath.isEmpty else { return }
+        var nextServers = servers
+        guard let serverIndex = nextServers.firstIndex(where: { $0.id == serverID }),
+              let projectIndex = nextServers[serverIndex].projects.firstIndex(where: { $0.id == projectID })
+        else {
+            return
+        }
+        let project = nextServers[serverIndex].projects[projectIndex]
+        let normalizedSessionPaths = ProjectRecord.normalizedSessionPaths(
+            project.sessionPaths + [sessionPath],
+            primaryPath: project.path
+        )
+        guard normalizedSessionPaths != project.sessionPaths else {
+            return
+        }
+        nextServers[serverIndex].projects[projectIndex].sessionPaths = normalizedSessionPaths
+        nextServers[serverIndex].updatedAt = .now
+        servers = nextServers
+        invalidateSessionCaches(for: serverID)
+        do {
+            try persistServers(nextServers)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
     }
 
     private func waitForNewSessionConnectionStep(
@@ -1881,6 +1913,7 @@ final class AppViewModel: ObservableObject {
                 return
             } else {
                 thread = try await appServer.startThread(cwd: scope.cwd)
+                unlistedStartedThreadIDs.insert(thread.id)
                 let selectionMatchesStartedThread = selectedThreadID == startingThreadID
                     || (startingThreadID == nil && selectedThreadID == thread.id)
                 guard currentThreadLoadScope == scope, selectionMatchesStartedThread, threadMatchesScope(thread, scope: scope) else {
@@ -2777,9 +2810,14 @@ final class AppViewModel: ObservableObject {
     private func sortedThreadsPreservingSelectedThread(
         _ loadedThreads: [CodexThread],
         scope: ThreadLoadScope,
-        preserveMissingSelectedThread: Bool
+        preserveMissingSelectedThread: Bool,
+        listedThreadIDs: Set<String>? = nil
     ) -> [CodexThread] {
-        guard preserveMissingSelectedThread,
+        unlistedStartedThreadIDs.subtract(listedThreadIDs ?? Set(loadedThreads.map(\.id)))
+        let shouldPreserveMissingSelectedThread = selectedThreadID.map {
+            preserveMissingSelectedThread || unlistedStartedThreadIDs.contains($0)
+        } ?? preserveMissingSelectedThread
+        guard shouldPreserveMissingSelectedThread,
               let selectedThreadID,
               !loadedThreads.contains(where: { $0.id == selectedThreadID }),
               let selectedThread,
@@ -2977,7 +3015,11 @@ final class AppViewModel: ObservableObject {
             guard currentThreadLoadScope == scope else {
                 return
             }
-            let sorted = sortedThreads(loadedThreads)
+            let sorted = sortedThreadsPreservingSelectedThread(
+                loadedThreads,
+                scope: scope,
+                preserveMissingSelectedThread: false
+            )
             threads = sorted
             cacheThreadList(sorted, scope: scope)
             if let selectedSummary = loadedThreads.first(where: { $0.id == selectedThreadID }),
@@ -3021,7 +3063,12 @@ final class AppViewModel: ObservableObject {
             // is reconciled by loadThreads, which still paginates to exhaustion.
             let refreshedIDs = Set(loadedThreads.map(\.id))
             let retainedOlder = threads.filter { !refreshedIDs.contains($0.id) }
-            let sorted = sortedThreads(loadedThreads + retainedOlder)
+            let sorted = sortedThreadsPreservingSelectedThread(
+                loadedThreads + retainedOlder,
+                scope: scope,
+                preserveMissingSelectedThread: false,
+                listedThreadIDs: refreshedIDs
+            )
             threads = sorted
             cacheThreadList(sorted, scope: scope)
         } catch {

@@ -92,7 +92,9 @@ class AppViewModelNewSessionTest {
     fun startNewSessionDefaultsToWorktreeAndStartsThreadThere() = runTest(dispatcher) {
         val project = ProjectRecord(path = "/srv/app")
         val server = server(project)
-        val transport = ScriptedAppServerTransport()
+        val transport = ScriptedAppServerTransport(
+            threadListResponses = ArrayDeque(List(6) { emptyList<JsonObject>() }),
+        )
         val ssh = FakeSshService(transport)
         val model = viewModel(server, ssh)
         advanceUntilIdle()
@@ -106,6 +108,15 @@ class AppViewModelNewSessionTest {
         assertEquals(listOf<String?>("/srv/app-worktree"), transport.startThreadCwds)
         assertEquals("thread-new", model.state.value.selectedThreadID)
         assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)
+        assertEquals(listOf("/srv/app", "/srv/app-worktree"), model.state.value.selectedProject?.sessionPaths)
+
+        model.refreshThreads()
+        waitUntil { transport.sentMethods.count { it == "thread/list" } >= 6 }
+        advanceUntilIdle()
+
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+        assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)
+        assertEquals(listOf("thread-new"), model.state.value.threads.map { it.id })
     }
 
     @Test
@@ -172,6 +183,59 @@ class AppViewModelNewSessionTest {
         startGate.complete(Unit)
         waitUntil { completed }
         assertTrue(completed, "state=${model.state.value}, methods=${transport.sentMethods}")
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+    }
+
+    @Test
+    fun startNewSessionSelectionSurvivesOlderStaleThreadRefresh() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app", sessionPaths = emptyList())
+        val server = server(project)
+        val staleListGate = CompletableDeferred<Unit>()
+        val transport = ScriptedAppServerTransport(
+            threadListGates = ArrayDeque(listOf(null, staleListGate)),
+            threadListResponses = ArrayDeque(listOf(emptyList<JsonObject>(), emptyList())),
+        )
+        val model = viewModel(server, FakeSshService(transport))
+        advanceUntilIdle()
+
+        model.connectSelectedServer()
+        waitUntil { transport.sentMethods.count { it == "thread/list" } >= 2 }
+
+        var completed = false
+        model.startNewSession(NewSessionLocation.ProjectDirectory) { completed = it }
+        waitUntil { completed }
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+
+        staleListGate.complete(Unit)
+        waitUntil { transport.sentMethods.count { it == "thread/list" } >= 2 }
+        advanceUntilIdle()
+
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+        assertEquals("thread-new", model.state.value.selectedThread?.id)
+    }
+
+    @Test
+    fun threadStartedNotificationDuringNewSessionDoesNotLaunchSessionRefresh() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app")
+        val server = server(project)
+        val startGate = CompletableDeferred<Unit>()
+        val transport = ScriptedAppServerTransport(startThreadGate = startGate)
+        val model = viewModel(server, FakeSshService(transport))
+        advanceUntilIdle()
+
+        var completed = false
+        model.startNewSession(NewSessionLocation.ProjectDirectory) { completed = it }
+        transport.awaitMethod("thread/start")
+        runCurrent()
+
+        transport.notifyThreadStarted("thread-new", project.path)
+        waitUntil { model.state.value.selectedThreadID == "thread-new" }
+        advanceTimeBy(1_000)
+        runCurrent()
+
+        assertFalse("thread/list" in transport.sentMethods, "methods=${transport.sentMethods}")
+        startGate.complete(Unit)
+        waitUntil { completed }
         assertEquals("thread-new", model.state.value.selectedThreadID)
     }
 
@@ -386,9 +450,12 @@ private class FakeSshService(
 private class ScriptedAppServerTransport(
     private val startThreadGate: CompletableDeferred<Unit>? = null,
     private val startTurnGate: CompletableDeferred<Unit>? = null,
+    private val threadListGates: ArrayDeque<CompletableDeferred<Unit>?> = ArrayDeque(),
+    private val threadListResponses: ArrayDeque<List<JsonObject>> = ArrayDeque(),
 ) : CodexLineTransport {
     private val inbound = Channel<String>(Channel.UNLIMITED)
     private val observedMethods = mutableMapOf<String, CompletableDeferred<Unit>>()
+    private val threadCwds = mutableMapOf<String, String>()
     val sentMethods = mutableListOf<String>()
     val startThreadCwds = mutableListOf<String?>()
 
@@ -405,12 +472,19 @@ private class ScriptedAppServerTransport(
                 startThreadGate?.await()
                 val cwd = request["params"]?.jsonObject?.get("cwd")?.jsonPrimitive?.contentOrNull
                 startThreadCwds += cwd
+                threadCwds["thread-new"] = cwd ?: "/srv/app"
                 respond(id, buildJsonObject { put("thread", threadJson("thread-new", cwd ?: "/srv/app")) })
             }
-            "thread/list" -> respond(id, buildJsonObject { put("data", JsonArray(listOf(threadJson("thread-new", "/srv/app")))) })
+            "thread/list" -> {
+                val gate = if (threadListGates.isEmpty()) null else threadListGates.removeFirst()
+                gate?.await()
+                val threads = threadListResponses.removeFirstOrNull()
+                    ?: listOf(threadJson("thread-new", "/srv/app"))
+                respond(id, buildJsonObject { put("data", JsonArray(threads)) })
+            }
             "thread/resume", "thread/read" -> {
                 val threadID = request["params"]?.jsonObject?.get("threadId")?.jsonPrimitive?.contentOrNull ?: "thread-current"
-                respond(id, buildJsonObject { put("thread", threadJson(threadID, "/srv/app")) })
+                respond(id, buildJsonObject { put("thread", threadJson(threadID, threadCwds[threadID] ?: "/srv/app")) })
             }
             "turn/start" -> {
                 startTurnGate?.await()
@@ -440,6 +514,10 @@ private class ScriptedAppServerTransport(
                 )
             ).toString()
         )
+    }
+
+    suspend fun notifyThreadStarted(id: String, cwd: String) {
+        notify("thread/started", buildJsonObject { put("thread", threadJson(id, cwd)) })
     }
 
     override suspend fun close() {

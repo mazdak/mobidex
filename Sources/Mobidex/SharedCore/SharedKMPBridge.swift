@@ -107,6 +107,10 @@ enum SharedKMPBridge {
         MobidexShared.RemoteCodexDiscovery.shared.shellCommand(executionPath: executionPath)
     }
 
+    static func remoteCodexWorktreeShellCommand(projectPath: String) -> String {
+        MobidexShared.RemoteCodexWorktreeCommand.shared.shellCommand(projectPath: projectPath)
+    }
+
     static var remoteCodexDiscoveryPythonSource: String {
         MobidexShared.RemoteCodexDiscovery.shared.pythonSource
     }

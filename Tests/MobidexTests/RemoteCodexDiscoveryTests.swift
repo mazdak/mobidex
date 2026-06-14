@@ -2,6 +2,20 @@ import XCTest
 @testable import Mobidex
 
 final class RemoteCodexDiscoveryTests: XCTestCase {
+    func testWorktreeShellCommandUsesMktempDirectoryAllocation() {
+        let command = SharedKMPBridge.remoteCodexWorktreeShellCommand(projectPath: "/srv/Project 'A'")
+
+        XCTAssertTrue(command.contains("git -C "), command)
+        XCTAssertTrue(command.contains("/srv/Project "), command)
+        XCTAssertTrue(command.contains("'\"'\"'"), command)
+        XCTAssertTrue(command.contains(" rev-parse --show-toplevel"), command)
+        XCTAssertTrue(command.contains("parent=\"$HOME/.codex/worktrees\""), command)
+        XCTAssertTrue(command.contains("mktemp -d \"$parent/XXXXXX\""), command)
+        XCTAssertTrue(command.contains("target=\"$base/$name\""), command)
+        XCTAssertFalse(command.contains("uuidgen"), command)
+        XCTAssertFalse(command.contains("date +%s"), command)
+    }
+
     func testShellCommandWrapsPythonDiscoveryScript() {
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.hasPrefix("export PATH="))
         XCTAssertFalse(RemoteCodexDiscovery.shellCommand.contains("mobidex_shell_rc"))
