@@ -87,6 +87,14 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal build 51) - 2026-06-14
+
+- Executed from `master` after fast-forwarding `edfd186` to `4e15d6a` (`fix(chats): recognize Codex desktop folderless sessions`); Android release metadata bumped to versionCode `51`.
+- Internal: build 51, BUILD_ID `3f1836b0-38d3-4b33-a527-c74905d731da`, run `.asc/runs/testflight-20260614T154630Z-baaea0ab.json`, status ok (compliance set, Internal Testers).
+- Contents over 50: desktop Codex folderless chats under `~/Documents/Codex/YYYY-MM-DD/<slug>` now appear as No Folder chats in Mobidex, and new no-folder starts reuse an observed `~/Documents/Codex` root.
+- Companion Android team APK `Mobidex-1.0-51-release.apk` (versionCode 51, signed, v2-verified) built.
+- External TestFlight distribution was not run for build 51.
+
 ## asc TestFlight submission (internal + external build 50) - 2026-06-14
 
 - Executed from `master` after fast-forwarding `789bdef` to `d4f5e2c` (`feat(sessions): add projectless Codex chats`); Android release metadata bumped to versionCode `50`.
