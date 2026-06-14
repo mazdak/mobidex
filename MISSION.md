@@ -1,18 +1,15 @@
 # Mission
 
-Mission: Disable server-scoped New Chat controls whenever the selected server is not connected.
+Mission: Publish TestFlight build 51 to the external TestFlight group and record the release metadata.
 
 Done criteria:
-- [x] Pull latest `origin/master`.
-- [x] Tighten iOS and Android new-session capability predicates to require an active connection.
-- [x] Add focused regression coverage for disconnected state.
-- [x] Run focused validation.
-- [x] Commit and push the fix.
+- [x] Publish build 51 to `External Testers`.
+- [x] Submit build 51 for beta app review.
+- [x] Record and push the external run metadata.
 
 Guardrails:
-- Keep the change limited to UI capability/enablement state.
-- Preserve existing programmatic start-session behavior unless tests prove it is unsafe.
-- Fix both native clients when the same state bug exists.
+- Do not rebuild; publish the existing build 51.
+- Keep release metadata consistent with the ASC run output.
 
 Critical learnings:
-- iOS and Android both allowed `canStartNoFolderSession` while disconnected.
+- External workflow succeeded with run `.asc/runs/testflight_external-20260614T170052Z-66d4e7cc.json`.

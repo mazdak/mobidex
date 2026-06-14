@@ -93,7 +93,7 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - Internal: build 51, BUILD_ID `3f1836b0-38d3-4b33-a527-c74905d731da`, run `.asc/runs/testflight-20260614T154630Z-baaea0ab.json`, status ok (compliance set, Internal Testers).
 - Contents over 50: desktop Codex folderless chats under `~/Documents/Codex/YYYY-MM-DD/<slug>` now appear as No Folder chats in Mobidex, and new no-folder starts reuse an observed `~/Documents/Codex` root.
 - Companion Android team APK `Mobidex-1.0-51-release.apk` (versionCode 51, signed, v2-verified) built.
-- External TestFlight distribution was not run for build 51.
+- External: run `.asc/runs/testflight_external-20260614T170052Z-66d4e7cc.json`, status ok (beta review + External Testers).
 
 ## asc TestFlight submission (internal + external build 50) - 2026-06-14
 
