@@ -7,7 +7,7 @@ Done criteria:
 - [x] Tighten iOS and Android new-session capability predicates to require an active connection.
 - [x] Add focused regression coverage for disconnected state.
 - [x] Run focused validation.
-- [ ] Commit and push the fix.
+- [x] Commit and push the fix.
 
 Guardrails:
 - Keep the change limited to UI capability/enablement state.
