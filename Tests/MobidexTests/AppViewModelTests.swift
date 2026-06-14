@@ -2183,7 +2183,8 @@ final class AppViewModelTests: XCTestCase {
 
         XCTAssertTrue(viewModel.selectServer(server.id))
         viewModel.selectProject(project.id)
-        XCTAssertTrue(viewModel.canChooseNewSessionLocation)
+        XCTAssertFalse(viewModel.canChooseNewSessionLocation)
+        XCTAssertFalse(viewModel.canStartNoFolderSession)
         XCTAssertFalse(viewModel.canCreateSession)
 
         let newSessionTask = Task { await viewModel.startNewSession(location: .projectDirectory) }

@@ -111,7 +111,7 @@ class ProjectLabelsTest {
     }
 
     @Test
-    fun projectCanStartNewSessionBeforeConnection() {
+    fun projectCannotStartNewSessionBeforeConnection() {
         val project = ProjectRecord(path = "/srv/app")
         val server = ServerRecord(
             displayName = "Devbox",
@@ -127,7 +127,14 @@ class ProjectLabelsTest {
             connectionState = ServerConnectionState.Disconnected,
         )
 
-        assertEquals(true, state.canCreateSession)
+        assertEquals(false, state.canCreateSession)
+        assertEquals(false, state.canChooseNewSessionLocation)
+        assertEquals(false, state.canStartNoFolderSession)
+
+        val connected = state.copy(connectionState = ServerConnectionState.Connected)
+        assertEquals(true, connected.canCreateSession)
+        assertEquals(true, connected.canChooseNewSessionLocation)
+        assertEquals(true, connected.canStartNoFolderSession)
     }
 
     @Test

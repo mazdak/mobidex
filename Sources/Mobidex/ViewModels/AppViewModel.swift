@@ -504,11 +504,11 @@ final class AppViewModel: ObservableObject {
     }
 
     var canChooseNewSessionLocation: Bool {
-        canStartCodexSessionInCurrentScope && !isNewSessionBlockedBySessionAction
+        isAppServerConnected && canStartCodexSessionInCurrentScope && !isNewSessionBlockedBySessionAction
     }
 
     var canStartNoFolderSession: Bool {
-        selectedServer?.backendType == .codexAppServer && !isNewSessionBlockedBySessionAction
+        isAppServerConnected && selectedServer?.backendType == .codexAppServer && !isNewSessionBlockedBySessionAction
     }
 
     var isStartingNewSession: Bool {

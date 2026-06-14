@@ -134,7 +134,7 @@ data class MobidexUiState(
         get() = connectionState == ServerConnectionState.Connected && !isStartingNewSession
 
     val canCreateSession: Boolean
-        get() = connectionState != ServerConnectionState.Connecting && canStartCodexSessionInCurrentScope && !isBusy && !isStartingNewSession
+        get() = connectionState == ServerConnectionState.Connected && canStartCodexSessionInCurrentScope && !isBusy && !isStartingNewSession
 
     val activeTurnID: String?
         get() = selectedThread?.let { activeTurnID(it) }
@@ -143,10 +143,10 @@ data class MobidexUiState(
         get() = selectedServer?.backendType == BackendType.CodexAppServer && (selectedProject != null || isShowingAllSessions)
 
     val canChooseNewSessionLocation: Boolean
-        get() = canStartCodexSessionInCurrentScope && !isBusy && !isStartingNewSession
+        get() = connectionState == ServerConnectionState.Connected && canStartCodexSessionInCurrentScope && !isBusy && !isStartingNewSession
 
     val canStartNoFolderSession: Boolean
-        get() = selectedServer?.backendType == BackendType.CodexAppServer && !isBusy && !isStartingNewSession
+        get() = connectionState == ServerConnectionState.Connected && selectedServer?.backendType == BackendType.CodexAppServer && !isBusy && !isStartingNewSession
 }
 
 private fun activeTurnID(thread: CodexThread): String? =
