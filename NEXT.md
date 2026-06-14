@@ -87,6 +87,14 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 49) - 2026-06-13
+
+- Executed from `master` at `e9aaefe` (`fix(sessions): keep new worktree sessions visible`); origin in sync.
+- Internal: build 49, BUILD_ID `5fdae14f-8861-477c-af69-2992b2e82e6e`, run `.asc/runs/testflight-20260614T002044Z-37ea11a8.json`, status ok (compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260614T002631Z-bc51dbac.json`, status ok (beta review + External Testers).
+- Contents over 48: new Codex sessions created from a new worktree now stay visible immediately on iOS and Android, the new worktree path is recorded in the project session paths, and Android shares the same worktree command/path-preservation behavior as iOS.
+- Companion Android team APK `Mobidex-1.0-49-release.apk` (versionCode 49, signed, v2-verified) delivered.
+
 ## asc TestFlight submission (internal + external build 48) - 2026-06-13
 
 - Executed from `master` at `a66e74d` (`fix(acp): codex review fixes for session resume + refresh merge`); origin in sync.
