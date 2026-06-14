@@ -87,6 +87,15 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 50) - 2026-06-14
+
+- Executed from `master` after fast-forwarding `789bdef` to `d4f5e2c` (`feat(sessions): add projectless Codex chats`); Android release metadata bumped to versionCode `50`.
+- Internal: build 50, BUILD_ID `a0139f63-e234-49f3-9708-aca34b8f8142`, run `.asc/runs/testflight-20260614T041130Z-85afc04b.json`, status ok (compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260614T041924Z-875728a6.json`, status ok (beta review + External Testers).
+- Contents over 49: projectless/no-folder Codex chats on iOS and Android, with app-owned unscoped chat tracking, toolbar entry points, and preserved new-worktree session visibility behavior.
+- Companion Android team APK `Mobidex-1.0-50-release.apk` (versionCode 50, signed, v2-verified) delivered.
+- Signing note: the first TestFlight archive attempt failed because the login keychain private key was unavailable in the non-interactive shell; retry used the generated distribution key/certificate in a temporary keychain and succeeded.
+
 ## asc TestFlight submission (internal + external build 49) - 2026-06-13
 
 - Executed from `master` at `e9aaefe` (`fix(sessions): keep new worktree sessions visible`); origin in sync.

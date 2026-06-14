@@ -1,31 +1,24 @@
 # Mission
 
-Mission: Rebase Bro's folderless Codex chats branch onto current master, verify the Codex cwd semantics from `~/Code/codex`, and reshape the feature to match Mobidex's existing session UI.
+Mission: Merge the projectless chats fix into `master` and cut new iOS TestFlight and Android signed release versions from that state.
 
 Done criteria:
-- The contributor branch is integrated on a fresh `codex/` branch rebased onto current `origin/master`.
-- Folderless chat detection is based on Codex protocol/source behavior, not a user-specific `Documents/Codex` path guess unless the source proves that convention.
-- iOS and Android expose folderless chats through the app's existing toolbar/session controls.
-- Existing new-worktree visibility fixes remain intact.
-- Focused shared, iOS, and Android tests/build checks pass.
+- [x] Fetch and update `master` from `origin/master`.
+- [x] Merge `codex/folderless-chats-rebased` into `master`.
+- [x] Run required iOS, Android, and shared validation after merge.
+- [x] Cut/upload the next TestFlight build from `master`.
+- [x] Bump Android to the matching release code and build a signed APK.
+- [x] Record release details, commit, and push `master`.
 
 Guardrails:
-- Keep the contributor's original branch intact for comparison.
-- Prefer hard alignment with app style over backward-compatible UI clutter.
-- Avoid broad rewrites outside the folderless-session surface.
-
-Checklist:
-- [x] Create a fresh integration branch and start the rebase.
-- [x] Resolve Android rebase conflicts while preserving new-worktree session tracking.
-- [x] Verify Codex cwd semantics against `~/Code/codex`.
-- [x] Replace author-machine-specific folderless path logic.
-- [x] Move folderless new-chat entry points into toolbars on iOS and Android.
-- [x] Run focused tests/build checks and fix failures.
-- [x] Review the final diff with a subagent and address confirmed findings.
+- Build release artifacts only from an up-to-date `master`.
+- Do not create unsigned Android release output when the request is for a signed APK.
+- Keep generated build products and secret files out of git.
 
 Critical learnings:
-- Issue #5 points at `george-bucky:codex/non-folder-chats`, commit `5128873`.
-- The branch forked before the build-49 new-worktree visibility fix, so conflict resolution must intentionally preserve newly-started thread retention and worktree path tracking.
-- Codex app-server accepts optional `thread/start.cwd`, but returned and stored threads always have a concrete absolute `cwd`; no `Documents/Codex` convention exists in `~/Code/codex`.
-- Mobidex-created projectless chats are now tracked by app-owned unscoped thread ids rather than inferred from a path shape.
-- Swift and Android no-folder thread refreshes now publish state only after the same scope/client generation guards as the main thread list.
+- `master` fast-forwarded from `789bdef` to `d4f5e2c` with the projectless chats feature.
+- ASC TestFlight workflow resolves the next iOS build number from App Store Connect.
+- Validation passed: shared core, iOS build, full simulator XCTest gate, Android focused session test, and signed release APK verification.
+- Internal TestFlight build `1.0 (50)` uploaded with BUILD_ID `a0139f63-e234-49f3-9708-aca34b8f8142`; external submission also succeeded.
+- The first TestFlight archive attempt failed because the login keychain was not usable from the non-interactive shell; retrying with the generated distribution key/certificate in a temporary keychain fixed signing.
+- Android APK `Mobidex-1.0-50-release.apk` was built with `versionCode 50` and verified with APK Signature Scheme v2.
