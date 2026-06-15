@@ -1919,6 +1919,69 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStartNewSessionIsBlockedWhileSessionRefreshIsInFlight() async throws {
+        let project = ProjectRecord(path: "/srv/app", isAdded: true)
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: ScriptedSSHService(appServer: CodexAppServerClient(transport: transport))
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let initialList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = initialList.nextCursor
+        transport.receive(#"{"id":\#(initialList.id),"result":{"data":[],"nextCursor":null}}"#)
+        let initialUnscopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = initialUnscopedList.nextCursor
+        transport.receive(#"{"id":\#(initialUnscopedList.id),"result":{"data":[],"nextCursor":null}}"#)
+        await connectTask.value
+        let completeMainList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = completeMainList.nextCursor
+        transport.receive(#"{"id":\#(completeMainList.id),"result":{"data":[],"nextCursor":null}}"#)
+        let completeUnscopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = completeUnscopedList.nextCursor
+        transport.receive(#"{"id":\#(completeUnscopedList.id),"result":{"data":[],"nextCursor":null}}"#)
+        XCTAssertTrue(viewModel.canChooseNewSessionLocation)
+
+        let refreshTask = Task { await viewModel.refreshThreads() }
+        let refreshList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = refreshList.nextCursor
+        XCTAssertTrue(viewModel.isRefreshingSessions)
+        XCTAssertFalse(viewModel.canChooseNewSessionLocation)
+        XCTAssertFalse(viewModel.canCreateSession)
+
+        let createdThreadID = await viewModel.startNewSession(location: .codexWorktree)
+
+        XCTAssertNil(createdThreadID)
+        XCTAssertEqual(viewModel.statusMessage, "Finish the current session action before starting a new session.")
+        XCTAssertFalse(
+            transport.sentLinesSnapshot.dropFirst(cursor).contains { methodName($0) == "thread/start" },
+            "New session must not overlap an in-flight thread/list refresh."
+        )
+
+        transport.receive(#"{"id":\#(refreshList.id),"result":{"data":[],"nextCursor":null}}"#)
+        let refreshUnscopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        transport.receive(#"{"id":\#(refreshUnscopedList.id),"result":{"data":[],"nextCursor":null}}"#)
+        await refreshTask.value
+        XCTAssertTrue(viewModel.canChooseNewSessionLocation)
+    }
+
+    @MainActor
     func testStartNoFolderSessionUsesObservedCodexChatRoot() async throws {
         let project = ProjectRecord(path: "/srv/app", isAdded: true)
         let server = ServerRecord(

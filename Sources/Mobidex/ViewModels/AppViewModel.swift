@@ -500,7 +500,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var canCreateSession: Bool {
-        appServer != nil && canStartCodexSessionInCurrentScope && !isSessionMutationInFlight
+        appServer != nil && canStartCodexSessionInCurrentScope && !isNewSessionBlockedBySessionAction
     }
 
     var canChooseNewSessionLocation: Bool {
@@ -517,6 +517,7 @@ final class AppViewModel: ObservableObject {
 
     private var isNewSessionBlockedBySessionAction: Bool {
         isOperationActive(.startingSession)
+            || isOperationActive(.refreshingSessions)
             || isOperationActive(.sending)
             || isOperationActive(.interrupting)
             || isOperationActive(.respondingToApproval)
@@ -3322,6 +3323,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func refreshThreadListAfterEvent() async {
+        guard !isSessionMutationInFlight,
+              !isOperationActive(.refreshingSessions) else {
+            return
+        }
         // Coalesce: an agentic turn completes dozens of items, and each used to fire a full
         // paginated thread/list sweep (audit P2). Leading-edge refresh, then at most one
         // refresh per cooldown window while events keep arriving.
@@ -3371,7 +3376,8 @@ final class AppViewModel: ObservableObject {
             }
             cacheThreadList(sorted, scope: scope)
         } catch {
-            statusMessage = error.localizedDescription
+            // Notification-driven list refreshes are opportunistic. A timeout here must not
+            // overwrite the foreground operation, especially during session creation.
         }
     }
 
