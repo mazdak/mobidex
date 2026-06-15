@@ -116,6 +116,7 @@ data class CodexTurnOptions(
             val fields = linkedMapOf<String, JsonValue>()
             val normalizedCwd = cwd?.takeIf { it.isNotBlank() }
             reasoningEffort?.let { fields["effort"] = jsonString(it.wireValue) }
+            normalizedCwd?.let { fields["runtimeWorkspaceRoots"] = jsonArray(listOf(jsonString(it))) }
             when (accessMode) {
                 CodexAccessMode.FullAccess -> {
                     fields["approvalPolicy"] = jsonString("never")
@@ -263,6 +264,20 @@ object CodexRpcRequests {
         limit: Int = 80,
         cursor: String? = null,
         archived: Boolean = false,
+    ): CodexRpcRequest = threadListForCwds(
+        id = id,
+        cwds = listOfNotNull(cwd),
+        limit = limit,
+        cursor = cursor,
+        archived = archived,
+    )
+
+    fun threadListForCwds(
+        id: Long,
+        cwds: List<String>,
+        limit: Int = 80,
+        cursor: String? = null,
+        archived: Boolean = false,
     ): CodexRpcRequest {
         val params = linkedMapOf<String, JsonValue>(
             "limit" to jsonInt(limit.toLong()),
@@ -271,7 +286,7 @@ object CodexRpcRequests {
             "archived" to jsonBool(archived),
             "sourceKinds" to userFacingThreadSourceKinds,
         )
-        cwd?.takeIf { it.isNotBlank() }?.let { params["cwd"] = jsonString(it) }
+        cwdFilter(cwds)?.let { params["cwd"] = it }
         cursor?.let { params["cursor"] = jsonString(it) }
         return CodexRpcRequest(id = id, method = "thread/list", params = jsonObject(params))
     }
@@ -330,11 +345,14 @@ object CodexRpcRequests {
         params = jsonObject(linkedMapOf("threadId" to jsonString(threadId))),
     )
 
-    fun startThread(id: Long, cwd: String? = null): CodexRpcRequest = CodexRpcRequest(
-        id = id,
-        method = "thread/start",
-        params = jsonObject(cwd?.takeIf { it.isNotBlank() }?.let { linkedMapOf("cwd" to jsonString(it)) } ?: linkedMapOf()),
-    )
+    fun startThread(id: Long, cwd: String? = null): CodexRpcRequest {
+        val params = linkedMapOf<String, JsonValue>()
+        cwd?.takeIf { it.isNotBlank() }?.let {
+            params["cwd"] = jsonString(it)
+            params["runtimeWorkspaceRoots"] = jsonArray(listOf(jsonString(it)))
+        }
+        return CodexRpcRequest(id = id, method = "thread/start", params = jsonObject(params))
+    }
 
     fun startTurn(
         id: Long,
@@ -382,6 +400,17 @@ object CodexRpcRequests {
             )
         ),
     )
+}
+
+private fun cwdFilter(cwds: List<String>): JsonValue? {
+    val filtered = cwds
+        .filter { it.isNotBlank() }
+        .distinct()
+    return when (filtered.size) {
+        0 -> null
+        1 -> jsonString(filtered.single())
+        else -> jsonArray(filtered.map(::jsonString))
+    }
 }
 
 object CodexRpcNotifications {

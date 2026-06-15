@@ -107,14 +107,22 @@ class AppViewModelNewSessionTest {
         assertTrue(completed, "state=${model.state.value}, methods=${transport.sentMethods}")
         assertEquals(listOf("/srv/app"), ssh.createdWorktreeProjectPaths)
         assertEquals(listOf<String?>("/srv/app-worktree"), transport.startThreadCwds)
+        assertEquals(listOf<List<String>?>(listOf("/srv/app-worktree")), transport.startThreadRuntimeWorkspaceRoots)
         assertEquals("thread-new", model.state.value.selectedThreadID)
         assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)
         assertEquals(listOf("/srv/app", "/srv/app-worktree"), model.state.value.selectedProject?.sessionPaths)
 
         model.refreshThreads()
-        waitUntil { transport.sentMethods.count { it == "thread/list" } >= 6 }
+        waitUntil { transport.sentMethods.count { it == "thread/list" } >= 2 }
         advanceUntilIdle()
 
+        assertEquals(
+            listOf<List<String>?>(
+                listOf("/srv/app", "/srv/app-worktree"),
+                null,
+            ),
+            transport.threadListCwdFilters,
+        )
         assertEquals("thread-new", model.state.value.selectedThreadID)
         assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)
         assertEquals(listOf("thread-new"), model.state.value.threads.map { it.id })
@@ -632,6 +640,8 @@ private class ScriptedAppServerTransport(
     private val threadCwds = mutableMapOf<String, String>()
     val sentMethods = mutableListOf<String>()
     val startThreadCwds = mutableListOf<String?>()
+    val startThreadRuntimeWorkspaceRoots = mutableListOf<List<String>?>()
+    val threadListCwdFilters = mutableListOf<List<String>?>()
     val startTurnParams = mutableListOf<JsonObject>()
 
     override val inboundLines: Flow<String> = inbound.receiveAsFlow()
@@ -645,13 +655,18 @@ private class ScriptedAppServerTransport(
         when (method) {
             "thread/start" -> {
                 startThreadGate?.await()
-                val cwd = request["params"]?.jsonObject?.get("cwd")?.jsonPrimitive?.contentOrNull
+                val params = request["params"]?.jsonObject
+                val cwd = params?.get("cwd")?.jsonPrimitive?.contentOrNull
+                val runtimeWorkspaceRoots = (params?.get("runtimeWorkspaceRoots") as? JsonArray)
+                    ?.mapNotNull { it.jsonPrimitive.contentOrNull }
                 startThreadCwds += cwd
+                startThreadRuntimeWorkspaceRoots += runtimeWorkspaceRoots
                 val threadCwd = cwd ?: appServerDefaultCwd
                 threadCwds["thread-new"] = threadCwd
                 respond(id, buildJsonObject { put("thread", threadJson("thread-new", threadCwd)) })
             }
             "thread/list" -> {
+                threadListCwdFilters += cwdFilter(request["params"]?.jsonObject?.get("cwd"))
                 val gate = if (threadListGates.isEmpty()) null else threadListGates.removeFirst()
                 gate?.await()
                 val threads = threadListResponseProvider?.invoke(request)
@@ -716,4 +731,10 @@ private class ScriptedAppServerTransport(
             put("createdAt", JsonPrimitive(1_770_000_000))
             put("turns", JsonArray(emptyList()))
         }
+
+    private fun cwdFilter(value: JsonElement?): List<String>? = when (value) {
+        is JsonArray -> value.mapNotNull { it.jsonPrimitive.contentOrNull }
+        is JsonPrimitive -> value.contentOrNull?.let(::listOf)
+        else -> null
+    }
 }

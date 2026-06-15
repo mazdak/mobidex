@@ -3571,15 +3571,13 @@ final class AppViewModel: ObservableObject {
         }
         var merged: [CodexThread] = []
         var seen = Set<String>()
-        for cwd in scope.sessionPaths.sorted() {
-            let loaded = try await appServer.listThreads(
-                cwd: cwd,
-                includeArchived: scope.includeArchivedSessions,
-                pageLimit: pageLimit
-            )
-            for thread in loaded where seen.insert(thread.id).inserted {
-                merged.append(thread)
-            }
+        let loaded = try await appServer.listThreads(
+            cwds: scope.sessionPaths.sorted(),
+            includeArchived: scope.includeArchivedSessions,
+            pageLimit: pageLimit
+        )
+        for thread in loaded where seen.insert(thread.id).inserted {
+            merged.append(thread)
         }
         let sortedMergedThreads: () -> [CodexThread] = {
             merged.sorted { lhs, rhs in
