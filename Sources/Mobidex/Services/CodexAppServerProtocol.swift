@@ -113,15 +113,29 @@ actor CodexAppServerClient {
         includeArchived: Bool = false,
         pageLimit: Int? = nil
     ) async throws -> [CodexThread] {
-        let activeThreads = try await listThreads(cwd: cwd, limit: limit, archived: false, pageLimit: pageLimit)
+        try await listThreads(
+            cwds: cwd.map { [$0] } ?? [],
+            limit: limit,
+            includeArchived: includeArchived,
+            pageLimit: pageLimit
+        )
+    }
+
+    func listThreads(
+        cwds: [String],
+        limit: Int = 80,
+        includeArchived: Bool = false,
+        pageLimit: Int? = nil
+    ) async throws -> [CodexThread] {
+        let activeThreads = try await listThreads(cwds: cwds, limit: limit, archived: false, pageLimit: pageLimit)
         guard includeArchived else {
             return activeThreads
         }
-        let archivedThreads = try await listThreads(cwd: cwd, limit: limit, archived: true, pageLimit: pageLimit)
+        let archivedThreads = try await listThreads(cwds: cwds, limit: limit, archived: true, pageLimit: pageLimit)
         return Self.mergedThreadList(activeThreads + archivedThreads)
     }
 
-    private func listThreads(cwd: String?, limit: Int, archived: Bool, pageLimit: Int?) async throws -> [CodexThread] {
+    private func listThreads(cwds: [String], limit: Int, archived: Bool, pageLimit: Int?) async throws -> [CodexThread] {
         var cursor: String?
         var threads: [CodexThread] = []
         var pageCount = 0
@@ -129,7 +143,7 @@ actor CodexAppServerClient {
             let response = try await requestDecoded(
                 ThreadListResponse.self,
                 method: "thread/list",
-                params: SharedKMPBridge.threadListParams(cwd: cwd, limit: limit, cursor: cursor, archived: archived)
+                params: SharedKMPBridge.threadListParams(cwds: cwds, limit: limit, cursor: cursor, archived: archived)
             )
             threads.append(contentsOf: response.data.filter(\.isUserFacingSession).map { thread in
                 var thread = thread
@@ -140,10 +154,7 @@ actor CodexAppServerClient {
             pageCount += 1
         } while cursor != nil && pageCount < (pageLimit ?? Int.max)
 
-        guard let cwd, !cwd.isEmpty else {
-            return threads
-        }
-        return threads.filter { $0.cwd == cwd }
+        return threads
     }
 
     private static func mergedThreadList(_ threads: [CodexThread]) -> [CodexThread] {

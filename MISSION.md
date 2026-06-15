@@ -1,15 +1,32 @@
 # Mission
 
-Mission: Publish TestFlight build 51 to the external TestFlight group and record the release metadata.
+Mission: Align Mobidex's Codex app-server requests with the current Codex CLI/TUI protocol behavior discovered in `/Users/mazdak/Code/codex`.
 
 Done criteria:
-- [x] Publish build 51 to `External Testers`.
-- [x] Submit build 51 for beta app review.
-- [x] Record and push the external run metadata.
+- [x] Confirm the Mobidex worktree is current with the repo default branch.
+- [x] Identify where Mobidex discovers, stores, names, and lists Codex projects/threads.
+- [x] Compare those assumptions with available Codex CLI/TUI source or local Codex state.
+- [x] Send `runtimeWorkspaceRoots` when starting Codex threads with a cwd.
+- [x] Send `runtimeWorkspaceRoots` when starting Codex turns with a known cwd.
+- [x] Use app-server's multi-cwd `thread/list` filter for project session paths.
+- [x] Remove brittle exact client-side cwd filtering after server-filtered list calls.
+- [x] Update focused protocol/client tests and run validation.
 
 Guardrails:
-- Do not rebuild; publish the existing build 51.
-- Keep release metadata consistent with the ASC run output.
+- Do not touch unrelated release metadata or previous TestFlight artifacts.
+- Preserve existing user changes if the worktree becomes dirty.
+- Prefer hard breaks over compatibility shims unless the user asks otherwise.
 
 Critical learnings:
-- External workflow succeeded with run `.asc/runs/testflight_external-20260614T170052Z-66d4e7cc.json`.
+- The worktree started detached and `git pull origin master` reported it was already up to date.
+- Mobidex starts project sessions in `$HOME/.codex/worktrees/<id>/<repo>` and stores those worktree cwds in the selected project's `sessionPaths`.
+- Mobidex discovery already reads Codex's `.codex-global-state.json`, including workspace-root hints, but the Mobidex session creation path does not register new worktree sessions there.
+- The current Codex app-server still stores thread state under `CODEX_HOME` (`~/.codex` by default); CLI/TUI source does not show a hard-coded `~/Code/codex` project model.
+- Clarification: `/Users/mazdak/Code/codex` is the local Codex source checkout used for comparison. The open source checkout contains CLI/TUI/app-server/protocol code, but the Desktop-specific project registry keys (`electron-saved-workspace-roots`, `active-workspace-roots`, `project-order`, `thread-workspace-root-hints`) do not appear in that source tree.
+- Current Codex app-server `thread/list` supports one or many cwd filters and normalizes path comparisons server-side. Mobidex still loops over single cwd filters and applies exact local `cwd == cwd` filtering in Swift/Android clients.
+- Current Codex TUI/exec clients send `runtimeWorkspaceRoots` on `thread/start`, `thread/resume`, and `thread/fork`; Mobidex `thread/start` currently sends only `cwd`.
+- The likely Desktop mismatch is workspace-root identity: Desktop appears to group by saved/active workspace roots and thread workspace-root hints, while Mobidex-created sessions only have their worktree cwd plus Mobidex-local `sessionPaths`.
+- The safest immediate recommendation is to align Mobidex with the current app-server list contract and investigate an official workspace-root hint/registration path before writing Desktop private state directly.
+- Decision: implement the public app-server alignment only; do not write Desktop-private `.codex-global-state.json` keys.
+- Validation: subagent review found missing Android multi-cwd list coverage and noted that current app-server docs also support `runtimeWorkspaceRoots` on `turn/start`; both items were addressed.
+- Validation passed: `:shared-core:jvmTest`, `:android-app:testDebugUnitTest`, and focused iOS simulator tests for `CodexProtocolTests`, `testConnectLoadsProjectThreadsAcrossWorktreeSessionPaths`, and `testStartNewSessionCreatesAndSelectsThreadWhenConnected`.

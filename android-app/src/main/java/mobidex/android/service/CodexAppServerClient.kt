@@ -80,19 +80,28 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
     }
 
     suspend fun listThreads(cwd: String?, limit: Int = 80, includeArchived: Boolean = false, pageLimit: Int? = null): List<CodexThread> {
-        val activeThreads = listThreadsPage(cwd, limit, archived = false, pageLimit = pageLimit)
+        return listThreads(
+            cwds = cwd?.let(::listOf).orEmpty(),
+            limit = limit,
+            includeArchived = includeArchived,
+            pageLimit = pageLimit,
+        )
+    }
+
+    suspend fun listThreads(cwds: List<String>, limit: Int = 80, includeArchived: Boolean = false, pageLimit: Int? = null): List<CodexThread> {
+        val activeThreads = listThreadsPage(cwds, limit, archived = false, pageLimit = pageLimit)
         if (!includeArchived) return activeThreads
-        return (activeThreads + listThreadsPage(cwd, limit, archived = true, pageLimit = pageLimit))
+        return (activeThreads + listThreadsPage(cwds, limit, archived = true, pageLimit = pageLimit))
             .distinctBy { it.id }
             .sortedByDescending { it.updatedAtEpochSeconds }
     }
 
-    private suspend fun listThreadsPage(cwd: String?, limit: Int, archived: Boolean, pageLimit: Int?): List<CodexThread> {
+    private suspend fun listThreadsPage(cwds: List<String>, limit: Int, archived: Boolean, pageLimit: Int?): List<CodexThread> {
         var cursor: String? = null
         var pageCount = 0
         val threads = mutableListOf<CodexThread>()
         do {
-            val result = request("thread/list", CodexRpcRequests.threadList(0, cwd, limit, cursor, archived).params?.toJsonElement())
+            val result = request("thread/list", CodexRpcRequests.threadListForCwds(0, cwds, limit, cursor, archived).params?.toJsonElement())
             val obj = result.jsonObject
             threads += obj["data"]?.let { array ->
                 array as? JsonArray
@@ -101,7 +110,7 @@ class CodexAppServerClient(private val transport: CodexLineTransport) {
             cursor = obj["nextCursor"]?.jsonPrimitive?.contentOrNull
             pageCount += 1
         } while (cursor != null && pageCount < (pageLimit ?: Int.MAX_VALUE))
-        return if (cwd.isNullOrBlank()) threads else threads.filter { it.cwd == cwd }
+        return threads
     }
 
     suspend fun listLoadedThreadIDs(limit: Int = 1_000): List<String> {

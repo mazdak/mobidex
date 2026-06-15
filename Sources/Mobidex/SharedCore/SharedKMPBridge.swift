@@ -628,10 +628,14 @@ enum SharedKMPBridge {
     }
 
     static func threadListParams(cwd: String?, limit: Int, cursor: String?, archived: Bool) -> JSONValue? {
+        threadListParams(cwds: cwd.map { [$0] } ?? [], limit: limit, cursor: cursor, archived: archived)
+    }
+
+    static func threadListParams(cwds: [String], limit: Int, cursor: String?, archived: Bool) -> JSONValue? {
         params(
-            from: MobidexShared.CodexRpcRequests.shared.threadList(
+            from: MobidexShared.CodexRpcRequests.shared.threadListForCwds(
                 id: 0,
-                cwd: cwd,
+                cwds: cwds,
                 limit: Int32(limit),
                 cursor: cursor,
                 archived: archived

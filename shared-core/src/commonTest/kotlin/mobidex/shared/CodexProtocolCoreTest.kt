@@ -108,6 +108,20 @@ class CodexProtocolWireEncodingTest {
     }
 
     @Test
+    fun threadListRequestEncodesMultipleCwdFilters() {
+        val line = CodexRpcRequests.threadListForCwds(
+            id = 1,
+            cwds = listOf("/srv/app", "/srv/.codex/worktrees/a/app", "/srv/app", "   "),
+            limit = 20,
+        ).encodeJsonLine()
+
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":false,\"sourceKinds\":[\"cli\",\"vscode\",\"exec\",\"appServer\"],\"cwd\":[\"/srv/app\",\"/srv/.codex/worktrees/a/app\"]}}",
+            line,
+        )
+    }
+
+    @Test
     fun threadListRequestOmitsBlankCwd() {
         val line = CodexRpcRequests.threadList(id = 1, cwd = "   ", limit = 20).encodeJsonLine()
 
@@ -140,7 +154,7 @@ class CodexProtocolWireEncodingTest {
             CodexRpcRequests.resumeThread(id = 4, threadId = "thread-1").encodeJsonLine(),
         )
         assertEquals(
-            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"thread/start\",\"params\":{\"cwd\":\"/srv/app\"}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"thread/start\",\"params\":{\"cwd\":\"/srv/app\",\"runtimeWorkspaceRoots\":[\"/srv/app\"]}}",
             CodexRpcRequests.startThread(id = 5, cwd = "/srv/app").encodeJsonLine(),
         )
         assertEquals(
@@ -185,7 +199,7 @@ class CodexProtocolWireEncodingTest {
         ).encodeJsonLine()
 
         assertEquals(
-            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"turn/start\",\"params\":{\"effort\":\"xhigh\",\"approvalPolicy\":\"on-request\",\"sandboxPolicy\":{\"type\":\"workspaceWrite\",\"writableRoots\":[\"/srv/app\"],\"networkAccess\":true,\"excludeTmpdirEnvVar\":false,\"excludeSlashTmp\":false},\"threadId\":\"thread-1\",\"input\":[{\"type\":\"text\",\"text\":\"Run tests\",\"text_elements\":[]}]}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"turn/start\",\"params\":{\"effort\":\"xhigh\",\"runtimeWorkspaceRoots\":[\"/srv/app\"],\"approvalPolicy\":\"on-request\",\"sandboxPolicy\":{\"type\":\"workspaceWrite\",\"writableRoots\":[\"/srv/app\"],\"networkAccess\":true,\"excludeTmpdirEnvVar\":false,\"excludeSlashTmp\":false},\"threadId\":\"thread-1\",\"input\":[{\"type\":\"text\",\"text\":\"Run tests\",\"text_elements\":[]}]}}",
             line,
         )
     }

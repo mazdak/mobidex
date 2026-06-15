@@ -1852,6 +1852,7 @@ final class AppViewModelTests: XCTestCase {
         cursor = startThread.nextCursor
         let params = try requestParams(for: startThread, in: transport)
         XCTAssertEqual(params["cwd"] as? String, "/srv/app-worktree")
+        XCTAssertEqual(params["runtimeWorkspaceRoots"] as? [String], ["/srv/app-worktree"])
         XCTAssertTrue(viewModel.isStartingNewSession)
         XCTAssertEqual(viewModel.statusMessage, "Creating session")
         transport.receive("""
@@ -1879,16 +1880,11 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persistedProject.sessionPaths, ["/srv/app", "/srv/app-worktree"])
 
         let refreshTask = Task { await viewModel.refreshThreads() }
-        let refreshMainList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
-        cursor = refreshMainList.nextCursor
-        var refreshParams = try requestParams(for: refreshMainList, in: transport)
-        XCTAssertEqual(refreshParams["cwd"] as? String, "/srv/app")
-        transport.receive(#"{"id":\#(refreshMainList.id),"result":{"data":[],"nextCursor":null}}"#)
-        let refreshWorktreeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
-        cursor = refreshWorktreeList.nextCursor
-        refreshParams = try requestParams(for: refreshWorktreeList, in: transport)
-        XCTAssertEqual(refreshParams["cwd"] as? String, "/srv/app-worktree")
-        transport.receive(#"{"id":\#(refreshWorktreeList.id),"result":{"data":[],"nextCursor":null}}"#)
+        let refreshScopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = refreshScopedList.nextCursor
+        var refreshParams = try requestParams(for: refreshScopedList, in: transport)
+        XCTAssertEqual(refreshParams["cwd"] as? [String], ["/srv/app", "/srv/app-worktree"])
+        transport.receive(#"{"id":\#(refreshScopedList.id),"result":{"data":[],"nextCursor":null}}"#)
         let refreshUnscopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = refreshUnscopedList.nextCursor
         refreshParams = try requestParams(for: refreshUnscopedList, in: transport)
@@ -1896,16 +1892,11 @@ final class AppViewModelTests: XCTestCase {
         transport.receive(#"{"id":\#(refreshUnscopedList.id),"result":{"data":[],"nextCursor":null}}"#)
         await refreshTask.value
 
-        let completeMainList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
-        cursor = completeMainList.nextCursor
-        refreshParams = try requestParams(for: completeMainList, in: transport)
-        XCTAssertEqual(refreshParams["cwd"] as? String, "/srv/app")
-        transport.receive(#"{"id":\#(completeMainList.id),"result":{"data":[],"nextCursor":null}}"#)
-        let completeWorktreeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
-        cursor = completeWorktreeList.nextCursor
-        refreshParams = try requestParams(for: completeWorktreeList, in: transport)
-        XCTAssertEqual(refreshParams["cwd"] as? String, "/srv/app-worktree")
-        transport.receive(#"{"id":\#(completeWorktreeList.id),"result":{"data":[],"nextCursor":null}}"#)
+        let completeScopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = completeScopedList.nextCursor
+        refreshParams = try requestParams(for: completeScopedList, in: transport)
+        XCTAssertEqual(refreshParams["cwd"] as? [String], ["/srv/app", "/srv/app-worktree"])
+        transport.receive(#"{"id":\#(completeScopedList.id),"result":{"data":[],"nextCursor":null}}"#)
         let completeUnscopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = completeUnscopedList.nextCursor
         refreshParams = try requestParams(for: completeUnscopedList, in: transport)
@@ -2868,24 +2859,14 @@ final class AppViewModelTests: XCTestCase {
         let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
         cursor = initialize.nextCursor
         transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
-        let worktreeList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
-        cursor = worktreeList.nextCursor
-        var params = try requestParams(for: worktreeList, in: transport)
-        XCTAssertEqual(params["cwd"] as? String, "/srv/.codex/worktrees/a/fullstack")
+        let scopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = scopedList.nextCursor
+        let params = try requestParams(for: scopedList, in: transport)
+        XCTAssertEqual(params["cwd"] as? [String], ["/srv/.codex/worktrees/a/fullstack", "/srv/fullstack"])
         XCTAssertEqual(params["archived"] as? Bool, false)
         transport.receive("""
-        {"id":\(worktreeList.id),"result":{"data":[
+        {"id":\(scopedList.id),"result":{"data":[
           {"id":"thread-worktree","preview":"Worktree","cwd":"/srv/.codex/worktrees/a/fullstack","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
-          {"id":"thread-other","preview":"Other","cwd":"/srv/other","status":{"type":"idle"},"updatedAt":1770000500,"createdAt":1770000000,"turns":[]}
-        ],"nextCursor":null}}
-        """)
-        let mainList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
-        cursor = mainList.nextCursor
-        params = try requestParams(for: mainList, in: transport)
-        XCTAssertEqual(params["cwd"] as? String, "/srv/fullstack")
-        XCTAssertEqual(params["archived"] as? Bool, false)
-        transport.receive("""
-        {"id":\(mainList.id),"result":{"data":[
           {"id":"thread-main","preview":"Main","cwd":"/srv/fullstack","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}
         """)

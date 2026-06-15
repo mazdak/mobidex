@@ -1134,7 +1134,7 @@ class AppViewModel(
             }
             ThreadScopeLoadResult(threads = loaded)
         } else {
-            val exactMatches = sessionPaths.flatMap { path -> client.listThreads(path, includeArchived = includeArchived, pageLimit = pageLimit) }
+            val exactMatches = client.listThreads(sessionPaths, includeArchived = includeArchived, pageLimit = pageLimit)
             val unscoped = client.listThreads(null, includeArchived = includeArchived, pageLimit = pageLimit)
             val groupedUnscoped = unscoped.map { markUnscopedChatState(it, state) }
             val groupedSessionIDs = SessionListSections.sessionIdsForProject(

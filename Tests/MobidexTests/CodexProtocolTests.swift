@@ -3,7 +3,7 @@ import NIOCore
 @testable import Mobidex
 
 final class CodexProtocolTests: XCTestCase {
-    func testThreadListRequestEncodingUsesAppServerV2ShapeAndFiltersByProject() async throws {
+    func testThreadListRequestEncodingUsesAppServerV2ShapeAndServerCwdFilter() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport)
         let task = Task { try await client.listThreads(cwd: "/srv/app", limit: 20) }
@@ -39,7 +39,37 @@ final class CodexProtocolTests: XCTestCase {
         """)
 
         let threads = try await task.value
-        XCTAssertEqual(threads.map(\.id), ["thread-1"])
+        XCTAssertEqual(threads.map(\.id), ["thread-1", "thread-2"])
+        await client.close()
+    }
+
+    func testThreadListRequestEncodingSupportsMultipleCwdFilters() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task {
+            try await client.listThreads(
+                cwds: ["/srv/app", "/srv/.codex/worktrees/a/app"],
+                limit: 20
+            )
+        }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+
+        XCTAssertEqual(object["method"] as? String, "thread/list")
+        XCTAssertEqual(params["cwd"] as? [String], ["/srv/app", "/srv/.codex/worktrees/a/app"])
+
+        transport.receive("""
+        {"id":\(id),"result":{"data":[
+          {"id":"thread-main","preview":"Main work","cwd":"/srv/app","source":"appServer","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-worktree","preview":"Worktree work","cwd":"/srv/.codex/worktrees/a/app","source":"appServer","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+
+        let threads = try await task.value
+        XCTAssertEqual(threads.map(\.id), ["thread-main", "thread-worktree"])
         await client.close()
     }
 
@@ -129,6 +159,37 @@ final class CodexProtocolTests: XCTestCase {
         await client.close()
     }
 
+    func testStartThreadSendsRuntimeWorkspaceRootsWithCwd() async throws {
+        let transport = MockCodexLineTransport()
+        let client = CodexAppServerClient(transport: transport)
+        let task = Task { try await client.startThread(cwd: "/srv/app") }
+
+        let line = try await waitForSentLine(in: transport)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        let id = try XCTUnwrap(object["id"] as? Int)
+        let params = try XCTUnwrap(object["params"] as? [String: Any])
+
+        XCTAssertEqual(object["method"] as? String, "thread/start")
+        XCTAssertEqual(params["cwd"] as? String, "/srv/app")
+        XCTAssertEqual(params["runtimeWorkspaceRoots"] as? [String], ["/srv/app"])
+
+        transport.receive("""
+        {"id":\(id),"result":{"thread":{
+          "id":"thread-1",
+          "preview":"New thread",
+          "cwd":"/srv/app",
+          "status":{"type":"idle"},
+          "updatedAt":1770000400,
+          "createdAt":1770000400,
+          "turns":[]
+        }}}
+        """)
+
+        let thread = try await task.value
+        XCTAssertEqual(thread.cwd, "/srv/app")
+        await client.close()
+    }
+
     func testRequestCancellationRemovesPendingRequestBeforeLateResponse() async throws {
         let transport = MockCodexLineTransport()
         let client = CodexAppServerClient(transport: transport, requestTimeoutSeconds: 30)
@@ -186,6 +247,7 @@ final class CodexProtocolTests: XCTestCase {
 
         XCTAssertEqual(object["method"] as? String, "turn/start")
         XCTAssertEqual(params["effort"] as? String, "xhigh")
+        XCTAssertEqual(params["runtimeWorkspaceRoots"] as? [String], ["/srv/app"])
         XCTAssertEqual(params["approvalPolicy"] as? String, "on-request")
         XCTAssertEqual(sandboxPolicy["type"] as? String, "workspaceWrite")
         XCTAssertEqual(sandboxPolicy["writableRoots"] as? [String], ["/srv/app"])
