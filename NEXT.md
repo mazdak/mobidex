@@ -87,14 +87,14 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
-## asc TestFlight submission (internal build 52) - 2026-06-15
+## asc TestFlight submission (internal + external build 52) - 2026-06-15
 
 - Executed from `master` at `8a329a7` (`fix(codex): merge app-server workspace roots`); Android release metadata bumped to versionCode `52`.
 - Internal: build 52, BUILD_ID `0af77bee-af08-4e5b-bd2e-58f3ca367bcc`, run `.asc/runs/testflight-20260615T230251Z-c494cb6e.json`, status ok (compliance set, Internal Testers).
 - Contents over 51: Codex app-server alignment for workspace-root-aware thread starts/turn starts and multi-cwd `thread/list`, plus the iOS new-worktree refresh/launch race fix already merged into `master`.
 - Companion Android team APK `Mobidex-1.0-52-release.apk` (versionCode 52, signed, v2-verified) built.
 - Signing note: archive/export used the generated iOS distribution certificate/key in a temporary keychain with the current Apple WWDR G3 intermediate.
-- External TestFlight distribution was not run for build 52.
+- External: run `.asc/runs/testflight_external-20260616T131716Z-85d3180e.json`, status ok (submitted for beta app review + External Testers).
 
 ## asc TestFlight submission (internal build 51) - 2026-06-14
 
