@@ -20,21 +20,35 @@ object RemoteCodexWorktreeCommand {
         [ -n "${'$'}name" ] || name=repo
         parent="${'$'}HOME/.codex/worktrees"
         mkdir -p "${'$'}parent"
-        if ! base=${'$'}(mktemp -d "${'$'}parent/XXXXXX" 2>"${'$'}root_log"); then
-          printf 'could not create Codex worktree directory: ' >&2
-          cat "${'$'}root_log" >&2
-          exit 1
-        fi
+        attempt=0
+        while :; do
+          suffix=${'$'}(od -An -N2 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+          case "${'$'}suffix" in
+            ???? ) ;;
+            * ) suffix=${'$'}(printf '%04x' "${'$'}attempt") ;;
+          esac
+          base="${'$'}parent/${'$'}suffix"
+          if mkdir "${'$'}base" 2>"${'$'}root_log"; then
+            break
+          fi
+          attempt=${'$'}((attempt + 1))
+          if [ "${'$'}attempt" -ge 128 ]; then
+            printf 'could not create Codex worktree directory under %s: ' "${'$'}parent" >&2
+            cat "${'$'}root_log" >&2
+            exit 1
+          fi
+        done
         target="${'$'}base/${'$'}name"
         log=${'$'}(mktemp "${'$'}{TMPDIR:-/tmp}/mobidex-worktree-add.XXXXXX")
         GIT_TERMINAL_PROMPT=0 git -C "${'$'}root" worktree add --detach "${'$'}target" HEAD >"${'$'}log" 2>&1 &
         worktree_pid=${'$'}!
         elapsed=0
+        timeout=120
         while kill -0 "${'$'}worktree_pid" 2>/dev/null; do
-          if [ "${'$'}elapsed" -ge 25 ]; then
+          if [ "${'$'}elapsed" -ge "${'$'}timeout" ]; then
             kill "${'$'}worktree_pid" 2>/dev/null || true
             wait "${'$'}worktree_pid" 2>/dev/null || true
-            printf 'git worktree add timed out after 25 seconds. ' >&2
+            printf 'git worktree add timed out after %s seconds. ' "${'$'}timeout" >&2
             cat "${'$'}log" >&2
             rm -rf "${'$'}target"
             rmdir "${'$'}base" 2>/dev/null || true

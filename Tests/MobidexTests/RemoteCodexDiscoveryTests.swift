@@ -2,7 +2,7 @@ import XCTest
 @testable import Mobidex
 
 final class RemoteCodexDiscoveryTests: XCTestCase {
-    func testWorktreeShellCommandUsesMktempDirectoryAllocation() {
+    func testWorktreeShellCommandUsesFourHexDirectoryAllocation() {
         let command = SharedKMPBridge.remoteCodexWorktreeShellCommand(projectPath: "/srv/Project 'A'")
 
         XCTAssertTrue(command.contains("git -C "), command)
@@ -10,8 +10,11 @@ final class RemoteCodexDiscoveryTests: XCTestCase {
         XCTAssertTrue(command.contains("'\"'\"'"), command)
         XCTAssertTrue(command.contains(" rev-parse --show-toplevel"), command)
         XCTAssertTrue(command.contains("parent=\"$HOME/.codex/worktrees\""), command)
-        XCTAssertTrue(command.contains("mktemp -d \"$parent/XXXXXX\""), command)
+        XCTAssertTrue(command.contains("od -An -N2 -tx1 /dev/urandom"), command)
+        XCTAssertTrue(command.contains("base=\"$parent/$suffix\""), command)
         XCTAssertTrue(command.contains("target=\"$base/$name\""), command)
+        XCTAssertTrue(command.contains("timeout=120"), command)
+        XCTAssertTrue(command.contains("git worktree add timed out after %s seconds"), command)
         XCTAssertFalse(command.contains("uuidgen"), command)
         XCTAssertFalse(command.contains("date +%s"), command)
     }

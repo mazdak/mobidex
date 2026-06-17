@@ -412,7 +412,7 @@ final class AppViewModel: ObservableObject {
         sessionListCacheTTL: TimeInterval = SharedKMPBridge.defaultSessionListCacheTTL,
         threadDetailCacheTTL: TimeInterval = SharedKMPBridge.defaultThreadDetailCacheTTL,
         maxThreadDetailCacheEntries: Int = 8,
-        sessionStartOperationTimeoutSeconds: Double = 30,
+        sessionStartOperationTimeoutSeconds: Double = 120,
         loadServersOnInit: Bool = true
     ) {
         self.repository = repository

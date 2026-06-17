@@ -102,7 +102,10 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
 
     override suspend fun createCodexWorktree(projectPath: String, server: ServerRecord, credential: SSHCredential): String =
         withClient(server, credential) { client ->
-            val path = client.execString(RemoteCodexWorktreeCommand.shellCommand(projectPath)).trim()
+            val path = client.execString(
+                RemoteCodexWorktreeCommand.shellCommand(projectPath),
+                timeoutSeconds = WORKTREE_COMMAND_TIMEOUT_SECONDS,
+            ).trim()
             require(path.startsWith("/")) { "Could not create Codex worktree: $path" }
             path
         }
@@ -622,15 +625,17 @@ private class SshjRemoteTerminalSession(
 
 private data class UpgradeResponse(val headers: String, val leftover: ByteArray)
 
-private fun SSHClient.execString(command: String): String =
+private const val WORKTREE_COMMAND_TIMEOUT_SECONDS = 120L
+
+private fun SSHClient.execString(command: String, timeoutSeconds: Long = 45): String =
     startSession().use { session ->
         val cmd = session.exec(command)
         val output = cmd.inputStream.readFullyAsync()
         val error = cmd.errorStream.readFullyAsync()
-        cmd.join(45, TimeUnit.SECONDS)
+        cmd.join(timeoutSeconds, TimeUnit.SECONDS)
         if (cmd.isOpen) {
             runCatching { cmd.close() }
-            throw IllegalStateException("Remote command timed out after 45 seconds.")
+            throw IllegalStateException("Remote command timed out after $timeoutSeconds seconds.")
         }
         val outputText = output.get(2, TimeUnit.SECONDS)
         val errorText = error.get(2, TimeUnit.SECONDS)

@@ -121,7 +121,7 @@ class AppViewModelNewSessionTest {
                 listOf("/srv/app", "/srv/app-worktree"),
                 null,
             ),
-            transport.threadListCwdFilters,
+            transport.threadListCwdFilters.takeLast(2),
         )
         assertEquals("thread-new", model.state.value.selectedThreadID)
         assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)

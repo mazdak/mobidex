@@ -1575,7 +1575,7 @@ class AppViewModel(
                             val projectCwd = cwd ?: error("Select a project before starting a session.")
                             val credential = credentialStore.loadCredential(server.id)
                             requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID, requestAllSessions)
-                            withNewSessionOperationTimeout("Creating the worktree timed out after 30 seconds.") {
+                            withNewSessionOperationTimeout("Creating the worktree timed out after $NEW_SESSION_OPERATION_TIMEOUT_SECONDS seconds.") {
                                 sshService.createCodexWorktree(projectCwd, server, credential)
                             }
                         }
@@ -1584,7 +1584,7 @@ class AppViewModel(
                     requireSessionMutationScope(client, requestServerID, requestProjectID, requestThreadID, requestAllSessions)
                     _state.update { it.copy(statusMessage = "Creating session") }
                     var thread = if (location == NewSessionLocation.CodexWorktree) {
-                        withNewSessionOperationTimeout("Creating the session timed out after 30 seconds.") {
+                        withNewSessionOperationTimeout("Creating the session timed out after $NEW_SESSION_OPERATION_TIMEOUT_SECONDS seconds.") {
                             client.startThread(sessionCwd)
                         }
                     } else {
@@ -3520,7 +3520,8 @@ internal fun <K, V> MutableMap<K, V>.evictOldestBeyond(cap: Int, protect: K) {
     }
 }
 private const val REMOTE_DIRECTORY_BROWSE_TIMEOUT_MILLIS = 20_000L
-private const val NEW_SESSION_OPERATION_TIMEOUT_MILLIS = 30_000L
+private const val NEW_SESSION_OPERATION_TIMEOUT_MILLIS = 120_000L
+private const val NEW_SESSION_OPERATION_TIMEOUT_SECONDS = NEW_SESSION_OPERATION_TIMEOUT_MILLIS / 1_000L
 
 private suspend fun <T> withRemoteDirectoryBrowseTimeout(block: suspend () -> T): T =
     try {

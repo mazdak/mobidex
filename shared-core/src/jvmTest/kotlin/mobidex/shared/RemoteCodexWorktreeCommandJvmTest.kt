@@ -49,6 +49,7 @@ class RemoteCodexWorktreeCommandJvmTest {
         val worktreesRoot = File(home, ".codex/worktrees").absolutePath
         val worktree = File(path)
         assertTrue(path.startsWith("$worktreesRoot/"), path)
+        assertTrue(Regex("[0-9a-f]{4}").matches(worktree.parentFile.name), path)
         assertTrue(worktree.isDirectory, path)
         val gitRoot = File(runShell("git rev-parse --show-toplevel", worktree).trim())
         assertEquals(worktree.canonicalPath, gitRoot.canonicalPath)
