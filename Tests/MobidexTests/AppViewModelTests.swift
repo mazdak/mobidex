@@ -2280,6 +2280,92 @@ final class AppViewModelTests: XCTestCase {
     }
 
     @MainActor
+    func testWorktreeSessionSurvivesStaleDiscoveryAndEmptyThreadLists() async throws {
+        let project = ProjectRecord(path: "/srv/app", discovered: true, isAdded: true)
+        let staleDiscovery = [
+            RemoteProject(
+                path: "/srv/app",
+                sessionPaths: ["/srv/app"],
+                discoveredSessionCount: 1,
+                lastDiscoveredAt: nil
+            )
+        ]
+        let server = ServerRecord(
+            displayName: "Build Box",
+            host: "build.example.com",
+            username: "mazdak",
+            authMethod: .password,
+            projects: [project]
+        )
+        let repository = InMemoryServerRepository(servers: [server])
+        let credentials = InMemoryCredentialStore()
+        try credentials.saveCredential(SSHCredential(password: "secret"), serverID: server.id)
+        let transport = MockCodexLineTransport()
+        let sshService = ScriptedSSHService(
+            appServer: CodexAppServerClient(transport: transport),
+            discoveredProjectBatches: [staleDiscovery]
+        )
+        let viewModel = AppViewModel(
+            repository: repository,
+            credentialStore: credentials,
+            sshService: sshService
+        )
+
+        let connectTask = Task { await viewModel.connectSelectedServer() }
+        var cursor = 0
+        let initialize = try await waitForRequest(method: "initialize", in: transport, after: cursor)
+        cursor = initialize.nextCursor
+        transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
+        let initialScopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = initialScopedList.nextCursor
+        transport.receive(#"{"id":\#(initialScopedList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
+        await connectTask.value
+        await skipSettledBackgroundRequests(in: transport, cursor: &cursor)
+
+        let createdThreadTask = Task { await viewModel.startNewSession(location: .codexWorktree) }
+        let startThread = try await waitForRequest(method: "thread/start", in: transport, after: cursor)
+        cursor = startThread.nextCursor
+        transport.receive("""
+        {"id":\(startThread.id),"result":{"thread":{
+          "id":"thread-new",
+          "preview":"New worktree",
+          "cwd":"/srv/app-worktree",
+          "status":{"type":"idle"},
+          "updatedAt":1770000400,
+          "createdAt":1770000400,
+          "turns":[]
+        }}}
+        """)
+        let createdThreadID = await createdThreadTask.value
+
+        XCTAssertEqual(createdThreadID, "thread-new")
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-new")
+        XCTAssertEqual(viewModel.selectedThread?.cwd, "/srv/app-worktree")
+
+        let projectRefreshTask = Task { await viewModel.refreshProjects() }
+        let loadedList = try await waitForRequest(method: "thread/loaded/list", in: transport, after: cursor)
+        cursor = loadedList.nextCursor
+        transport.receive(#"{"id":\#(loadedList.id),"result":{"data":[]}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
+        await projectRefreshTask.value
+
+        XCTAssertEqual(viewModel.selectedProject?.sessionPaths, ["/srv/app", "/srv/app-worktree"])
+
+        let refreshTask = Task { await viewModel.refreshThreads() }
+        let refreshScopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = refreshScopedList.nextCursor
+        transport.receive(#"{"id":\#(refreshScopedList.id),"result":{"data":[],"nextCursor":null}}"#)
+        try await respondToEmptyUnscopedThreadListFallback(in: transport, cursor: &cursor)
+        await refreshTask.value
+
+        XCTAssertEqual(viewModel.selectedThreadID, "thread-new")
+        XCTAssertEqual(viewModel.selectedThread?.cwd, "/srv/app-worktree")
+        XCTAssertEqual(viewModel.threads.map(\.id), ["thread-new"])
+        await viewModel.disconnect()
+    }
+
+    @MainActor
     func testFailedNewSessionAllowsRefreshToSelectExistingSessionAgain() async throws {
         let project = ProjectRecord(path: "/srv/app", isAdded: true)
         let server = ServerRecord(

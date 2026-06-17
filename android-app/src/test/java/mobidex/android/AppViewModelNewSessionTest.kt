@@ -129,6 +129,54 @@ class AppViewModelNewSessionTest {
     }
 
     @Test
+    fun worktreeSessionSurvivesStaleDiscoveryAndEmptyThreadLists() = runTest(dispatcher) {
+        val project = ProjectRecord(path = "/srv/app", discovered = true, isAdded = true)
+        val server = server(project)
+        val transport = ScriptedAppServerTransport(
+            threadListResponseProvider = { emptyList() },
+        )
+        val ssh = FakeSshService(
+            transport,
+            discoveredProjects = listOf(
+                RemoteProject(
+                    path = "/srv/app",
+                    sessionPaths = listOf("/srv/app"),
+                    discoveredSessionCount = 1,
+                )
+            ),
+        )
+        val model = viewModel(server, ssh)
+        advanceUntilIdle()
+
+        var completed = false
+        model.startNewSession { completed = it }
+        waitUntil { completed }
+
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+        assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)
+
+        val projectRefreshCount = transport.sentMethods.count { it == "thread/loaded/list" }
+        model.refreshProjects()
+        waitUntil {
+            transport.sentMethods.count { it == "thread/loaded/list" } > projectRefreshCount &&
+                !model.state.value.isDiscoveringProjects
+        }
+        assertEquals(
+            listOf("/srv/app", "/srv/app-worktree"),
+            model.state.value.selectedProject?.sessionPaths,
+        )
+
+        val listCount = transport.sentMethods.count { it == "thread/list" }
+        model.refreshThreads()
+        waitUntil { transport.sentMethods.count { it == "thread/list" } > listCount }
+        advanceUntilIdle()
+
+        assertEquals("thread-new", model.state.value.selectedThreadID)
+        assertEquals("/srv/app-worktree", model.state.value.selectedThread?.cwd)
+        assertEquals(listOf("thread-new"), model.state.value.threads.map { it.id })
+    }
+
+    @Test
     fun startNoFolderSessionFromProjectListOmitsCwd() = runTest(dispatcher) {
         val project = ProjectRecord(path = "/srv/app")
         val server = server(project)
@@ -598,12 +646,13 @@ private class FakeHostKeyStore : HostKeyStore {
 private class FakeSshService(
     private val transport: ScriptedAppServerTransport = ScriptedAppServerTransport(),
     private val openFailure: Throwable? = null,
+    private val discoveredProjects: List<RemoteProject> = emptyList(),
 ) : MobidexSshService {
     var openAppServerCount = 0
     val createdWorktreeProjectPaths = mutableListOf<String>()
 
     override suspend fun testConnection(server: ServerRecord, credential: SSHCredential) = Unit
-    override suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject> = emptyList()
+    override suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject> = discoveredProjects
     override suspend fun listDirectories(path: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =
         error("Directory listing is not used by these tests.")
     override suspend fun createDirectory(parentPath: String, folderName: String, server: ServerRecord, credential: SSHCredential): RemoteDirectoryListing =

@@ -28,9 +28,13 @@ object ProjectCatalog {
         for (project in discoveredProjects) {
             val existingRecord = recordsByPath[project.path]
             val record = existingRecord ?: ProjectRecord(path = project.path, discovered = true)
+            val sessionPaths = ProjectRecord.normalizedSessionPaths(
+                (existingRecord?.sessionPaths ?: emptyList()) + project.sessionPaths,
+                project.path,
+            )
             recordsByPath[project.path] = record.copy(
                 discovered = true,
-                sessionPaths = ProjectRecord.normalizedSessionPaths(project.sessionPaths, project.path),
+                sessionPaths = sessionPaths,
                 discoveredSessionCount = project.discoveredSessionCount,
                 archivedSessionCount = project.archivedSessionCount,
                 lastDiscoveredAtEpochSeconds = project.lastDiscoveredAtEpochSeconds,

@@ -211,6 +211,13 @@ private struct ThreadLoadScope: Equatable, Hashable {
     var sessionPaths: Set<String>
     var isShowingAllSessions: Bool
     var includeArchivedSessions: Bool
+
+    func hasSameSelection(as other: ThreadLoadScope) -> Bool {
+        serverID == other.serverID
+            && projectID == other.projectID
+            && cwd == other.cwd
+            && isShowingAllSessions == other.isShowingAllSessions
+    }
 }
 
 private struct CachedThreadList {
@@ -351,6 +358,7 @@ final class AppViewModel: ObservableObject {
     private var sessionRefreshListLoadGeneration = 0
     private var sessionRefreshDetailLoadGeneration = 0
     private var unlistedStartedThreadIDs = Set<String>()
+    private var unlistedStartedThreadScopes: [String: ThreadLoadScope] = [:]
     private var queuedTurnInputsByThreadID: [String: [QueuedTurnInput]] = [:]
     private var isConnectingAppServer = false
     private var didLoadServers = false
@@ -1704,7 +1712,7 @@ final class AppViewModel: ObservableObject {
                 rememberUnscopedThreadID(thread.id, serverID: selectedServer.id)
                 thread.isUnscoped = true
             }
-            unlistedStartedThreadIDs.insert(thread.id)
+            rememberUnlistedStartedThread(thread.id, scope: currentThreadLoadScope)
             selectedThreadID = thread.id
             selectedThreadTokenUsage = nil
             changedFiles = []
@@ -2137,7 +2145,7 @@ final class AppViewModel: ObservableObject {
                     rememberUnscopedThreadID(thread.id, serverID: selectedServerID)
                     thread.isUnscoped = true
                 }
-                unlistedStartedThreadIDs.insert(thread.id)
+                rememberUnlistedStartedThread(thread.id, scope: currentThreadLoadScope)
                 let selectionMatchesStartedThread = selectedThreadID == startingThreadID
                     || (startingThreadID == nil && selectedThreadID == thread.id)
                 guard currentThreadLoadScope == scope, selectionMatchesStartedThread, threadMatchesScope(thread, scope: scope) else {
@@ -3092,20 +3100,46 @@ final class AppViewModel: ObservableObject {
         preserveMissingSelectedThread: Bool,
         listedThreadIDs: Set<String>? = nil
     ) -> [CodexThread] {
-        unlistedStartedThreadIDs.subtract(listedThreadIDs ?? Set(loadedThreads.map(\.id)))
-        let shouldPreserveMissingSelectedThread = selectedThreadID.map {
-            preserveMissingSelectedThread || unlistedStartedThreadIDs.contains($0)
+        forgetListedStartedThreads(listedThreadIDs ?? Set(loadedThreads.map(\.id)))
+        let preservesUnlistedStartedThread = selectedThreadID.map {
+            isUnlistedStartedThread($0, in: scope)
+        } ?? false
+        let shouldPreserveMissingSelectedThread = selectedThreadID.map { _ in
+            preserveMissingSelectedThread || preservesUnlistedStartedThread
         } ?? preserveMissingSelectedThread
         guard shouldPreserveMissingSelectedThread,
               let selectedThreadID,
               !loadedThreads.contains(where: { $0.id == selectedThreadID }),
               let selectedThread,
               selectedThread.id == selectedThreadID,
-              threadMatchesScope(selectedThread, scope: scope)
+              threadMatchesScope(selectedThread, scope: scope) || preservesUnlistedStartedThread
         else {
             return sortedThreads(loadedThreads)
         }
         return sortedThreads(loadedThreads + [selectedThread])
+    }
+
+    private func rememberUnlistedStartedThread(_ threadID: String, scope: ThreadLoadScope) {
+        unlistedStartedThreadIDs.insert(threadID)
+        unlistedStartedThreadScopes[threadID] = scope
+    }
+
+    private func forgetListedStartedThreads(_ threadIDs: Set<String>) {
+        guard !threadIDs.isEmpty else { return }
+        unlistedStartedThreadIDs.subtract(threadIDs)
+        for threadID in threadIDs {
+            unlistedStartedThreadScopes.removeValue(forKey: threadID)
+        }
+    }
+
+    private func isUnlistedStartedThread(_ threadID: String, in scope: ThreadLoadScope) -> Bool {
+        guard unlistedStartedThreadIDs.contains(threadID) else {
+            return false
+        }
+        guard let startedScope = unlistedStartedThreadScopes[threadID] else {
+            return true
+        }
+        return startedScope.hasSameSelection(as: scope)
     }
 
     private func startEventLoop() {

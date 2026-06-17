@@ -149,6 +149,35 @@ class SharedCoreParityTest {
     }
 
     @Test
+    fun projectCatalogPreservesLocallyLearnedSessionPathsWhenDiscoveryIsStale() {
+        val existing = listOf(
+            ProjectRecord(
+                path = "/srv/app",
+                sessionPaths = listOf("/srv/app", "/home/me/.codex/worktrees/027c/app"),
+                discovered = true,
+                isAdded = true,
+            )
+        )
+
+        val refreshed = ProjectCatalog.refreshedProjects(
+            existingProjects = existing,
+            discoveredProjects = listOf(
+                RemoteProject(
+                    path = "/srv/app",
+                    sessionPaths = listOf("/srv/app"),
+                    discoveredSessionCount = 1,
+                )
+            ),
+            openSessions = emptyList(),
+        )
+
+        assertEquals(
+            listOf("/srv/app", "/home/me/.codex/worktrees/027c/app"),
+            refreshed.single().sessionPaths,
+        )
+    }
+
+    @Test
     fun projectCatalogDoesNotPromoteNewRemoteDiscoveriesToSavedProjects() {
         val refreshed = ProjectCatalog.refreshedProjects(
             existingProjects = emptyList(),

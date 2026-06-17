@@ -204,7 +204,13 @@ private data class ThreadScopeCacheKey(
     val sessionPaths: List<String>,
     val isShowingAllSessions: Boolean,
     val includeArchivedSessions: Boolean,
-)
+) {
+    fun hasSameSelection(other: ThreadScopeCacheKey): Boolean =
+        serverID == other.serverID &&
+            projectID == other.projectID &&
+            cwd == other.cwd &&
+            isShowingAllSessions == other.isShowingAllSessions
+}
 
 private data class ThreadDetailCacheKey(
     val serverID: String?,
@@ -249,6 +255,7 @@ class AppViewModel(
     private var sessionRefreshDetailLoadGeneration = 0L
     private var sessionMutationGeneration = 0L
     private val unlistedStartedThreadIDs = mutableSetOf<String>()
+    private val unlistedStartedThreadScopes = mutableMapOf<String, ThreadScopeCacheKey>()
     private val sessionListInitialPageLimit = 1
     private var isSendingInput = false
     private var isStartingSession = false
@@ -1321,15 +1328,18 @@ class AppViewModel(
     ): List<CodexThread> {
         val selectedID = state.selectedThreadID
         val selectedThread = state.selectedThread
-        unlistedStartedThreadIDs.removeAll(loadedThreads.map { it.id }.toSet())
+        forgetListedStartedThreads(loadedThreads.map { it.id }.toSet())
+        val preservesUnlistedStartedThread = selectedID?.let {
+            isUnlistedStartedThread(it, state)
+        } ?: false
         val shouldPreserveMissingSelectedThread = preserveMissingSelectedThread ||
-            (selectedID != null && selectedID in unlistedStartedThreadIDs)
+            preservesUnlistedStartedThread
         val threads = if (
             shouldPreserveMissingSelectedThread &&
             selectedID != null &&
             selectedThread?.id == selectedID &&
             loadedThreads.none { it.id == selectedID } &&
-            threadMatchesScope(selectedThread, state)
+            (threadMatchesScope(selectedThread, state) || preservesUnlistedStartedThread)
         ) {
             loadedThreads + selectedThread
         } else {
@@ -1339,6 +1349,23 @@ class AppViewModel(
             compareByDescending<CodexThread> { it.updatedAtEpochSeconds }
                 .thenBy { it.id },
         )
+    }
+
+    private fun rememberUnlistedStartedThread(threadID: String, state: MobidexUiState = _state.value) {
+        unlistedStartedThreadIDs += threadID
+        unlistedStartedThreadScopes[threadID] = currentThreadScopeCacheKey(state)
+    }
+
+    private fun forgetListedStartedThreads(threadIDs: Set<String>) {
+        if (threadIDs.isEmpty()) return
+        unlistedStartedThreadIDs.removeAll(threadIDs)
+        threadIDs.forEach { unlistedStartedThreadScopes.remove(it) }
+    }
+
+    private fun isUnlistedStartedThread(threadID: String, state: MobidexUiState): Boolean {
+        if (threadID !in unlistedStartedThreadIDs) return false
+        val startedScope = unlistedStartedThreadScopes[threadID] ?: return true
+        return startedScope.hasSameSelection(currentThreadScopeCacheKey(state))
     }
 
     private fun inferredFolderlessCodexRoot(): String? =
@@ -1596,7 +1623,7 @@ class AppViewModel(
                         rememberUnscopedThreadID(thread.id, requestServerID)
                         thread = thread.copy(isUnscoped = true)
                     }
-                    unlistedStartedThreadIDs += thread.id
+                    rememberUnlistedStartedThread(thread.id)
                     val adopted = hydrateConversationIfCurrent(
                         thread,
                         requestServerID,
@@ -1775,7 +1802,7 @@ class AppViewModel(
                         } else {
                             thread = startedThread
                         }
-                        unlistedStartedThreadIDs += thread.id
+                        rememberUnlistedStartedThread(thread.id)
                         createdThread = true
                         if (!hydrateConversationIfCurrent(thread, requestServerID, requestProjectID, requestThreadID, requestAllSessions, acceptedStartedThreadID = thread.id)) {
                             return@runBusy
