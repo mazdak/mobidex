@@ -87,6 +87,14 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 53) - 2026-06-17
+
+- Executed from `master` at `f0cecdd` (`build(release): prepare build 53 artifacts`), including `670c02e` (`fix(sessions): harden remote worktree creation`); Android release metadata bumped to versionCode `53`.
+- Internal: build 53, BUILD_ID `546234ac-df0d-49a7-8eff-83f50b9da0d4`, run `.asc/runs/testflight-20260617T142543Z-61e3e44c.json`, status ok after resume (compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260617T143520Z-a2c058b3.json`, status ok (submitted for beta app review + External Testers).
+- Contents over 52: remote Codex worktree creation now uses Codex Desktop-style four-hex parent directories, has 120s worktree/session timeouts on iOS and Android, keeps iOS stderr out of returned path parsing, and makes Android's SSH worktree exec honor the longer timeout.
+- Signing note: the first archive attempt failed because no valid iOS Distribution identity was visible to non-interactive `codesign`; retry imported the repo-generated distribution key/certificate plus Apple WWDR G3 into a temporary keychain, resumed the same workflow run, and restored the login keychain afterward.
+
 ## asc TestFlight submission (internal + external build 52) - 2026-06-15
 
 - Executed from `master` at `8a329a7` (`fix(codex): merge app-server workspace roots`); Android release metadata bumped to versionCode `52`.
