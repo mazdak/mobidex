@@ -87,6 +87,15 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 54) - 2026-06-17
+
+- Executed from `master` at `d9a8817` (`build(release): prepare build 54 artifacts`), including `ed0bca0` (`fix(sessions): preserve started worktree sessions`); Android release metadata bumped to versionCode `54`.
+- Internal: build 54, BUILD_ID `b9a4ee26-908a-431d-a04a-9a99eb4c0960`, status ok after direct completion (build `VALID`, compliance set, Internal Testers attached).
+- External: run `/Users/mazdak/Code/mobidex/.asc/runs/testflight_external-20260617T235105Z-46e8deaa.json`, status ok (submitted for beta app review + External Testers); App Store Connect reports Internal and External state `IN_BETA_TESTING`.
+- Contents over 53: remote Codex worktree session starts now treat `thread/start` as authoritative and preserve just-started empty sessions through stale `thread/list`/project-discovery windows; project refresh keeps locally learned worktree session paths; the preservation marker is fallback-only, so Mac paths where the new thread is immediately listed continue through the normal happy path.
+- Validation: reproduced on `spark-d240.tail866988.ts.net` that `thread/start` succeeds while filtered `thread/list` can temporarily return empty; shared JVM regression, Android new-session regression, targeted iOS AppViewModel regression, `git diff --check`, and iOS distribution preflight passed.
+- Signing/distribution note: the first archive attempt could not see a distribution identity; retry imported the generated distribution key/certificate plus Apple WWDR G3 into a temporary keychain and restored the login keychain. The upload workflow then hit a transient DNS failure while polling App Store Connect after upload commit; build 54 was verified `VALID` and the remaining compliance/group/external steps were completed directly.
+
 ## asc TestFlight submission (internal + external build 53) - 2026-06-17
 
 - Executed from `master` at `f0cecdd` (`build(release): prepare build 53 artifacts`), including `670c02e` (`fix(sessions): harden remote worktree creation`); Android release metadata bumped to versionCode `53`.

@@ -10,6 +10,7 @@ Done criteria:
 - [x] Add focused regression coverage for the failure mode.
 - [x] Run targeted tests/build checks.
 - [x] Review changes and address confirmed findings.
+- [x] Ship the fix to Internal and External TestFlight.
 
 Guardrails:
 - Keep the fix scoped to new-session/worktree visibility and project/thread refresh behavior.
@@ -22,4 +23,6 @@ Critical learnings:
 - The remaining defect was client-side reconciliation after a successful start rather than shell stderr contamination or failed `git worktree add`.
 - `thread/start` is the authoritative creation response; Mobidex now preserves just-started sessions through the empty-list window.
 - Project discovery can lag local worktree creation, so project refresh now preserves locally learned session paths instead of replacing them with stale discovery aliases.
+- The fix is fallback-only: on Mac paths where the just-started thread appears in `thread/list`, Mobidex immediately clears the preservation marker and the existing happy path continues to win.
 - Validated with shared JVM tests, the Android new-session test class, and the targeted iOS AppViewModel regression.
+- Build `1.0 (54)` / `b9a4ee26-908a-431d-a04a-9a99eb4c0960` is `IN_BETA_TESTING` for both Internal and External TestFlight.
