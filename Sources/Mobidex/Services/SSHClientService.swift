@@ -408,7 +408,7 @@ final class CitadelSSHService: TerminalSSHService {
                 SharedKMPBridge.remoteCodexWorktreeShellCommand(projectPath: projectPath),
                 maxResponseSize: 16_384,
                 mergeStreams: false,
-                inShell: true
+                inShell: false
             )
             let path = String(buffer: output).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !path.isEmpty, path.hasPrefix("/") else {
