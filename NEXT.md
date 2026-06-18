@@ -87,6 +87,15 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 55) - 2026-06-18
+
+- Executed from `master` at `943a3fa` (`build(release): prepare build 55 artifacts`), including `5414110` (`fix(sessions): avoid shell-session worktree creation`); Android release metadata bumped to versionCode `55`.
+- Internal: build 55, BUILD_ID `e5b32d8e-d51a-4f4a-9521-1cf6bb05861e`, run `.asc/runs/testflight-20260618T013416Z-ffd84362.json`, status ok (build `VALID`, compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260618T013845Z-634eb527.json`, status ok (submitted for beta app review + External Testers); App Store Connect reports Internal and External state `IN_BETA_TESTING`.
+- Contents over 54: iOS worktree creation now runs the shared shell script through an SSH exec request instead of Citadel shell-session mode. On Linux/DGX hosts, shell sessions emit MOTD/login text to stdout before the worktree path, causing Mobidex to reject the returned value; exec requests return only the command stdout path, matching Android's SSHJ behavior.
+- Validation: reproduced the shell-session contamination on `spark-d240.tail866988.ts.net`, verified exec-request style returns only `/home/mazdak/.codex/worktrees/<hex>/<repo>`, ran `Scripts/verify-ios-build.sh`, `Scripts/verify-ios-distribution-config.sh`, `git diff --check`, and focused `RemoteCodexWorktreeCommandJvmTest`.
+- Signing note: archive/export used the generated iOS distribution key/certificate plus Apple WWDR G3 imported into a temporary keychain; login keychain restored afterward.
+
 ## asc TestFlight submission (internal + external build 54) - 2026-06-17
 
 - Executed from `master` at `d9a8817` (`build(release): prepare build 54 artifacts`), including `ed0bca0` (`fix(sessions): preserve started worktree sessions`); Android release metadata bumped to versionCode `54`.

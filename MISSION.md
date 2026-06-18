@@ -11,8 +11,8 @@ Done criteria:
 - [x] Run targeted tests/build checks.
 - [x] Review changes and address confirmed findings.
 - [x] Ship the fix to Internal and External TestFlight.
-- [ ] Fix the iOS Linux worktree creation failure caused by shell-session stdout contamination.
-- [ ] Ship the follow-up fix to TestFlight.
+- [x] Fix the iOS Linux worktree creation failure caused by shell-session stdout contamination.
+- [x] Ship the follow-up fix to TestFlight.
 
 Guardrails:
 - Keep the fix scoped to new-session/worktree visibility and project/thread refresh behavior.
@@ -30,3 +30,4 @@ Critical learnings:
 - Build `1.0 (54)` / `b9a4ee26-908a-431d-a04a-9a99eb4c0960` is `IN_BETA_TESTING` for both Internal and External TestFlight.
 - Follow-up finding: Citadel's iOS `inShell: true` path opens a shell session and writes the script, so Ubuntu/DGX MOTD text is emitted to stdout before the worktree path; Mobidex then rejects the returned value because it no longer starts with `/`.
 - Decision: iOS worktree creation now uses an SSH exec request (`inShell: false`), matching the Android/SSHJ behavior and avoiding shell-session login output while preserving shell-script execution on OpenSSH servers.
+- Build `1.0 (55)` / `e5b32d8e-d51a-4f4a-9521-1cf6bb05861e` is `VALID`, export-compliance cleared, and `IN_BETA_TESTING` for both Internal and External TestFlight.
