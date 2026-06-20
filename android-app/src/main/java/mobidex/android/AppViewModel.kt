@@ -1061,10 +1061,17 @@ class AppViewModel(
                         ) {
                             current
                         } else {
+                            val loadedThreadIDs = loaded.threads.mapTo(mutableSetOf()) { it.id }
+                            val retainedExistingThreads = current.threads.filter { thread ->
+                                thread.id !in loadedThreadIDs &&
+                                    (includeArchived || !thread.isArchived) &&
+                                    threadMatchesScope(thread, current)
+                            }
                             val sorted = sortedThreadsPreservingSelectedThread(
-                                loadedThreads = loaded.threads,
+                                loadedThreads = loaded.threads + retainedExistingThreads,
                                 state = current,
                                 preserveMissingSelectedThread = true,
+                                listedThreadIDs = loadedThreadIDs,
                             )
                             val nextNoFolderThreads = loaded.noFolderThreads ?: current.noFolderThreads
                             val selectedID = current.selectedThreadID?.takeIf { id -> sorted.any { it.id == id } }
@@ -1141,7 +1148,16 @@ class AppViewModel(
             }
             ThreadScopeLoadResult(threads = loaded)
         } else {
-            val exactMatches = client.listThreads(sessionPaths, includeArchived = includeArchived, pageLimit = pageLimit)
+            val exactPaths = if (pageLimit == null) {
+                sessionPaths.sorted()
+            } else {
+                cwd?.takeIf { it in sessionPaths }?.let(::listOf).orEmpty()
+            }
+            val exactMatches = if (exactPaths.isEmpty()) {
+                emptyList()
+            } else {
+                client.listThreads(exactPaths, includeArchived = includeArchived, pageLimit = pageLimit)
+            }
             val unscoped = client.listThreads(null, includeArchived = includeArchived, pageLimit = pageLimit)
             val groupedUnscoped = unscoped.map { markUnscopedChatState(it, state) }
             val groupedSessionIDs = SessionListSections.sessionIdsForProject(
@@ -1325,10 +1341,11 @@ class AppViewModel(
         loadedThreads: List<CodexThread>,
         state: MobidexUiState,
         preserveMissingSelectedThread: Boolean,
+        listedThreadIDs: Set<String>? = null,
     ): List<CodexThread> {
         val selectedID = state.selectedThreadID
         val selectedThread = state.selectedThread
-        forgetListedStartedThreads(loadedThreads.map { it.id }.toSet())
+        forgetListedStartedThreads(listedThreadIDs ?: loadedThreads.mapTo(mutableSetOf()) { it.id })
         val preservesUnlistedStartedThread = selectedID?.let {
             isUnlistedStartedThread(it, state)
         } ?: false
@@ -2707,8 +2724,10 @@ class AppViewModel(
                 if (threadMatchesCurrentScope(thread) && (_state.value.selectedThreadID == null || _state.value.selectedThreadID == thread.id)) {
                     hydrateConversation(thread)
                 }
-                refreshThreadsFromNotification(notificationSessionMutationGeneration, sessionMutationWasInFlight)
-                appServer?.let { client -> refreshProjectsForCurrentScope(client, _state.value.selectedServerID) }
+                if (canRefreshThreadsFromNotification(notificationSessionMutationGeneration, sessionMutationWasInFlight)) {
+                    refreshThreads()
+                    appServer?.let { client -> refreshProjectsForCurrentScope(client, _state.value.selectedServerID) }
+                }
             }
             "turn/started", "turn/completed" -> {
                 val targetsSelectedThread = eventTargetsSelectedThread(params)
@@ -2807,13 +2826,15 @@ class AppViewModel(
     }
 
     private fun refreshThreadsFromNotification(notificationSessionMutationGeneration: Long, sessionMutationWasInFlight: Boolean) {
-        if (!sessionMutationWasInFlight &&
-            notificationSessionMutationGeneration == sessionMutationGeneration &&
-            !isSessionMutationInFlight()
-        ) {
+        if (canRefreshThreadsFromNotification(notificationSessionMutationGeneration, sessionMutationWasInFlight)) {
             refreshThreads()
         }
     }
+
+    private fun canRefreshThreadsFromNotification(notificationSessionMutationGeneration: Long, sessionMutationWasInFlight: Boolean): Boolean =
+        !sessionMutationWasInFlight &&
+            notificationSessionMutationGeneration == sessionMutationGeneration &&
+            !isSessionMutationInFlight()
 
     private suspend fun hydrateConversation(thread: CodexThread) {
         sessionRefreshDetailLoadGeneration += 1

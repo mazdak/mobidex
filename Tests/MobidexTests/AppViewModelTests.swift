@@ -3010,13 +3010,22 @@ final class AppViewModelTests: XCTestCase {
         transport.receive(#"{"id":\#(initialize.id),"result":{}}"#)
         let scopedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
         cursor = scopedList.nextCursor
-        let params = try requestParams(for: scopedList, in: transport)
-        XCTAssertEqual(params["cwd"] as? [String], ["/srv/.codex/worktrees/a/fullstack", "/srv/fullstack"])
+        var params = try requestParams(for: scopedList, in: transport)
+        XCTAssertEqual(params["cwd"] as? String, "/srv/fullstack")
         XCTAssertEqual(params["archived"] as? Bool, false)
         transport.receive("""
         {"id":\(scopedList.id),"result":{"data":[
-          {"id":"thread-worktree","preview":"Worktree","cwd":"/srv/.codex/worktrees/a/fullstack","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
           {"id":"thread-main","preview":"Main","cwd":"/srv/fullstack","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
+        ],"nextCursor":null}}
+        """)
+        let groupedList = try await waitForRequest(method: "thread/list", in: transport, after: cursor)
+        cursor = groupedList.nextCursor
+        params = try requestParams(for: groupedList, in: transport)
+        XCTAssertNil(params["cwd"])
+        XCTAssertEqual(params["archived"] as? Bool, false)
+        transport.receive("""
+        {"id":\(groupedList.id),"result":{"data":[
+          {"id":"thread-worktree","preview":"Worktree","cwd":"/srv/.codex/worktrees/a/fullstack","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}
         """)
         let read = try await waitForRequest(method: "thread/read", in: transport, after: cursor)

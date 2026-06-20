@@ -2818,10 +2818,17 @@ final class AppViewModel: ObservableObject {
               currentThreadLoadScope == scope else {
             return
         }
+        let loadedThreadIDs = Set(loadResult.threads.map(\.id))
+        let retainedExistingThreads = threads.filter { thread in
+            !loadedThreadIDs.contains(thread.id) &&
+                (scope.includeArchivedSessions || !thread.isArchived) &&
+                threadMatchesScope(thread, scope: scope)
+        }
         let prioritizedThreads = sortedThreadsPreservingSelectedThread(
-            loadResult.threads,
+            loadResult.threads + retainedExistingThreads,
             scope: scope,
-            preserveMissingSelectedThread: true
+            preserveMissingSelectedThread: true,
+            listedThreadIDs: loadedThreadIDs
         )
         if let loadedNoFolderThreads = loadResult.noFolderThreads {
             noFolderThreads = loadedNoFolderThreads
@@ -3605,11 +3612,24 @@ final class AppViewModel: ObservableObject {
         }
         var merged: [CodexThread] = []
         var seen = Set<String>()
-        let loaded = try await appServer.listThreads(
-            cwds: scope.sessionPaths.sorted(),
-            includeArchived: scope.includeArchivedSessions,
-            pageLimit: pageLimit
-        )
+        let exactPaths: [String]
+        if pageLimit == nil {
+            exactPaths = scope.sessionPaths.sorted()
+        } else if let cwd = scope.cwd, scope.sessionPaths.contains(cwd) {
+            exactPaths = [cwd]
+        } else {
+            exactPaths = []
+        }
+        let loaded: [CodexThread]
+        if exactPaths.isEmpty {
+            loaded = []
+        } else {
+            loaded = try await appServer.listThreads(
+                cwds: exactPaths,
+                includeArchived: scope.includeArchivedSessions,
+                pageLimit: pageLimit
+            )
+        }
         for thread in loaded where seen.insert(thread.id).inserted {
             merged.append(thread)
         }
