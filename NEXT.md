@@ -87,6 +87,15 @@ case) — acceptable; revisit builders only if measurement disagrees.
 - [x] C7. Merged to `master` (fast-forward 264696e → 4357ff7 after `origin/master` pull confirmed up to date) and pushed.
 - [x] C8. TestFlight internal: build `1.0 (43)` uploaded and added to `Internal Testers`. External submission NOT run (blocked by session permissions as an external-facing action; run manually if desired — command below).
 
+## asc TestFlight submission (internal + external build 56) - 2026-06-20
+
+- Executed from `master` at `59eb7f5` (`fix(sessions): show scoped Codex handoff threads`).
+- Internal: build 56, BUILD_ID `6813cccc-4799-4fe5-8dbd-516b35de84d4`, run `.asc/runs/testflight-20260620T134907Z-e32c9f6e.json`, status ok after resume (build `VALID`, compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260620T135736Z-6e6da948.json`, status ok (submitted for beta app review + External Testers).
+- Contents over 55: project-scoped bounded refresh exact-lists only the selected project's primary cwd before the unscoped grouped Codex thread list, so active qlaw/session-handoff threads are not delayed behind historical session paths; retained rows no longer clear unlisted-started tracking unless their IDs were actually fetched; Android ignores folder `thread/started` refreshes while a session mutation is in flight.
+- Validation: Android `AppViewModelNewSessionTest`, iOS `MobidexTests` build, iOS `Mobidex` build, focused qlaw AppViewModel XCTest cases, iOS distribution preflight, `git diff --check`, and conflict-marker scan passed.
+- Signing note: the first archive attempt could not see a distribution identity; retry imported the generated distribution key/certificate plus Apple WWDR G3 into a temporary keychain, resumed the same workflow run, and completed upload/export/internal/external submission.
+
 ## asc TestFlight submission (internal + external build 55) - 2026-06-18
 
 - Executed from `master` at `943a3fa` (`build(release): prepare build 55 artifacts`), including `5414110` (`fix(sessions): avoid shell-session worktree creation`); Android release metadata bumped to versionCode `55`.

@@ -7,7 +7,7 @@ Done criteria:
 - [x] Port the scoped thread-list fix without dragging older build-49 conflicts onto build-55 code.
 - [x] Remove stale Android tests that wait for ignored folder `thread/started` events to refresh.
 - [x] Run focused Android/iOS verification from current `master`.
-- [ ] Build and upload a new TestFlight build for Internal and External testers.
+- [x] Build and upload a new TestFlight build for Internal and External testers.
 
 Guardrails:
 - Build release artifacts only from up-to-date `master`.
@@ -20,3 +20,4 @@ Critical learnings:
 - The qlaw handoff failure requires bounded refresh to exact-list only the primary project cwd, then run the unscoped grouped query promptly; existing visible rows are retained until the exhaustive background load reconciles.
 - The stale Android tests timed out because they waited for folder `thread/started` events to trigger `thread/list` refreshes in scopes where those events should be ignored.
 - Verification on current `master`: Android `AppViewModelNewSessionTest`, iOS `MobidexTests` build, iOS `Mobidex` build, and focused qlaw AppViewModel XCTest cases pass.
+- TestFlight build `1.0 (56)` was uploaded from `master` commit `59eb7f5`, added to Internal Testers, and submitted to External Testers with build ID `6813cccc-4799-4fe5-8dbd-516b35de84d4`.
