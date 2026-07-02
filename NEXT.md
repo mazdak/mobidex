@@ -15,7 +15,16 @@ The 49–56 builds (other sessions) added projectless Codex chats — ACP should
 - [ ] K3. Per-project ACP sessions screen: list session/list results scoped to the project; refresh re-lists; tap = session/load (existing) + navigate.
 - [ ] K4. "+ new chat" for ACP: createSession(cwd = project path) + navigate to conversation; respect disconnected-gating conventions from abe7ef1.
 - [ ] K5. Projectless ACP chats if the Codex pattern transfers cleanly (else park with rationale).
-- [ ] K6. Both platforms, parity; adapt tests; codex review passes; validate; merge + push; build 57 + team APK.
+- [x] K2–K5 implemented on both platforms: connect = initialize only (no project, red error gone); session/list drives the project → sessions navigation with Codex scoping (project paths vs Chats); "+ new chat" for ACP in project dir / fresh worktree / folderless (remote-home cwd via new sshService.remoteHomeDirectory, cached per connection); codex review P2s fixed (worktree cwds join sessionPaths via rememberSessionPath; folderless chats marked isUnscoped + rememberUnscopedThreadID).
+- [x] K6. Validation: shared + full Android suites green (one NewSessionTest interleaving flake, 12/12 in isolation); iOS app + tests build; simulator suite 10 errors all known-flaky class, 0 ACP, incl. testAcpConnectionFailure... passing. Codex default review 2×P2 fixed.
+
+## asc TestFlight submission (internal + external build 57) - 2026-07-02
+
+- Executed from the session worktree at `a518976` (`build(release): prepare build 57 artifacts`), pushed directly to origin/master (the main checkout is stuck in a stale `codex/folderless-chats` interactive rebase from the build-49 era — left untouched; abort it when confirmed dead).
+- First internal attempt failed at resolve_testflight_build: `asc` reads `.secrets/AuthKey_8MRPB3BGL6.p8` relative to the working directory — copied the main checkout's `.secrets` + `.asc/signing` into the worktree (both untracked, don't propagate to worktrees).
+- Internal: build 57, BUILD_ID `4310b0fb-a8ea-49c1-aa44-2a267eeb173f`, run `.asc/runs/testflight-20260702T215603Z-4300ccb6.json`, status ok (compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260702T220137Z-b2aef7a0.json`, status ok (beta app review + External Testers).
+- Contents over 56: ACP sessions fit the project/chat navigation (connect without project, session lists per project + Chats, new chat in project/worktree/folderless, scope metadata persisted).
 
 ## Mission Checklist (active, 2026-06-12: audit P2 leftovers + ACP session resume)
 
