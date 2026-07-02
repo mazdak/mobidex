@@ -182,6 +182,16 @@ protocol SSHService: Sendable {
     /// Opens a raw line-based exec transport (no WebSocket wrapper).
     /// Useful for ACP agents (e.g. `grok agent stdio`) and other stdio JSON-RPC protocols.
     func openRawExec(server: ServerRecord, credential: SSHCredential, command: String) async throws -> any CodexLineTransport
+
+    /// Resolves the remote user's home directory (used as the cwd for folderless ACP chats).
+    func remoteHomeDirectory(server: ServerRecord, credential: SSHCredential) async throws -> String
+}
+
+extension SSHService {
+    // Default so test doubles that don't exercise folderless ACP chats keep compiling.
+    func remoteHomeDirectory(server: ServerRecord, credential: SSHCredential) async throws -> String {
+        throw SSHServiceError.connectionClosed("resolving the remote home directory")
+    }
 }
 
 protocol RemoteTerminalSession: AnyObject, Sendable {
@@ -263,6 +273,13 @@ final class CitadelSSHService: TerminalSSHService {
     func testConnection(server: ServerRecord, credential: SSHCredential) async throws {
         try await withClient(server: server, credential: credential) { client in
             _ = try await client.executeCommand("printf mobidex-ready", maxResponseSize: 1_024, mergeStreams: true)
+        }
+    }
+
+    func remoteHomeDirectory(server: ServerRecord, credential: SSHCredential) async throws -> String {
+        try await withClient(server: server, credential: credential) { client in
+            let output = try await client.executeCommand(#"printf %s "$HOME""#, maxResponseSize: 4_096, mergeStreams: false)
+            return String(buffer: output).trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
 

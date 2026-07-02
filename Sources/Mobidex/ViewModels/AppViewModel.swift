@@ -516,7 +516,8 @@ final class AppViewModel: ObservableObject {
     }
 
     var canStartNoFolderSession: Bool {
-        isAppServerConnected && selectedServer?.backendType == .codexAppServer && !isNewSessionBlockedBySessionAction
+        // Codex needs its app-server; ACP needs its live client — both mean "agent connected".
+        isAppServerConnected && !isNewSessionBlockedBySessionAction
     }
 
     var isStartingNewSession: Bool {
@@ -532,7 +533,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private var canStartCodexSessionInCurrentScope: Bool {
-        selectedServer?.backendType == .codexAppServer && (selectedProject != nil || isShowingAllSessions)
+        selectedServer != nil && (selectedProject != nil || isShowingAllSessions)
     }
 
     var sessionSections: [SessionListSection] {
@@ -611,6 +612,7 @@ final class AppViewModel: ObservableObject {
         acpItems = []
         acpModelOptions = []
         acpCurrentModelId = nil
+        acpRemoteHomeDirectory = nil
         tearDownDebugAcpSession()
         return true
     }
@@ -1122,11 +1124,10 @@ final class AppViewModel: ObservableObject {
     /// in the normal chat UI with identical rich elements (Reasoning, ToolCall, Plan, etc.).
     ///
     /// Codex paths remain 100% untouched.
-    private func startAcpProductionSessionForCurrentProject() async -> Bool {
+    private func connectAcpServer() async -> Bool {
         guard let server = selectedServer, server.backendType == .acp else { return false }
-        let projectPath = selectedProject?.path
 
-        // Cancel prior production ACP session for this server if project changed or we are restarting.
+        // Cancel prior production ACP session for this server if we are restarting.
         acpCollectorTask?.cancel()
         acpEventsTask?.cancel()
         if let prior = acpClient {
@@ -1151,35 +1152,25 @@ final class AppViewModel: ObservableObject {
             let client = AcpClient(transport: transport)
 
             do {
+                // Connect = transport + initialize only. No session and no cwd here: the
+                // project is a chat-time concern (session/new and session/load carry cwd),
+                // so an ACP server connects fine with no project selected — same as Codex.
                 try await client.initialize()
-                // ACP spec requires an absolute cwd on session/new. executionPath is a PATH list
-                // (binary lookup), never a working directory — only a selected project provides cwd.
-                guard let cwd = projectPath else {
-                    throw AppViewModelError.missingAcpWorkingDirectory
-                }
-                let session = try await client.createSession(cwd: cwd, title: server.displayName)
                 guard generation == self.connectionGeneration, self.selectedServer?.id == server.id else {
                     await client.close()
                     return
                 }
                 acpClient = client
-                acpSessionId = session.sessionId
-                acpModelOptions = session.modelOptions
-                acpCurrentModelId = session.currentModelId
+                acpSessionId = nil
+                acpModelOptions = []
+                acpCurrentModelId = nil
             } catch {
                 // Never strand a half-open transport / remote agent process on failure.
                 await client.close()
                 throw error
             }
 
-            statusMessage = "ACP agent session connected."
-
-            // Past sessions (agents advertising session/list) populate the normal session
-            // list so they can be reopened via session/load; empty for agents without it.
-            let pastSessions = await client.listSessions()
-            if self.acpClient === client, !pastSessions.isEmpty {
-                threads = pastSessions.map { $0.asPlaceholderThread() }
-            }
+            statusMessage = "ACP agent connected."
 
             acpCollectorTask = Task { [weak self] in
                 guard let self else { return }
@@ -1207,6 +1198,10 @@ final class AppViewModel: ObservableObject {
                     }
                 }
             }
+
+            // Past sessions (agents advertising session/list) populate the normal
+            // project → sessions navigation; scoping happens in loadAcpSessionList.
+            try? await loadThreads(forceReload: true)
         }
     }
 
@@ -1424,7 +1419,7 @@ final class AppViewModel: ObservableObject {
             }
             await closeConnection(updateState: false, clearOpenSessionCounts: !preservingVisibleState, cancelReconnect: !preservingVisibleState)
             connectionState = .connecting
-            let connected = await startAcpProductionSessionForCurrentProject()
+            let connected = await connectAcpServer()
             // acpClient != nil distinguishes a real connect from a stale-bailed attempt
             // (user disconnected/switched mid-connect): the latter must not resurrect
             // a Connected state with no client behind it.
@@ -1633,6 +1628,9 @@ final class AppViewModel: ObservableObject {
         guard !isNewSessionBlockedBySessionAction else {
             statusMessage = AppViewModelError.newSessionBlocked.localizedDescription
             return nil
+        }
+        if selectedServer.backendType == .acp {
+            return await startNewAcpSession(location: location)
         }
         let cwd = selectedProject?.path
         let scope = currentThreadLoadScope
@@ -2308,6 +2306,117 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// True when the cwd belongs to the current navigation scope: a selected project's
+    /// paths in project scope; outside every saved project in the Chats/all-sessions scope.
+    private func acpCwdMatchesCurrentScope(_ cwd: String, projectPaths: Set<String>) -> Bool {
+        if isShowingAllSessions || selectedProject == nil {
+            return !projectPaths.contains(cwd)
+        }
+        guard let project = selectedProject else { return false }
+        return cwd == project.path || project.sessionPaths.contains(cwd)
+    }
+
+    /// Feeds the project → sessions navigation from the agent's session/list, mirroring
+    /// Codex scoping: project scope shows the project's sessions; Chats/all-sessions shows
+    /// sessions outside every saved project.
+    private func loadAcpSessionList(client: AcpClient) async throws {
+        let scope = currentThreadLoadScope
+        let sessions = await client.listSessions()
+        guard self.acpClient === client, currentThreadLoadScope == scope else { return }
+        let all = sessions.map { $0.asPlaceholderThread() }
+        let projectPaths = Set(selectedServer?.projects.flatMap { [$0.path] + $0.sessionPaths } ?? [])
+        let listedIDs = Set(all.map(\.id))
+        // Retain locally-created sessions the agent has not persisted to its list yet
+        // (e.g. a brand-new chat before its first prompt), scope-matched like the rest.
+        let retained = threads.filter { !listedIDs.contains($0.id) }
+        let scoped = (all + retained).filter { acpCwdMatchesCurrentScope($0.cwd, projectPaths: projectPaths) }
+        threads = sortedThreads(scoped)
+        noFolderThreads = sortedThreads((all + retained).filter { !projectPaths.contains($0.cwd) })
+    }
+
+    /// Starts a fresh ACP session and navigates to it, mirroring the Codex new-session flow.
+    private func startNewAcpSession(location: NewSessionLocation) async -> String? {
+        guard let server = selectedServer else { return nil }
+        let scope = currentThreadLoadScope
+        var createdThreadID: String?
+        suppressThreadAutoSelection = true
+        invalidateSessionRefreshes()
+        resetSessionState(clearThreads: false)
+        await runOperation(.startingSession, status: "Starting session") {
+            if acpClient == nil {
+                statusMessage = "Connecting before starting session"
+                await connectSelectedServer(syncActiveChatCounts: false, preservingVisibleState: true)
+            }
+            guard let client = acpClient else {
+                throw AppViewModelError.newSessionConnectionFailed(
+                    statusMessage ?? "Connect to the server before starting a new session."
+                )
+            }
+            let sessionCwd: String
+            switch location {
+            case .projectDirectory:
+                guard let cwd = selectedProject?.path else { throw AppViewModelError.missingProject }
+                sessionCwd = cwd
+            case .codexWorktree:
+                guard let cwd = selectedProject?.path else { throw AppViewModelError.missingProject }
+                statusMessage = "Creating worktree"
+                let credential = try await loadCredentialFromStore(serverID: server.id)
+                sessionCwd = try await sshService.createCodexWorktree(from: cwd, server: server, credential: credential)
+            case .noFolder:
+                // ACP requires an absolute cwd even for folderless chats; use the remote home.
+                sessionCwd = try await acpHomeDirectory(server: server)
+            }
+            guard self.acpClient === client, selectedServerID == server.id else {
+                throw AppViewModelError.selectionChanged
+            }
+            statusMessage = "Creating session"
+            acpItems = []
+            resetConversationSections(items: [])
+            pendingApprovals = []
+            let session = try await client.createSession(cwd: sessionCwd, title: server.displayName)
+            guard self.acpClient === client else { return }
+            acpSessionId = session.sessionId
+            acpModelOptions = session.modelOptions
+            acpCurrentModelId = session.currentModelId
+            let thread = CodexThread(
+                id: session.sessionId,
+                preview: "New chat",
+                cwd: sessionCwd,
+                status: .idle,
+                updatedAt: .now,
+                createdAt: .now
+            )
+            selectedThreadID = thread.id
+            selectedThreadTokenUsage = nil
+            suppressThreadAutoSelection = false
+            suppressCachedThreadSelection = false
+            createdThreadID = thread.id
+            threads = sortedThreads([thread] + threads.filter { $0.id != thread.id })
+            if location == .noFolder {
+                noFolderThreads = sortedThreads([thread] + noFolderThreads.filter { $0.id != thread.id })
+            }
+            statusMessage = "New session created."
+        }
+        if createdThreadID == nil, selectedServerID == server.id, currentThreadLoadScope == scope {
+            suppressThreadAutoSelection = false
+        }
+        return createdThreadID
+    }
+
+    private var acpRemoteHomeDirectory: String?
+
+    private func acpHomeDirectory(server: ServerRecord) async throws -> String {
+        if let acpRemoteHomeDirectory { return acpRemoteHomeDirectory }
+        let credential = try await loadCredentialFromStore(serverID: server.id)
+        let home = try await sshService.remoteHomeDirectory(server: server, credential: credential)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard home.hasPrefix("/") else {
+            throw AppViewModelError.missingAcpWorkingDirectory
+        }
+        acpRemoteHomeDirectory = home
+        return home
+    }
+
     /// Reopens a past ACP session: history replays through the normal item collector.
     private func openAcpSession(client: AcpClient, thread: CodexThread) async {
         // The session's own cwd wins: listed sessions can span working directories, and
@@ -2393,6 +2502,7 @@ final class AppViewModel: ObservableObject {
         if let c = acpClient { await c.close() }
         acpModelOptions = []
         acpCurrentModelId = nil
+        acpRemoteHomeDirectory = nil
         tearDownDebugAcpSession()
         acpClient = nil
         acpSessionId = nil
@@ -2802,6 +2912,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func loadThreads(forceReload: Bool) async throws {
+        if let acpClient {
+            try await loadAcpSessionList(client: acpClient)
+            return
+        }
         guard let appServer else {
             return
         }

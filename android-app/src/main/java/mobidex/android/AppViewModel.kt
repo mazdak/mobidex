@@ -140,13 +140,13 @@ data class MobidexUiState(
         get() = selectedThread?.let { activeTurnID(it) }
 
     private val canStartCodexSessionInCurrentScope: Boolean
-        get() = selectedServer?.backendType == BackendType.CodexAppServer && (selectedProject != null || isShowingAllSessions)
+        get() = selectedServer != null && (selectedProject != null || isShowingAllSessions)
 
     val canChooseNewSessionLocation: Boolean
         get() = connectionState == ServerConnectionState.Connected && canStartCodexSessionInCurrentScope && !isBusy && !isStartingNewSession
 
     val canStartNoFolderSession: Boolean
-        get() = connectionState == ServerConnectionState.Connected && selectedServer?.backendType == BackendType.CodexAppServer && !isBusy && !isStartingNewSession
+        get() = connectionState == ServerConnectionState.Connected && !isBusy && !isStartingNewSession
 }
 
 private fun activeTurnID(thread: CodexThread): String? =
@@ -821,20 +821,17 @@ class AppViewModel(
                     return@runBusy
                 }
                 val client = AcpClient(transport)
-                val session = try {
+                try {
+                    // Connect = transport + initialize only. No session and no cwd here: the
+                    // project is a chat-time concern (session/new and session/load carry cwd),
+                    // so an ACP server connects fine with no project selected — same as Codex.
                     client.initialize()
-                    // ACP spec requires an absolute cwd on session/new. executionPath is a PATH list
-                    // (binary lookup), never a working directory — only a selected project provides cwd.
-                    val cwd = _state.value.selectedProject?.path
-                        ?: error("Select a project before connecting an ACP agent.")
-                    val created = client.createSession(cwd = cwd, title = server.displayName)
                     if (generation != acpConnectGeneration) {
                         runCatching { client.close() }
                         return@runBusy
                     }
                     acpClient = client
-                    acpSessionId = created.sessionId
-                    created
+                    acpSessionId = null
                 } catch (error: Throwable) {
                     // Never strand a half-open transport / remote agent process on failure.
                     runCatching { client.close() }
@@ -845,18 +842,9 @@ class AppViewModel(
                     it.copy(
                         connectionState = ServerConnectionState.Connected,
                         failureMessage = null,
-                        acpModels = session.models,
-                        statusMessage = "ACP agent session ${session.sessionId} connected."
+                        acpModels = null,
+                        statusMessage = "ACP agent connected."
                     )
-                }
-
-                // Past sessions (agents advertising session/list) populate the normal session
-                // list so they can be reopened via session/load; empty for agents without it.
-                val pastSessions = client.listSessions()
-                if (generation == acpConnectGeneration && acpClient === client && pastSessions.isNotEmpty()) {
-                    _state.update { state ->
-                        state.copy(threads = pastSessions.map { it.toPlaceholderThread() })
-                    }
                 }
 
                 acpJob = launch {
@@ -920,6 +908,10 @@ class AppViewModel(
                         }
                     }
                 }
+
+                // Past sessions (agents advertising session/list) populate the normal
+                // project → sessions navigation; scoping happens in loadAcpSessionList.
+                loadAcpSessionList(client)
             }
         }
     }
@@ -1038,6 +1030,10 @@ class AppViewModel(
             try {
                 runBusy("Refreshing sessions") {
                     val state = _state.value
+                    acpClient?.let { client ->
+                        loadAcpSessionList(client)
+                        return@runBusy
+                    }
                     val client = appServer ?: return@runBusy
                     val cacheKey = currentThreadScopeCacheKey(state)
                     if (!forceReload && restoreCachedSessionState(cacheKey) && canUseCachedSessionState(cacheKey)) {
@@ -1555,6 +1551,10 @@ class AppViewModel(
         if (startsWithoutFolder && !initialState.isShowingAllSessions) {
             _state.update { it.copy(statusMessage = "Use the Chats section to start a chat without a folder.") }
             onComplete(false)
+            return
+        }
+        if (initialState.selectedServer?.backendType == BackendType.Acp) {
+            startNewAcpSession(location, onComplete)
             return
         }
         isStartingSession = true
@@ -2117,6 +2117,139 @@ class AppViewModel(
         }
     }
 
+    /**
+     * Feeds the project → sessions navigation from the agent's session/list, mirroring
+     * Codex scoping: project scope shows the project's sessions; Chats/all-sessions shows
+     * sessions outside every saved project.
+     */
+    private suspend fun loadAcpSessionList(client: AcpClient) {
+        val request = _state.value
+        val sessions = client.listSessions()
+        if (acpClient !== client) return
+        val all = sessions.map { it.toPlaceholderThread() }
+        val projectPaths = request.selectedServer?.projects
+            ?.flatMap { listOf(it.path) + it.sessionPaths }
+            ?.toSet()
+            .orEmpty()
+        val listedIDs = all.mapTo(mutableSetOf()) { it.id }
+        _state.update { current ->
+            if (acpClient !== client ||
+                current.selectedServerID != request.selectedServerID ||
+                current.selectedProjectID != request.selectedProjectID ||
+                current.isShowingAllSessions != request.isShowingAllSessions
+            ) {
+                current
+            } else {
+                val project = current.selectedProject
+                fun matchesScope(cwd: String): Boolean =
+                    if (current.isShowingAllSessions || project == null) {
+                        cwd !in projectPaths
+                    } else {
+                        cwd == project.path || cwd in project.sessionPaths
+                    }
+                // Retain locally-created sessions the agent has not persisted to its list
+                // yet (e.g. a brand-new chat before its first prompt).
+                val retained = current.threads.filter { it.id !in listedIDs }
+                val ordering = compareByDescending<CodexThread> { it.updatedAtEpochSeconds }.thenBy { it.id }
+                current.copy(
+                    threads = (all + retained).filter { matchesScope(it.cwd) }.sortedWith(ordering),
+                    noFolderThreads = (all + retained).filter { it.cwd !in projectPaths }.sortedWith(ordering),
+                )
+            }
+        }
+    }
+
+    /** Starts a fresh ACP session and navigates to it, mirroring the Codex new-session flow. */
+    private fun startNewAcpSession(location: NewSessionLocation, onComplete: (Boolean) -> Unit) {
+        val server = _state.value.selectedServer ?: run { onComplete(false); return }
+        isStartingSession = true
+        sessionMutationGeneration += 1
+        suppressThreadAutoSelection = true
+        resetSessionRefreshTracking()
+        _state.update {
+            it.copy(
+                isStartingNewSession = true,
+                selectedThreadID = null,
+                selectedThread = null,
+                conversationSections = emptyList(),
+                pendingApprovals = emptyList(),
+                diffSnapshot = GitDiffSnapshot.Empty,
+                tokenUsagePercent = null,
+            )
+        }
+        viewModelScope.launch {
+            var created = false
+            try {
+                runBusy("Starting session") {
+                    val client = acpClient
+                        ?: error("Connect to the server before starting a new session.")
+                    val sessionCwd = when (location) {
+                        NewSessionLocation.ProjectDirectory ->
+                            _state.value.selectedProject?.path ?: error("Select a project before starting a session.")
+                        NewSessionLocation.CodexWorktree -> {
+                            val projectPath = _state.value.selectedProject?.path
+                                ?: error("Select a project before starting a session.")
+                            _state.update { it.copy(statusMessage = "Creating worktree") }
+                            sshService.createCodexWorktree(projectPath, server, credentialStore.loadCredential(server.id))
+                        }
+                        NewSessionLocation.NoFolder ->
+                            // ACP requires an absolute cwd even for folderless chats; use the remote home.
+                            acpHomeDirectory(server)
+                    }
+                    if (acpClient !== client || _state.value.selectedServerID != server.id) {
+                        error("The selected server changed before the session could start.")
+                    }
+                    _state.update { it.copy(statusMessage = "Creating session") }
+                    _acpSessionItems.value = emptyList()
+                    acpSections.reset(emptyList())
+                    val session = client.createSession(cwd = sessionCwd, title = server.displayName)
+                    if (acpClient !== client) return@runBusy
+                    acpSessionId = session.sessionId
+                    val thread = CodexThread(
+                        id = session.sessionId,
+                        preview = "New chat",
+                        cwd = sessionCwd,
+                        status = CodexThreadStatus(type = "idle"),
+                        updatedAtEpochSeconds = Instant.now().epochSecond,
+                        createdAtEpochSeconds = Instant.now().epochSecond,
+                    )
+                    created = true
+                    _state.update { current ->
+                        val ordering = compareByDescending<CodexThread> { it.updatedAtEpochSeconds }.thenBy { it.id }
+                        current.copy(
+                            selectedThreadID = thread.id,
+                            selectedThread = thread,
+                            threads = (listOf(thread) + current.threads.filterNot { it.id == thread.id }).sortedWith(ordering),
+                            noFolderThreads = if (location == NewSessionLocation.NoFolder) {
+                                (listOf(thread) + current.noFolderThreads.filterNot { it.id == thread.id }).sortedWith(ordering)
+                            } else {
+                                current.noFolderThreads
+                            },
+                            acpModels = session.models,
+                            conversationSections = emptyList(),
+                            statusMessage = "New session created.",
+                        )
+                    }
+                }
+            } finally {
+                isStartingSession = false
+                suppressThreadAutoSelection = false
+                _state.update { it.copy(isStartingNewSession = false) }
+                onComplete(created)
+            }
+        }
+    }
+
+    private var acpRemoteHomeDirectory: String? = null
+
+    private suspend fun acpHomeDirectory(server: ServerRecord): String {
+        acpRemoteHomeDirectory?.let { return it }
+        val home = sshService.remoteHomeDirectory(server, credentialStore.loadCredential(server.id)).trim()
+        check(home.startsWith("/")) { "Could not resolve the remote home directory." }
+        acpRemoteHomeDirectory = home
+        return home
+    }
+
     /** Reopens a past ACP session: history replays through the normal item collector. */
     private fun openAcpSession(client: AcpClient, thread: CodexThread) {
         viewModelScope.launch {
@@ -2253,6 +2386,7 @@ class AppViewModel(
         eventJob?.cancel()
         eventJob = null
         acpConnectGeneration += 1 // invalidate any in-flight ACP connect attempt
+        acpRemoteHomeDirectory = null
         acpJob?.cancel()
         acpJob = null
         acpClient?.let { runCatching { it.close() } }

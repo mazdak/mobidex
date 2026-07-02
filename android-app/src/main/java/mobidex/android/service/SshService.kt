@@ -61,6 +61,10 @@ interface MobidexSshService {
      * The caller supplies the exact remote command (e.g. from RemoteAcpCommand.shellCommand).
      */
     suspend fun openRawExec(server: ServerRecord, credential: SSHCredential, command: String): CodexLineTransport
+
+    /** Resolves the remote user's home directory (used as the cwd for folderless ACP chats). */
+    suspend fun remoteHomeDirectory(server: ServerRecord, credential: SSHCredential): String =
+        error("remoteHomeDirectory is not supported by this SSH service.")
     suspend fun openTerminal(cwd: String?, columns: Int, rows: Int, server: ServerRecord, credential: SSHCredential): RemoteTerminalSession
 }
 
@@ -77,6 +81,11 @@ class SshjMobidexSshService(private val hostKeyStore: HostKeyStore) : MobidexSsh
             client.execString("printf mobidex-ready")
         }
     }
+
+    override suspend fun remoteHomeDirectory(server: ServerRecord, credential: SSHCredential): String =
+        withClient(server, credential) { client ->
+            client.execString("printf %s \"\$HOME\"").trim()
+        }
 
     override suspend fun discoverProjects(server: ServerRecord, credential: SSHCredential): List<RemoteProject> =
         withClient(server, credential) { client ->

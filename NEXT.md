@@ -1,5 +1,22 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## Mission Checklist (active, 2026-06-13: ACP session lifecycle matches app navigation)
+
+User field-test findings (iPhone, ACP server → their Mac): (1) connecting an ACP server
+demands a selected project — red "Select a project before connecting an ACP agent." — but
+project-requirement is an app concept, not a connection concern; (2) after adding a project
+and connecting, the per-project sessions screen shows "No Sessions Yet" (session/list results
+never reach it) and "+ new chat" does nothing for ACP. Root cause: ACP creates its session
+invisibly at connect-time instead of participating in the project → sessions → chat flow.
+The 49–56 builds (other sessions) added projectless Codex chats — ACP should mirror that model.
+
+- [ ] K1. Re-map current navigation architecture post-48..56 merge (projectless chats, unscopedThreadIDs, sessions-screen sourcing, new-chat gates) — Explore agent.
+- [ ] K2. ACP connect = transport + initialize only (no cwd, no auto session; red error gone); session/list fetched at connect.
+- [ ] K3. Per-project ACP sessions screen: list session/list results scoped to the project; refresh re-lists; tap = session/load (existing) + navigate.
+- [ ] K4. "+ new chat" for ACP: createSession(cwd = project path) + navigate to conversation; respect disconnected-gating conventions from abe7ef1.
+- [ ] K5. Projectless ACP chats if the Codex pattern transfers cleanly (else park with rationale).
+- [ ] K6. Both platforms, parity; adapt tests; codex review passes; validate; merge + push; build 57 + team APK.
+
 ## Mission Checklist (active, 2026-06-12: audit P2 leftovers + ACP session resume)
 
 - [x] J1. iOS bulk byte marshalling: iosMain `ByteArrayBridging` (memcpy/NSData) replaces per-byte KotlinByteArray interop on the WS path.
