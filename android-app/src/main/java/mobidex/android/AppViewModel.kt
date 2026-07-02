@@ -2205,6 +2205,16 @@ class AppViewModel(
                     val session = client.createSession(cwd = sessionCwd, title = server.displayName)
                     if (acpClient !== client) return@runBusy
                     acpSessionId = session.sessionId
+                    // Record the same scope metadata Codex sessions get, so this session
+                    // survives refresh/navigation: worktree cwds join the project's
+                    // sessionPaths; folderless chats are remembered as unscoped (codex P2s).
+                    when (location) {
+                        NewSessionLocation.CodexWorktree ->
+                            rememberSessionPath(sessionCwd, server.id, _state.value.selectedProjectID)
+                        NewSessionLocation.NoFolder ->
+                            rememberUnscopedThreadID(session.sessionId, server.id)
+                        NewSessionLocation.ProjectDirectory -> Unit
+                    }
                     val thread = CodexThread(
                         id = session.sessionId,
                         preview = "New chat",
@@ -2212,6 +2222,7 @@ class AppViewModel(
                         status = CodexThreadStatus(type = "idle"),
                         updatedAtEpochSeconds = Instant.now().epochSecond,
                         createdAtEpochSeconds = Instant.now().epochSecond,
+                        isUnscoped = location == NewSessionLocation.NoFolder,
                     )
                     created = true
                     _state.update { current ->

@@ -2378,7 +2378,15 @@ final class AppViewModel: ObservableObject {
             acpSessionId = session.sessionId
             acpModelOptions = session.modelOptions
             acpCurrentModelId = session.currentModelId
-            let thread = CodexThread(
+            // Record the same scope metadata Codex sessions get, so this session survives
+            // refresh/navigation: worktree cwds join the project's sessionPaths; folderless
+            // chats are remembered as unscoped (codex review P2s).
+            if location == .codexWorktree, let selectedProject {
+                rememberSessionPath(sessionCwd, serverID: server.id, projectID: selectedProject.id)
+            } else if location == .noFolder {
+                rememberUnscopedThreadID(session.sessionId, serverID: server.id)
+            }
+            var thread = CodexThread(
                 id: session.sessionId,
                 preview: "New chat",
                 cwd: sessionCwd,
@@ -2386,6 +2394,9 @@ final class AppViewModel: ObservableObject {
                 updatedAt: .now,
                 createdAt: .now
             )
+            if location == .noFolder {
+                thread.isUnscoped = true
+            }
             selectedThreadID = thread.id
             selectedThreadTokenUsage = nil
             suppressThreadAutoSelection = false
