@@ -1199,6 +1199,13 @@ final class AppViewModel: ObservableObject {
                 }
             }
 
+            // Best-effort home resolution up front: Chats scoping treats home-cwd
+            // sessions as folderless. Failure just means an empty Chats section.
+            if acpRemoteHomeDirectory == nil {
+                acpRemoteHomeDirectory = try? await sshService.remoteHomeDirectory(server: server, credential: credential)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
             // Past sessions (agents advertising session/list) populate the normal
             // project → sessions navigation; scoping happens in loadAcpSessionList.
             try? await loadThreads(forceReload: true)
@@ -2306,32 +2313,50 @@ final class AppViewModel: ObservableObject {
         }
     }
 
-    /// True when the cwd belongs to the current navigation scope: a selected project's
-    /// paths in project scope; outside every saved project in the Chats/all-sessions scope.
-    private func acpCwdMatchesCurrentScope(_ cwd: String, projectPaths: Set<String>) -> Bool {
-        if isShowingAllSessions || selectedProject == nil {
-            return !projectPaths.contains(cwd)
+    /// A session is "under" a project when its cwd is the project path, a registered
+    /// session path, or any directory beneath them (worktrees live under the project root).
+    private func acpCwdBelongsToProject(_ cwd: String, project: ProjectRecord) -> Bool {
+        for root in [project.path] + project.sessionPaths where !root.isEmpty {
+            if cwd == root || cwd.hasPrefix(root.hasSuffix("/") ? root : root + "/") {
+                return true
+            }
         }
-        guard let project = selectedProject else { return false }
-        return cwd == project.path || project.sessionPaths.contains(cwd)
+        return false
+    }
+
+    /// Folderless = the session ran in the remote home (or has no cwd). Sessions from real
+    /// directories that are not saved projects stay hidden until their project is added.
+    private func acpCwdIsFolderless(_ cwd: String) -> Bool {
+        let trimmed = cwd.hasSuffix("/") && cwd.count > 1 ? String(cwd.dropLast()) : cwd
+        if trimmed.isEmpty { return true }
+        guard let home = acpRemoteHomeDirectory, !home.isEmpty else { return false }
+        return trimmed == home
     }
 
     /// Feeds the project → sessions navigation from the agent's session/list, mirroring
-    /// Codex scoping: project scope shows the project's sessions; Chats/all-sessions shows
-    /// sessions outside every saved project.
+    /// Codex scoping: project scope shows sessions under the project; Chats/all-sessions
+    /// shows only folderless (home-cwd) sessions.
     private func loadAcpSessionList(client: AcpClient) async throws {
         let scope = currentThreadLoadScope
         let sessions = await client.listSessions()
         guard self.acpClient === client, currentThreadLoadScope == scope else { return }
-        let all = sessions.map { $0.asPlaceholderThread() }
-        let projectPaths = Set(selectedServer?.projects.flatMap { [$0.path] + $0.sessionPaths } ?? [])
+        let all = sessions.map { summary -> CodexThread in
+            var thread = summary.asPlaceholderThread()
+            thread.isUnscoped = acpCwdIsFolderless(thread.cwd)
+            return thread
+        }
         let listedIDs = Set(all.map(\.id))
         // Retain locally-created sessions the agent has not persisted to its list yet
         // (e.g. a brand-new chat before its first prompt), scope-matched like the rest.
         let retained = threads.filter { !listedIDs.contains($0.id) }
-        let scoped = (all + retained).filter { acpCwdMatchesCurrentScope($0.cwd, projectPaths: projectPaths) }
-        threads = sortedThreads(scoped)
-        noFolderThreads = sortedThreads((all + retained).filter { !projectPaths.contains($0.cwd) })
+        let candidates = all + retained
+        let folderless = sortedThreads(candidates.filter { $0.isUnscoped || acpCwdIsFolderless($0.cwd) })
+        if isShowingAllSessions || selectedProject == nil {
+            threads = folderless
+        } else if let project = selectedProject {
+            threads = sortedThreads(candidates.filter { acpCwdBelongsToProject($0.cwd, project: project) })
+        }
+        noFolderThreads = folderless
     }
 
     /// Starts a fresh ACP session and navigates to it, mirroring the Codex new-session flow.

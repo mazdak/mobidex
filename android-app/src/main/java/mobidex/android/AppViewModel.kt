@@ -909,6 +909,14 @@ class AppViewModel(
                     }
                 }
 
+                // Best-effort home resolution up front: Chats scoping treats home-cwd
+                // sessions as folderless. Failure just means an empty Chats section.
+                if (acpRemoteHomeDirectory == null) {
+                    acpRemoteHomeDirectory = runCatching {
+                        sshService.remoteHomeDirectory(server, credential).trim()
+                    }.getOrNull()?.takeIf { it.startsWith("/") }
+                }
+
                 // Past sessions (agents advertising session/list) populate the normal
                 // project → sessions navigation; scoping happens in loadAcpSessionList.
                 loadAcpSessionList(client)
@@ -2126,11 +2134,27 @@ class AppViewModel(
         val request = _state.value
         val sessions = client.listSessions()
         if (acpClient !== client) return
-        val all = sessions.map { it.toPlaceholderThread() }
-        val projectPaths = request.selectedServer?.projects
-            ?.flatMap { listOf(it.path) + it.sessionPaths }
-            ?.toSet()
-            .orEmpty()
+        val home = acpRemoteHomeDirectory
+
+        // Folderless = the session ran in the remote home (or has no cwd). Sessions from
+        // real directories that are not saved projects stay hidden until their project
+        // is added.
+        fun isFolderless(cwd: String): Boolean {
+            val trimmed = if (cwd.length > 1) cwd.trimEnd('/') else cwd
+            if (trimmed.isEmpty()) return true
+            return home != null && trimmed == home
+        }
+
+        // A session is "under" a project when its cwd is the project path, a registered
+        // session path, or any directory beneath them (worktrees live under the root).
+        fun belongsTo(project: ProjectRecord, cwd: String): Boolean =
+            (listOf(project.path) + project.sessionPaths).any { root ->
+                root.isNotEmpty() && (cwd == root || cwd.startsWith(if (root.endsWith("/")) root else "$root/"))
+            }
+
+        val all = sessions.map { summary ->
+            summary.toPlaceholderThread().let { it.copy(isUnscoped = isFolderless(it.cwd)) }
+        }
         val listedIDs = all.mapTo(mutableSetOf()) { it.id }
         _state.update { current ->
             if (acpClient !== client ||
@@ -2141,19 +2165,19 @@ class AppViewModel(
                 current
             } else {
                 val project = current.selectedProject
-                fun matchesScope(cwd: String): Boolean =
-                    if (current.isShowingAllSessions || project == null) {
-                        cwd !in projectPaths
-                    } else {
-                        cwd == project.path || cwd in project.sessionPaths
-                    }
                 // Retain locally-created sessions the agent has not persisted to its list
                 // yet (e.g. a brand-new chat before its first prompt).
                 val retained = current.threads.filter { it.id !in listedIDs }
+                val candidates = all + retained
                 val ordering = compareByDescending<CodexThread> { it.updatedAtEpochSeconds }.thenBy { it.id }
+                val folderless = candidates.filter { it.isUnscoped || isFolderless(it.cwd) }.sortedWith(ordering)
                 current.copy(
-                    threads = (all + retained).filter { matchesScope(it.cwd) }.sortedWith(ordering),
-                    noFolderThreads = (all + retained).filter { it.cwd !in projectPaths }.sortedWith(ordering),
+                    threads = if (current.isShowingAllSessions || project == null) {
+                        folderless
+                    } else {
+                        candidates.filter { belongsTo(project, it.cwd) }.sortedWith(ordering)
+                    },
+                    noFolderThreads = folderless,
                 )
             }
         }
