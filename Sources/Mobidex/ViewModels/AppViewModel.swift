@@ -1202,8 +1202,12 @@ final class AppViewModel: ObservableObject {
             // Best-effort home resolution up front: Chats scoping treats home-cwd
             // sessions as folderless. Failure just means an empty Chats section.
             if acpRemoteHomeDirectory == nil {
-                acpRemoteHomeDirectory = try? await sshService.remoteHomeDirectory(server: server, credential: credential)
+                let home = try? await sshService.remoteHomeDirectory(server: server, credential: credential)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                // Same guard acpHomeDirectory applies: only cache an absolute path, so a
+                // host with an unset/odd $HOME degrades to "home unknown" instead of
+                // poisoning folderless scoping and session creation.
+                acpRemoteHomeDirectory = home.flatMap { $0.hasPrefix("/") ? $0 : nil }
             }
 
             // Past sessions (agents advertising session/list) populate the normal
