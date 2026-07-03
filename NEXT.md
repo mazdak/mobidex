@@ -17,6 +17,15 @@ The 49–56 builds (other sessions) added projectless Codex chats — ACP should
 - [ ] K5. Projectless ACP chats if the Codex pattern transfers cleanly (else park with rationale).
 - [x] K2–K5 implemented on both platforms: connect = initialize only (no project, red error gone); session/list drives the project → sessions navigation with Codex scoping (project paths vs Chats); "+ new chat" for ACP in project dir / fresh worktree / folderless (remote-home cwd via new sshService.remoteHomeDirectory, cached per connection); codex review P2s fixed (worktree cwds join sessionPaths via rememberSessionPath; folderless chats marked isUnscoped + rememberUnscopedThreadID).
 - [x] K6. Validation: shared + full Android suites green (one NewSessionTest interleaving flake, 12/12 in isolation); iOS app + tests build; simulator suite 10 errors all known-flaky class, 0 ACP, incl. testAcpConnectionFailure... passing. Codex default review 2×P2 fixed.
+- [x] K7 (field feedback on 57, fixed in 58): build-57 scoping flooded top-level Chats with every non-project session. New rule matches Codex: Chats = folderless only (cwd == remote `$HOME`, resolved best-effort at connect; must be absolute or ignored — codex P2); project scope = prefix match under project.path + sessionPaths (worktree sessions land in their project); sessions from unregistered dirs stay hidden until the project is added. Wire-verified: `session/list` has NO archived flag (sessionId/cwd/title/updatedAt only), so nothing to hide for ACP.
+
+## asc TestFlight submission (internal + external build 58) - 2026-07-02
+
+- Executed from the session worktree at `87c8f5c` (`build(release): prepare build 58 artifacts`), pushed directly to origin/master (main checkout still mid stale rebase).
+- Internal: build 58, BUILD_ID `bf780b3c-906a-4b5e-8c0a-4319d1488129`, run `.asc/runs/testflight-20260703T020030Z-c3ab5a3a.json`, status ok (compliance set, Internal Testers).
+- External: run `.asc/runs/testflight_external-20260703T020653Z-26716f8d.json`, status ok (build VALID, beta app review + External Testers).
+- Android: signed release APK versionCode 58 (repo Gradle 8.13 + Android Studio JBR — NO `./gradlew` in repo; `cd android-app && ./gradlew` silently reuses stale APK, check output-metadata.json), verified CN=Mobidex/O=GetResq, copied to `~/Desktop/mobidex-release-58.apk`.
+- Contents over 57: ACP session scoping fix (K7) — Chats folderless-only, projects prefix-match worktrees.
 
 ## asc TestFlight submission (internal + external build 57) - 2026-07-02
 
