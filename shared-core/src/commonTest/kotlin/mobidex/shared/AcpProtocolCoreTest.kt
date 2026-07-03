@@ -183,6 +183,8 @@ class AcpProtocolCoreTest {
         assertEquals("/home/dev/proj", acpProjectRoot("/home/dev/proj"))
         assertEquals("/", acpProjectRoot("/"))
         assertEquals("", acpProjectRoot(""))
+        // A worktree at the filesystem root has no project above it.
+        assertEquals("", acpProjectRoot("/.claude/worktrees/foo"))
     }
 
     @Test

@@ -190,7 +190,8 @@ fun acpDisplayTitle(rawTitle: String?): String? {
 fun acpProjectRoot(cwd: String): String {
     val trimmed = if (cwd.length > 1) cwd.trimEnd('/') else cwd
     val index = trimmed.indexOf("/.claude/worktrees/")
-    return if (index > 0) trimmed.substring(0, index) else trimmed
+    // A worktree at the filesystem root has no project above it: empty, so callers drop it.
+    return if (index >= 0) trimmed.substring(0, index) else trimmed
 }
 
 // --- Session model state (from the session/new result) ---

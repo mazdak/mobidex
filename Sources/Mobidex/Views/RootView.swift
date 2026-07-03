@@ -265,7 +265,7 @@ struct ProjectSessionListView: View {
                         }
                     } else {
                         LoadingSection(isLoading: contentIsLoading, title: "Loading projects...")
-                        let sections = projectSections(from: server.projects)
+                        let sections = projectSections(from: server)
                         ProjectSectionsContent(
                             sections: sections,
                             showsDiscoveredProjects: server.backendType == .acp,
@@ -544,12 +544,14 @@ struct ProjectSessionListView: View {
         )
     }
 
-    // The projection splits saved projects from discovered ones; the server screen
-    // renders the discovered bucket only for ACP servers, where the project list is
-    // derived from the agent's sessions rather than remote Codex discovery.
-    private func projectSections(from projects: [ProjectRecord]) -> ProjectListSections {
+    // ACP servers render discovered projects (derived from the agent's sessions) as
+    // their own section; Codex servers surface theirs only in the add sheet, so hidden
+    // records are excluded up front to keep empty-state logic honest.
+    private func projectSections(from server: ServerRecord) -> ProjectListSections {
         ProjectListSections(
-            projects: projects,
+            projects: server.backendType == .acp
+                ? server.projects
+                : server.projects.filter(\.isAddedToProjectList),
             searchText: trimmedProjectSearch,
             showInactiveDiscoveredProjects: false,
             showArchivedSessionProjects: false

@@ -13,7 +13,7 @@ cold-bunx-install first-connect failure (likely phone connection blip — parked
 - [x] L2. iOS: cluster leftover ACP sessions by root → merge as discovered ProjectRecords into server.projects (ids stable by path, selected record retained, saved projects absorb first); render Discovered section on ACP server screen (no remove swipe); placeholder fallback "Untitled chat".
 - [x] L3. Android: same clustering/merge in loadAcpSessionList; render sections.discovered in ProjectList (ACP-gated, no delete button); toPlaceholderThread fallback "Untitled chat".
 - [x] L4a. Validation vs real data: shared jvmTest + full Android unit tests + iOS build green; clustering simulated against the Mac's live 29-session list → fullstack(saved) 9, discovered mobidex 1 / cheetah 11 / nora 2 / qlaw 3 / foreign cheetah 1, Chats 2.
-- [ ] L4b. codex review passes; fix findings.
+- [x] L4b. codex reviews (default + targeted): P2 iOS non-ACP empty-state regression (pre-filter restored, projection input gated by backend); P1 Android stale-snapshot clobber (merge moved inside _state.update, applied value persisted after); P3 acpProjectRoot root-level worktree (index >= 0, empty root dropped). All fixed, both platforms re-verified green.
 - [ ] L5. Ship build 59 internal + external + team APK (versionCode 59).
 - Parked: auto-retry ACP connect once when the exec channel dies during cold `bunx` install (transient network blip on phone side).
 

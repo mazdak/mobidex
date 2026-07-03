@@ -2161,14 +2161,19 @@ class AppViewModel(
         // Claude sessions carry their project in the cwd, so the project list is partly
         // derived: sessions outside every saved project cluster by root (worktree
         // checkouts fold into the repo above them) and surface as discovered projects
-        // the user can browse directly or promote with the existing add flow.
-        run {
-            val state = _state.value
-            val server = state.servers.firstOrNull { it.id == request.selectedServerID } ?: return@run
+        // the user can browse directly or promote with the existing add flow. The merge
+        // is computed inside the state update against the current servers so concurrent
+        // project edits are never clobbered by a stale snapshot; the applied value is
+        // persisted afterwards.
+        var mergedServers: List<ServerRecord>? = null
+        _state.update { current ->
+            mergedServers = null
+            val server = current.servers.firstOrNull { it.id == request.selectedServerID }
+                ?: return@update current
             val saved = server.projects.filter { it.isSavedProject }
             val counts = mutableMapOf<String, Int>()
             val lastActive = mutableMapOf<String, Long>()
-            val clusterCandidates = all + state.threads.filter { it.id !in listedIDs }
+            val clusterCandidates = all + current.threads.filter { it.id !in listedIDs }
             for (thread in clusterCandidates) {
                 val cwd = thread.cwd
                 if (isFolderless(cwd) || saved.any { belongsTo(it, cwd) }) continue
@@ -2200,15 +2205,17 @@ class AppViewModel(
             ).toMutableList()
             // Never drop the project the user is currently inside, even if its last
             // session just disappeared from the agent's list.
-            val selectedID = state.selectedProjectID
+            val selectedID = current.selectedProjectID
             if (selectedID != null && next.none { it.id == selectedID }) {
                 server.projects.firstOrNull { it.id == selectedID }?.let(next::add)
             }
-            if (next == server.projects) return@run
-            val updatedServer = server.copy(projects = next)
-            runCatching { repository.saveServers(state.servers.upsert(updatedServer)) }
-            _state.update { it.copy(servers = it.servers.upsert(updatedServer)) }
+            if (next == server.projects) return@update current
+            val servers = current.servers.upsert(server.copy(projects = next))
+            mergedServers = servers
+            current.copy(servers = servers)
         }
+        // Derived projects are display metadata; a failed persist must not fail the list load.
+        mergedServers?.let { runCatching { repository.saveServers(it) } }
 
         _state.update { current ->
             if (acpClient !== client ||
