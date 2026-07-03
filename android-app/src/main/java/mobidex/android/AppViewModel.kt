@@ -70,6 +70,7 @@ import mobidex.android.service.toJsonElement
 import mobidex.android.service.toSharedJsonValue
 import mobidex.android.service.turnOptions
 import mobidex.shared.AcpProtocolCore
+import mobidex.shared.acpProjectRoot
 import mobidex.shared.appendingAcpSessionItem
 import mobidex.shared.CodexAccessMode
 import mobidex.shared.CodexFolderlessPaths
@@ -2156,6 +2157,59 @@ class AppViewModel(
             summary.toPlaceholderThread().let { it.copy(isUnscoped = isFolderless(it.cwd)) }
         }
         val listedIDs = all.mapTo(mutableSetOf()) { it.id }
+
+        // Claude sessions carry their project in the cwd, so the project list is partly
+        // derived: sessions outside every saved project cluster by root (worktree
+        // checkouts fold into the repo above them) and surface as discovered projects
+        // the user can browse directly or promote with the existing add flow.
+        run {
+            val state = _state.value
+            val server = state.servers.firstOrNull { it.id == request.selectedServerID } ?: return@run
+            val saved = server.projects.filter { it.isSavedProject }
+            val counts = mutableMapOf<String, Int>()
+            val lastActive = mutableMapOf<String, Long>()
+            val clusterCandidates = all + state.threads.filter { it.id !in listedIDs }
+            for (thread in clusterCandidates) {
+                val cwd = thread.cwd
+                if (isFolderless(cwd) || saved.any { belongsTo(it, cwd) }) continue
+                val root = acpProjectRoot(cwd)
+                if (root.isEmpty() || root == "/") continue
+                counts[root] = (counts[root] ?: 0) + 1
+                if (thread.updatedAtEpochSeconds > (lastActive[root] ?: Long.MIN_VALUE)) {
+                    lastActive[root] = thread.updatedAtEpochSeconds
+                }
+            }
+            // An ACP server's discovered records all come from this derivation, so rebuild
+            // them wholesale each list load — keeping ids stable per path so selection and
+            // navigation survive refreshes.
+            val existingByPath = server.projects.filterNot { it.isSavedProject }.associateBy { it.path }
+            val next = (
+                saved + counts.keys.sorted().map { root ->
+                    (existingByPath[root] ?: ProjectRecord(
+                        path = root,
+                        discovered = true,
+                        lastDiscoveredAtEpochSeconds = Instant.now().epochSecond,
+                    )).copy(
+                        discovered = true,
+                        isAdded = false,
+                        discoveredSessionCount = counts[root] ?: 0,
+                        lastActiveChatAtEpochSeconds = lastActive[root]?.takeIf { it > 0 }
+                            ?: existingByPath[root]?.lastActiveChatAtEpochSeconds,
+                    )
+                }
+            ).toMutableList()
+            // Never drop the project the user is currently inside, even if its last
+            // session just disappeared from the agent's list.
+            val selectedID = state.selectedProjectID
+            if (selectedID != null && next.none { it.id == selectedID }) {
+                server.projects.firstOrNull { it.id == selectedID }?.let(next::add)
+            }
+            if (next == server.projects) return@run
+            val updatedServer = server.copy(projects = next)
+            runCatching { repository.saveServers(state.servers.upsert(updatedServer)) }
+            _state.update { it.copy(servers = it.servers.upsert(updatedServer)) }
+        }
+
         _state.update { current ->
             if (acpClient !== client ||
                 current.selectedServerID != request.selectedServerID ||
@@ -3717,7 +3771,7 @@ private fun mobidex.shared.AcpSessionSummary.toPlaceholderThread(): CodexThread 
     val updatedEpoch = updatedAt?.let { runCatching { Instant.parse(it).epochSecond }.getOrNull() } ?: 0L
     return CodexThread(
         id = sessionId,
-        preview = title?.trim().orEmpty().ifEmpty { "ACP session" },
+        preview = title?.trim().orEmpty().ifEmpty { "Untitled chat" },
         cwd = cwd.orEmpty(),
         status = CodexThreadStatus(type = "idle"),
         updatedAtEpochSeconds = updatedEpoch,

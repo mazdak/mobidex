@@ -1015,6 +1015,14 @@ private fun ProjectList(
                 }
             }
             section(sections.projects) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading) }
+            // ACP project lists are partly derived from the agent's sessions; discovered
+            // roots are browsable like projects but re-derived on refresh, so no delete.
+            if (state.selectedServer?.backendType == BackendType.Acp && sections.discovered.isNotEmpty()) {
+                item(key = "discovered-header") {
+                    Text(sections.discoveredTitle, modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 6.dp), style = MaterialTheme.typography.labelLarge)
+                }
+                section(sections.discovered) { ProjectRow(it, state, model, onOpenSessions, enabled = !contentIsLoading, allowsRemoval = false) }
+            }
             item(key = "chats-header") {
                 Text("Chats", modifier = Modifier.padding(16.dp, 14.dp, 16.dp, 6.dp), style = MaterialTheme.typography.labelLarge)
             }
@@ -1088,7 +1096,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.section(
 }
 
 @Composable
-private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: AppViewModel, onOpenDetail: (ProjectRecord) -> Unit, enabled: Boolean = true) {
+private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: AppViewModel, onOpenDetail: (ProjectRecord) -> Unit, enabled: Boolean = true, allowsRemoval: Boolean = true) {
     ListItem(
         headlineContent = { Text(project.displayName, fontWeight = FontWeight.SemiBold) },
         supportingContent = {
@@ -1098,8 +1106,10 @@ private fun ProjectRow(project: ProjectRecord, state: MobidexUiState, model: App
         },
         leadingContent = { Icon(Icons.Default.Folder, contentDescription = null) },
         trailingContent = {
-            IconButton(onClick = { model.removeProject(project) }, enabled = enabled) {
-                Icon(Icons.Default.Delete, contentDescription = "Remove Project")
+            if (allowsRemoval) {
+                IconButton(onClick = { model.removeProject(project) }, enabled = enabled) {
+                    Icon(Icons.Default.Delete, contentDescription = "Remove Project")
+                }
             }
         },
         modifier = Modifier

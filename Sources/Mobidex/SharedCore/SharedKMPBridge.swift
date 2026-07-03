@@ -158,6 +158,10 @@ enum SharedKMPBridge {
         )
     }
 
+    static func acpProjectRoot(cwd: String) -> String {
+        MobidexShared.AcpProtocolCoreKt.acpProjectRoot(cwd: cwd)
+    }
+
     // MARK: - ACP / Grok protocol surface (item 5 iOS AcpClient parity)
     // Minimal bridge mirroring the Codex RPC section below. Exposes request builders + classify + mapper
     // so AcpClient can drive `grok agent stdio` over CodexLineTransport (openRawExec) and feed the

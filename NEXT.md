@@ -1,5 +1,22 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## Mission Checklist (active, 2026-07-03: ACP discovered projects + title cleanup)
+
+Field feedback on 58 (Mac Claude): active sessions in mobidex/cheetah/fullstack aren't
+visible — mobidex + cheetah unregistered on that server; cheetah session even has a
+foreign (framework-box) cwd transcribed locally by the desktop app. Claude ≠ Codex:
+sessions carry their project in the cwd, so derive project groups from session/list
+instead of requiring registration. Also: `<local-command-caveat>` junk titles, and a
+cold-bunx-install first-connect failure (likely phone connection blip — parked).
+
+- [x] L1. shared-core: acpDisplayTitle (strip local-command markup, surface /command, null→fallback) applied in acpSessionList; acpProjectRoot (strip /.claude/worktrees/<x>); tests green.
+- [x] L2. iOS: cluster leftover ACP sessions by root → merge as discovered ProjectRecords into server.projects (ids stable by path, selected record retained, saved projects absorb first); render Discovered section on ACP server screen (no remove swipe); placeholder fallback "Untitled chat".
+- [x] L3. Android: same clustering/merge in loadAcpSessionList; render sections.discovered in ProjectList (ACP-gated, no delete button); toPlaceholderThread fallback "Untitled chat".
+- [x] L4a. Validation vs real data: shared jvmTest + full Android unit tests + iOS build green; clustering simulated against the Mac's live 29-session list → fullstack(saved) 9, discovered mobidex 1 / cheetah 11 / nora 2 / qlaw 3 / foreign cheetah 1, Chats 2.
+- [ ] L4b. codex review passes; fix findings.
+- [ ] L5. Ship build 59 internal + external + team APK (versionCode 59).
+- Parked: auto-retry ACP connect once when the exec channel dies during cold `bunx` install (transient network blip on phone side).
+
 ## Mission Checklist (active, 2026-06-13: ACP session lifecycle matches app navigation)
 
 User field-test findings (iPhone, ACP server → their Mac): (1) connecting an ACP server

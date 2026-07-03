@@ -30,7 +30,7 @@ struct AcpPastSession: Identifiable, Sendable {
     func asPlaceholderThread() -> CodexThread {
         CodexThread(
             id: sessionId,
-            preview: (title?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "ACP session",
+            preview: (title?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled chat",
             cwd: cwd ?? "",
             status: .idle,
             updatedAt: updatedAt ?? .distantPast,

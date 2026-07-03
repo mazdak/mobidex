@@ -153,10 +153,45 @@ fun acpSessionList(result: JsonValue?): List<AcpSessionSummary> =
         AcpSessionSummary(
             sessionId = sessionId,
             cwd = entry["cwd"]?.stringValue,
-            title = entry["title"]?.stringValue,
+            title = acpDisplayTitle(entry["title"]?.stringValue),
             updatedAt = entry["updatedAt"]?.stringValue,
         )
     }
+
+private val acpMarkupTitlePrefixes = listOf(
+    "<local-command-caveat>",
+    "<command-name>",
+    "<command-message>",
+    "<command-args>",
+    "<local-command-stdout>",
+    "<system-reminder>",
+)
+
+/**
+ * Human-readable title for a past session. Claude Code transcribes local slash
+ * commands as XML-ish markup, and the adapter titles sessions with the raw
+ * (truncated) first transcript entry — a title that starts with that markup
+ * carries no usable message text. Surfaces the slash-command name when one is
+ * present; otherwise null so callers fall back to their untitled label.
+ */
+fun acpDisplayTitle(rawTitle: String?): String? {
+    val text = rawTitle?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    if (acpMarkupTitlePrefixes.none { text.startsWith(it) }) return text
+    val command = text.substringAfter("<command-name>", "").takeWhile { it != '<' }.trim()
+    return command.ifEmpty { null }
+}
+
+/**
+ * The project directory an ACP session belongs to: sessions started inside a
+ * `<root>/.claude/worktrees/<name>` checkout group under `<root>`; anything
+ * else groups under its own cwd.
+ */
+fun acpProjectRoot(cwd: String): String {
+    val trimmed = if (cwd.length > 1) cwd.trimEnd('/') else cwd
+    val index = trimmed.indexOf("/.claude/worktrees/")
+    return if (index > 0) trimmed.substring(0, index) else trimmed
+}
 
 // --- Session model state (from the session/new result) ---
 

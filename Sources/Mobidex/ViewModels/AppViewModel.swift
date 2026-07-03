@@ -2355,12 +2355,73 @@ final class AppViewModel: ObservableObject {
         let retained = threads.filter { !listedIDs.contains($0.id) }
         let candidates = all + retained
         let folderless = sortedThreads(candidates.filter { $0.isUnscoped || acpCwdIsFolderless($0.cwd) })
+        mergeAcpDiscoveredProjects(from: candidates)
         if isShowingAllSessions || selectedProject == nil {
             threads = folderless
         } else if let project = selectedProject {
             threads = sortedThreads(candidates.filter { acpCwdBelongsToProject($0.cwd, project: project) })
         }
         noFolderThreads = folderless
+    }
+
+    /// Claude sessions carry their project in the cwd, so the project list is partly
+    /// derived: sessions outside every saved project cluster by root (worktree checkouts
+    /// fold into the repo above them) and surface as discovered projects the user can
+    /// browse directly or promote with the existing add flow. Saved projects keep
+    /// absorbing their sessions first; folderless sessions stay in Chats.
+    private func mergeAcpDiscoveredProjects(from sessionThreads: [CodexThread]) {
+        guard let selectedServerID else { return }
+        var nextServers = servers
+        guard let index = nextServers.firstIndex(where: { $0.id == selectedServerID }) else { return }
+        let current = nextServers[index].projects
+        let saved = current.filter(\.isAddedToProjectList)
+
+        var clusterCounts: [String: Int] = [:]
+        var clusterLastActive: [String: Date] = [:]
+        for thread in sessionThreads {
+            let cwd = thread.cwd
+            guard !acpCwdIsFolderless(cwd),
+                  !saved.contains(where: { acpCwdBelongsToProject(cwd, project: $0) })
+            else { continue }
+            let root = SharedKMPBridge.acpProjectRoot(cwd: cwd)
+            guard !root.isEmpty, root != "/" else { continue }
+            clusterCounts[root, default: 0] += 1
+            if thread.updatedAt > (clusterLastActive[root] ?? .distantPast) {
+                clusterLastActive[root] = thread.updatedAt
+            }
+        }
+
+        // An ACP server's discovered records all come from this derivation, so rebuild
+        // them wholesale each list load — keeping ids stable per path so selection and
+        // navigation survive refreshes.
+        let existingByPath = Dictionary(
+            current.filter { !$0.isAddedToProjectList }.map { ($0.path, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var next = saved
+        for root in clusterCounts.keys.sorted() {
+            var record = existingByPath[root] ?? ProjectRecord(path: root, discovered: true, lastDiscoveredAt: .now)
+            record.discovered = true
+            record.isAdded = false
+            record.discoveredSessionCount = clusterCounts[root] ?? 0
+            record.lastActiveChatAt = clusterLastActive[root] ?? record.lastActiveChatAt
+            next.append(record)
+        }
+        // Never drop the project the user is currently inside, even if its last
+        // session just disappeared from the agent's list.
+        if let selectedProjectID,
+           !next.contains(where: { $0.id == selectedProjectID }),
+           let selected = current.first(where: { $0.id == selectedProjectID }) {
+            next.append(selected)
+        }
+        guard next != current else { return }
+        nextServers[index].projects = next
+        do {
+            try persistServers(nextServers)
+            servers = nextServers
+        } catch {
+            // Derived projects are display metadata; a failed persist must not fail the list load.
+        }
     }
 
     /// Starts a fresh ACP session and navigates to it, mirroring the Codex new-session flow.

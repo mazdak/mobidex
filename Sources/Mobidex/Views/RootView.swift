@@ -268,6 +268,7 @@ struct ProjectSessionListView: View {
                         let sections = projectSections(from: server.projects)
                         ProjectSectionsContent(
                             sections: sections,
+                            showsDiscoveredProjects: server.backendType == .acp,
                             noFolderThreads: filteredNoFolderThreads,
                             selectedThreadID: model.selectedThreadID,
                             unavailableTitle: projectsUnavailableTitle(server: server, sections: sections),
@@ -543,9 +544,12 @@ struct ProjectSessionListView: View {
         )
     }
 
+    // The projection splits saved projects from discovered ones; the server screen
+    // renders the discovered bucket only for ACP servers, where the project list is
+    // derived from the agent's sessions rather than remote Codex discovery.
     private func projectSections(from projects: [ProjectRecord]) -> ProjectListSections {
         ProjectListSections(
-            projects: projects.filter(\.isAddedToProjectList),
+            projects: projects,
             searchText: trimmedProjectSearch,
             showInactiveDiscoveredProjects: false,
             showArchivedSessionProjects: false
@@ -601,6 +605,7 @@ private struct LoadingSection: View {
 
 private struct ProjectSectionsContent: View {
     let sections: ProjectListSections
+    let showsDiscoveredProjects: Bool
     let noFolderThreads: [CodexThread]
     let selectedThreadID: String?
     let unavailableTitle: String
@@ -612,12 +617,22 @@ private struct ProjectSectionsContent: View {
     @ViewBuilder
     var body: some View {
         ProjectListSection(
-            title: "Projects",
             projects: sections.projects,
             serverContentDisabled: serverContentDisabled,
             contentOpacity: contentOpacity,
             onOpenProject: onOpenProject
         )
+
+        if showsDiscoveredProjects {
+            ProjectListSection(
+                title: sections.discoveredTitle,
+                projects: sections.discovered,
+                allowsRemoval: false,
+                serverContentDisabled: serverContentDisabled,
+                contentOpacity: contentOpacity,
+                onOpenProject: onOpenProject
+            )
+        }
 
         NoFolderChatsSection(
             threads: noFolderThreads,
@@ -669,8 +684,11 @@ private struct NoFolderChatsSection: View {
 }
 
 private struct ProjectListSection: View {
-    let title: String
+    // The saved-projects section renders headerless (its rows lead the screen);
+    // the discovered section is labeled to mark it as derived, not user-curated.
+    var title: String?
     let projects: [ProjectRecord]
+    var allowsRemoval = true
     let serverContentDisabled: Bool
     let contentOpacity: Double
     let onOpenProject: (ProjectRecord) -> Void
@@ -682,8 +700,13 @@ private struct ProjectListSection: View {
                 ForEach(projects) { project in
                     ProjectActionRow(
                         project: project,
+                        allowsRemoval: allowsRemoval,
                         onOpenProject: onOpenProject
                     )
+                }
+            } header: {
+                if let title {
+                    Text(title)
                 }
             }
             .disabled(serverContentDisabled)
@@ -695,6 +718,7 @@ private struct ProjectListSection: View {
 private struct ProjectActionRow: View {
     @EnvironmentObject private var model: AppViewModel
     let project: ProjectRecord
+    var allowsRemoval = true
     let onOpenProject: (ProjectRecord) -> Void
 
     var body: some View {
@@ -704,10 +728,14 @@ private struct ProjectActionRow: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("projectRow")
         .swipeActions {
-            Button(role: .destructive) {
-                model.removeProject(project)
-            } label: {
-                Label("Remove", systemImage: "minus.circle")
+            // Discovered projects are re-derived from the agent's session list on every
+            // refresh; removing one would just boomerang, so the swipe is not offered.
+            if allowsRemoval {
+                Button(role: .destructive) {
+                    model.removeProject(project)
+                } label: {
+                    Label("Remove", systemImage: "minus.circle")
+                }
             }
         }
     }
