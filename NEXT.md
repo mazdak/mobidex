@@ -14,7 +14,7 @@ cold-bunx-install first-connect failure (likely phone connection blip — parked
 - [x] L3. Android: same clustering/merge in loadAcpSessionList; render sections.discovered in ProjectList (ACP-gated, no delete button); toPlaceholderThread fallback "Untitled chat".
 - [x] L4a. Validation vs real data: shared jvmTest + full Android unit tests + iOS build green; clustering simulated against the Mac's live 29-session list → fullstack(saved) 9, discovered mobidex 1 / cheetah 11 / nora 2 / qlaw 3 / foreign cheetah 1, Chats 2.
 - [x] L4b. codex reviews (default + targeted): P2 iOS non-ACP empty-state regression (pre-filter restored, projection input gated by backend); P1 Android stale-snapshot clobber (merge moved inside _state.update, applied value persisted after); P3 acpProjectRoot root-level worktree (index >= 0, empty root dropped). All fixed, both platforms re-verified green.
-- [ ] L5. Ship build 59 internal + external + team APK (versionCode 59).
+- [x] L5. Shipped build 59: internal BUILD_ID `f55427cf-6f6b-4855-9224-a2eaf1e617fe`, run `.asc/runs/testflight-20260703T155453Z-f865e7a4.json` ok; external run `.asc/runs/testflight_external-20260703T160110Z-96073387.json` ok (build VALID, beta review + External Testers); signed APK versionCode 59 → `~/Desktop/mobidex-release-59.apk`.
 - Parked: auto-retry ACP connect once when the exec channel dies during cold `bunx` install (transient network blip on phone side).
 
 ## Mission Checklist (active, 2026-06-13: ACP session lifecycle matches app navigation)
