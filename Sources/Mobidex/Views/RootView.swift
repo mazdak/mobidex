@@ -270,10 +270,17 @@ struct ProjectSessionListView: View {
                             sections: sections,
                             showsDiscoveredProjects: server.backendType == .acp,
                             noFolderThreads: filteredNoFolderThreads,
+                            showsArchivedSessions: $model.showsArchivedSessions,
                             selectedThreadID: model.selectedThreadID,
                             unavailableTitle: projectsUnavailableTitle(server: server, sections: sections),
                             serverContentDisabled: serverContentDisabled,
                             contentOpacity: contentOpacity,
+                            onArchiveNoFolderThread: { thread in
+                                Task { await model.archiveThread(thread) }
+                            },
+                            onUnarchiveNoFolderThread: { thread in
+                                Task { await model.unarchiveThread(thread) }
+                            },
                             onOpenNoFolderThread: { thread in
                                 promoteDetailIfCompact()
                                 Task { await model.openNoFolderThread(thread) }
@@ -394,11 +401,13 @@ struct ProjectSessionListView: View {
     }
 
     private func handleArchivedSessionsChange() {
-        guard model.isAppServerConnected, sessionsProjectID != nil else { return }
+        guard model.isAppServerConnected else { return }
         isSessionRefreshRequested = true
         Task {
             await model.refreshThreads()
-            visibleSessionSections = visibleSessionSectionsForCurrentScope
+            if sessionsProjectID != nil {
+                visibleSessionSections = visibleSessionSectionsForCurrentScope
+            }
             isSessionRefreshRequested = false
         }
     }
@@ -609,10 +618,13 @@ private struct ProjectSectionsContent: View {
     let sections: ProjectListSections
     let showsDiscoveredProjects: Bool
     let noFolderThreads: [CodexThread]
+    @Binding var showsArchivedSessions: Bool
     let selectedThreadID: String?
     let unavailableTitle: String
     let serverContentDisabled: Bool
     let contentOpacity: Double
+    let onArchiveNoFolderThread: (CodexThread) -> Void
+    let onUnarchiveNoFolderThread: (CodexThread) -> Void
     let onOpenNoFolderThread: (CodexThread) -> Void
     let onOpenProject: (ProjectRecord) -> Void
 
@@ -638,9 +650,12 @@ private struct ProjectSectionsContent: View {
 
         NoFolderChatsSection(
             threads: noFolderThreads,
+            showsArchivedSessions: $showsArchivedSessions,
             selectedThreadID: selectedThreadID,
             serverContentDisabled: serverContentDisabled,
             contentOpacity: contentOpacity,
+            onArchive: onArchiveNoFolderThread,
+            onUnarchive: onUnarchiveNoFolderThread,
             onOpenThread: onOpenNoFolderThread
         )
 
@@ -660,14 +675,19 @@ private struct ProjectSectionsContent: View {
 
 private struct NoFolderChatsSection: View {
     let threads: [CodexThread]
+    @Binding var showsArchivedSessions: Bool
     let selectedThreadID: String?
     let serverContentDisabled: Bool
     let contentOpacity: Double
+    let onArchive: (CodexThread) -> Void
+    let onUnarchive: (CodexThread) -> Void
     let onOpenThread: (CodexThread) -> Void
 
     @ViewBuilder
     var body: some View {
         Section {
+            Toggle("Show archived chats", isOn: $showsArchivedSessions)
+                .font(.subheadline)
             ForEach(threads) { thread in
                 Button {
                     onOpenThread(thread)
@@ -675,6 +695,30 @@ private struct NoFolderChatsSection: View {
                     ThreadRow(thread: thread, selected: thread.id == selectedThreadID)
                 }
                 .buttonStyle(.plain)
+                .swipeActions(edge: .trailing) {
+                    if thread.isArchived {
+                        Button { onUnarchive(thread) } label: {
+                            Label("Unarchive", systemImage: "tray.and.arrow.up")
+                        }
+                        .tint(.blue)
+                    } else {
+                        Button { onArchive(thread) } label: {
+                            Label("Archive", systemImage: "archivebox")
+                        }
+                        .tint(.orange)
+                    }
+                }
+                .contextMenu {
+                    if thread.isArchived {
+                        Button { onUnarchive(thread) } label: {
+                            Label("Unarchive", systemImage: "tray.and.arrow.up")
+                        }
+                    } else {
+                        Button { onArchive(thread) } label: {
+                            Label("Archive", systemImage: "archivebox")
+                        }
+                    }
+                }
                 .accessibilityIdentifier("noFolderThreadRow")
             }
         } header: {

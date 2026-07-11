@@ -2725,14 +2725,14 @@ class AppViewModel(
             isAdded = isAdded,
         )
 
-    fun projectSections(searchText: String, showInactive: Boolean, showArchived: Boolean): AndroidProjectListSections {
+    fun projectSections(searchText: String, showInactive: Boolean): AndroidProjectListSections {
         val projects = _state.value.selectedServer?.projects.orEmpty()
         val projectsByPath = projects.associateBy { it.path }
         val sections = ProjectListSections.from(
             projects = projects.map { it.toSharedProject() },
             searchText = searchText,
             showInactiveDiscoveredProjects = showInactive,
-            showArchivedSessionProjects = showArchived,
+            showArchivedSessionProjects = false,
         )
         return AndroidProjectListSections(
             projects = sections.projects.mapNotNull { projectsByPath[it.path] },

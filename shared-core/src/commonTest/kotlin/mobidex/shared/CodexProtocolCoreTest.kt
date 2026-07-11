@@ -92,7 +92,7 @@ class CodexProtocolWireEncodingTest {
         val line = CodexRpcRequests.threadList(id = 1, cwd = "/srv/app", limit = 20).encodeJsonLine()
 
         assertEquals(
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":false,\"sourceKinds\":[\"cli\",\"vscode\",\"exec\",\"appServer\"],\"cwd\":\"/srv/app\"}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":false,\"sourceKinds\":[\"cli\",\"vscode\",\"appServer\"],\"cwd\":\"/srv/app\"}}",
             line,
         )
     }
@@ -102,7 +102,7 @@ class CodexProtocolWireEncodingTest {
         val line = CodexRpcRequests.threadList(id = 1, cwd = "/srv/app", limit = 20, archived = true).encodeJsonLine()
 
         assertEquals(
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":true,\"sourceKinds\":[\"cli\",\"vscode\",\"exec\",\"appServer\"],\"cwd\":\"/srv/app\"}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":true,\"sourceKinds\":[\"cli\",\"vscode\",\"appServer\"],\"cwd\":\"/srv/app\"}}",
             line,
         )
     }
@@ -116,7 +116,7 @@ class CodexProtocolWireEncodingTest {
         ).encodeJsonLine()
 
         assertEquals(
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":false,\"sourceKinds\":[\"cli\",\"vscode\",\"exec\",\"appServer\"],\"cwd\":[\"/srv/app\",\"/srv/.codex/worktrees/a/app\"]}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":false,\"sourceKinds\":[\"cli\",\"vscode\",\"appServer\"],\"cwd\":[\"/srv/app\",\"/srv/.codex/worktrees/a/app\"]}}",
             line,
         )
     }
@@ -126,7 +126,7 @@ class CodexProtocolWireEncodingTest {
         val line = CodexRpcRequests.threadList(id = 1, cwd = "   ", limit = 20).encodeJsonLine()
 
         assertEquals(
-            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":false,\"sourceKinds\":[\"cli\",\"vscode\",\"exec\",\"appServer\"]}}",
+            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"thread/list\",\"params\":{\"limit\":20,\"sortKey\":\"updated_at\",\"sortDirection\":\"desc\",\"archived\":false,\"sourceKinds\":[\"cli\",\"vscode\",\"appServer\"]}}",
             line,
         )
     }

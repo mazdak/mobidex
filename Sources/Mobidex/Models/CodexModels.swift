@@ -151,7 +151,7 @@ private extension JSONValue {
         case .string(let value):
             return value
         case .object(let object):
-            return object["subagent"] == nil ? nil : "subAgent"
+            return object["subAgent"] == nil ? nil : "subAgent"
         default:
             return nil
         }
@@ -246,7 +246,7 @@ enum CodexThreadStatus: Equatable, Decodable, Sendable {
         switch self {
         case .active(let flags): flags.isEmpty ? "Working" : "Working: \(flags.joined(separator: ", "))"
         case .idle: "Ready"
-        case .notLoaded: "Loading"
+        case .notLoaded: "Not Loaded"
         case .systemError: "Needs Attention"
         case .unknown(let value): value
         }

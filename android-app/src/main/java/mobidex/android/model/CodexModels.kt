@@ -55,7 +55,7 @@ data class CodexThreadStatus(
         get() = when (type) {
             "active" -> if (activeFlags.isEmpty()) "Working" else "Working: ${activeFlags.joinToString()}"
             "idle" -> "Ready"
-            "notLoaded" -> "Loading"
+            "notLoaded" -> "Not Loaded"
             "systemError" -> "Needs Attention"
             else -> type
         }

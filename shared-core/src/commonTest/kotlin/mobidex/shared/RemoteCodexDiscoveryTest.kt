@@ -19,6 +19,8 @@ class RemoteCodexDiscoveryTest {
         assertFalse((command + ";exit\n").contains("\nPY;exit"))
         assertFalse((command + ";exit\n").contains("\n;exit"))
         assertTrue(command.contains("CODEX_HOME"))
+        assertTrue(command.contains("USER_FACING_SOURCES = (\"cli\", \"vscode\", \"appServer\")"), command)
+        assertFalse(command.contains("USER_FACING_SOURCES = (\"cli\", \"vscode\", \"exec\", \"appServer\")"), command)
         assertFalse(command.contains("archived_sessions"))
         assertFalse(command.contains("rollout-"))
         assertTrue(command.contains("state_5.sqlite"))

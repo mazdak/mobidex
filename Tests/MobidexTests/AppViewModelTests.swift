@@ -834,7 +834,7 @@ final class AppViewModelTests: XCTestCase {
         {"id":\(list.id),"result":{"data":[
           {"id":"thread-open","preview":"Open work","cwd":"/srv/app","status":{"type":"active","activeFlags":[]},"updatedAt":1770000500,"createdAt":1770000000,"source":"appServer","turns":[]},
           {"id":"thread-old","preview":"Old work","cwd":"/srv/old","status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"source":"cli","turns":[]},
-          {"id":"thread-subagent","preview":"Review worker","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000600,"createdAt":1770000000,"source":{"subagent":"review"},"turns":[]}
+          {"id":"thread-subagent","preview":"Review worker","cwd":"/srv/app","status":{"type":"idle"},"updatedAt":1770000600,"createdAt":1770000000,"source":{"subAgent":"review"},"turns":[]}
         ],"nextCursor":null}}
         """)
         await connectTask.value
@@ -1775,7 +1775,8 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(project.sessionPaths, ["/srv/app"])
     }
 
-    func testThreadStatusSessionLabelsUseWorkingAndReadyLanguage() throws {
+    func testThreadStatusSessionLabelsDescribeProtocolState() throws {
+        XCTAssertEqual(CodexThreadStatus.notLoaded.sessionLabel, "Not Loaded")
         XCTAssertEqual(CodexThreadStatus.idle.sessionLabel, "Ready")
         XCTAssertEqual(CodexThreadStatus.active(flags: []).sessionLabel, "Working")
         XCTAssertEqual(CodexThreadStatus.active(flags: ["waitingOnApproval"]).sessionLabel, "Working: waitingOnApproval")

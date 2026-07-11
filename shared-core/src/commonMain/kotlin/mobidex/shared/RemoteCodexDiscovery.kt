@@ -15,7 +15,7 @@ import subprocess
 from collections import defaultdict
 
 MAX_PROJECTS = 200
-USER_FACING_SOURCES = ("cli", "vscode", "exec", "appServer")
+USER_FACING_SOURCES = ("cli", "vscode", "appServer")
 
 
 home = os.path.expanduser(os.environ.get("CODEX_HOME", "~/.codex"))
@@ -140,11 +140,12 @@ def top_level_threads(db_path):
     try:
         connection = sqlite3.connect(db_path)
         connection.row_factory = sqlite3.Row
+        source_placeholders = ", ".join("?" for _ in USER_FACING_SOURCES)
         return connection.execute(
-            '''
+            f'''
             select id, cwd, title, updated_at, archived
             from threads
-            where source in (?, ?, ?, ?)
+            where source in ({source_placeholders})
             order by updated_at desc
             limit 5000
             ''',

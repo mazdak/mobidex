@@ -986,13 +986,14 @@ private fun ProjectList(
     onOpenSessions: (ProjectRecord) -> Unit,
     onOpenNoFolderThread: (CodexThread) -> Unit,
 ) {
-    val sections = model.projectSections(search, showInactive, state.showsArchivedSessions)
+    val sections = model.projectSections(search, showInactive)
     val query = search.trim()
     val noFolderThreads = state.noFolderThreads.filter { thread ->
         (state.showsArchivedSessions || !thread.isArchived) &&
             (query.isEmpty() || thread.title.contains(query, ignoreCase = true))
     }
     val contentIsLoading = state.isDiscoveringProjects || disabled
+    val chatActionsDisabled = contentIsLoading || state.isBusy || state.isStartingNewSession
     val contentAlpha = if (contentIsLoading) 0.42f else 1f
 
     Column {
@@ -1004,6 +1005,13 @@ private fun ProjectList(
             modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth(),
             enabled = !contentIsLoading,
             singleLine = true,
+        )
+        FilterChip(
+            selected = state.showsArchivedSessions,
+            onClick = { model.setShowsArchivedSessions(!state.showsArchivedSessions) },
+            enabled = !chatActionsDisabled,
+            label = { Text("Show archived chats") },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         )
         if (contentIsLoading) {
             LoadingListStatusRow("Loading projects...")
@@ -1030,8 +1038,15 @@ private fun ProjectList(
                 NoFolderChatRow(
                     thread = thread,
                     selected = thread.id == state.selectedThreadID,
-                    enabled = !contentIsLoading,
+                    enabled = !chatActionsDisabled,
                     onOpen = onOpenNoFolderThread,
+                    onMutation = {
+                        if (thread.isArchived) {
+                            model.unarchiveThread(thread)
+                        } else {
+                            model.archiveThread(thread)
+                        }
+                    },
                 )
                 HorizontalDivider()
             }
@@ -1048,6 +1063,7 @@ private fun NoFolderChatRow(
     selected: Boolean,
     enabled: Boolean,
     onOpen: (CodexThread) -> Unit,
+    onMutation: () -> Unit,
 ) {
     ListItem(
         headlineContent = { Text(thread.title, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
@@ -1058,6 +1074,11 @@ private fun NoFolderChatRow(
             }
         },
         leadingContent = { Icon(Icons.Default.Description, contentDescription = null) },
+        trailingContent = {
+            TextButton(onClick = onMutation, enabled = enabled) {
+                Text(if (thread.isArchived) "Unarchive" else "Archive")
+            }
+        },
         modifier = Modifier
             .fillMaxWidth()
             .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent)
