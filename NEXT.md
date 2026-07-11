@@ -1,5 +1,14 @@
 # NEXT.md — Active Work + Parked Items (Mobidex)
 
+## asc TestFlight submission (internal + external build 61) - 2026-07-11
+
+- Executed from clean, current `master` at `d201aba` (`fix(sessions): align Codex task visibility`), after fast-forwarding to the latest `origin/master`; the release diff received an independent no-findings review.
+- Internal: build 61, BUILD_ID `44aad8f0-c2c5-42b0-906b-a1101a7e7fd3`, run `.asc/runs/testflight-20260711T131649Z-d05bdf11.json`, status ok (build `VALID`, export compliance set, Internal Testers attached).
+- External: run `.asc/runs/testflight_external-20260711T133205Z-868c30ea.json`, status ok; App Store Connect reports beta review `APPROVED` and both Internal and External states `IN_BETA_TESTING`.
+- Contents over 60: Codex worktree-to-project discovery and refresh fixes; `exec` and `.claude/worktrees` exclusion; current `source.subAgent` decoding/capitalization; honest `Not Loaded` status; Chats archive/unarchive swipe actions and archived filter parity on iOS and Android.
+- Validation: shared JVM tests, Android debug assembly, focused iOS protocol/discovery/status/UI tests, app-server schema, discovery, iOS distribution configuration, and the release iOS build passed. The full Android suite’s known order-dependent `AppViewModelNewSessionTest` failure passed in isolation.
+- Signing note: two attempts using a login-keychain import stalled on non-interactive private-key access. The successful attempt loaded the same existing distribution certificate/key into a temporary unlocked build keychain with Apple signing-tool access; that keychain was removed after archive/export.
+
 ## Mission Checklist (active, 2026-07-03: ACP discovered projects + title cleanup)
 
 Field feedback on 58 (Mac Claude): active sessions in mobidex/cheetah/fullstack aren't
