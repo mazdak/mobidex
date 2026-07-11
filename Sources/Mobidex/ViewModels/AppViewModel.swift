@@ -1379,13 +1379,23 @@ final class AppViewModel: ObservableObject {
                 )
             ]
         )
+        let archivedFolderless = CodexThread(
+            id: "demo-folderless-archived",
+            preview: "Archived Folderless Demo",
+            cwd: "",
+            status: .notLoaded,
+            updatedAt: Date(timeIntervalSince1970: 1_770_000_500),
+            createdAt: Date(timeIntervalSince1970: 1_770_000_000),
+            isArchived: true
+        )
 
         servers = [server]
         selectedServerID = serverID
         selectedProjectID = appProject.id
         isShowingAllSessions = false
+        showsArchivedSessions = false
         threads = []
-        noFolderThreads = sortedThreads([unscopedHome, blankFolderless])
+        noFolderThreads = sortedThreads([unscopedHome, blankFolderless, archivedFolderless])
         selectedThreadID = nil
         selectedThread = nil
         selectedThreadTokenUsage = nil

@@ -10,6 +10,17 @@ import mobidex.shared.RemoteServerLaunchDefaults
 
 class ServerModelsTest {
     @Test
+    fun threadStatusSessionLabelsDescribeProtocolState() {
+        assertEquals("Not Loaded", CodexThreadStatus(type = "notLoaded").sessionLabel)
+        assertEquals("Ready", CodexThreadStatus(type = "idle").sessionLabel)
+        assertEquals("Working", CodexThreadStatus(type = "active").sessionLabel)
+        assertEquals(
+            "Working: waitingOnApproval",
+            CodexThreadStatus(type = "active", activeFlags = listOf("waitingOnApproval")).sessionLabel,
+        )
+    }
+
+    @Test
     fun backendTypeDecodesLegacyAcpGrokStoredValue() {
         // Pre-rename builds persisted "AcpGrok"; the same Json config the repository uses
         // must keep decoding those saved servers as the Acp backend.

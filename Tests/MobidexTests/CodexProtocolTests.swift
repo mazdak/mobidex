@@ -25,14 +25,13 @@ final class CodexProtocolTests: XCTestCase {
             [
                 "cli",
                 "vscode",
-                "exec",
                 "appServer"
             ]
         )
 
         transport.receive("""
         {"id":\(id),"result":{"data":[
-          {"id":"thread-subagent","preview":"Review worker","cwd":"/srv/app","source":{"subagent":"review"},"status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
+          {"id":"thread-subagent","preview":"Review worker","cwd":"/srv/app","source":{"subAgent":"review"},"status":{"type":"idle"},"updatedAt":1770000400,"createdAt":1770000000,"turns":[]},
           {"id":"thread-1","preview":"Build check","cwd":"/srv/app","source":"appServer","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]},
           {"id":"thread-2","preview":"Other","cwd":"/srv/other","status":{"type":"idle"},"updatedAt":1770000300,"createdAt":1770000000,"turns":[]}
         ],"nextCursor":null}}

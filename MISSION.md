@@ -1,23 +1,21 @@
 # Mission
 
-Mission: Fix qlaw/scoped Codex thread visibility on current `master`, remove stale Android tests, and ship Mobidex to Internal and External TestFlight.
+Mission: Verify this exact Mac task is eligible in Mobidex, integrate the completed visibility/UI fixes into current `master`, and submit a new Internal and External TestFlight build.
 
 Done criteria:
-- [x] Pull latest `origin/master` and work from current `master`.
-- [x] Port the scoped thread-list fix without dragging older build-49 conflicts onto build-55 code.
-- [x] Remove stale Android tests that wait for ignored folder `thread/started` events to refresh.
-- [x] Run focused Android/iOS verification from current `master`.
-- [x] Build and upload a new TestFlight build for Internal and External testers.
+- [x] Prove the current task’s source, cwd, discovery mapping, and real app-server listing behavior.
+- [ ] Review and commit the complete intended release diff.
+- [ ] Merge onto clean, latest `origin/master` and run release verification.
+- [ ] Build and upload a new iOS archive from updated `master`.
+- [ ] Add the build to Internal testers and submit it for External TestFlight review.
 
 Guardrails:
-- Build release artifacts only from up-to-date `master`.
-- Keep `thread/loaded/list` out of project discovery/list visibility.
-- Preserve current build-55 release changes while porting only the missing scoped-list behavior.
+- Release only from an up-to-date, clean `master` worktree.
+- Preserve all completed Chats archive/unarchive, `notLoaded`, `source.subAgent`, and exec-filter fixes.
+- Do not claim the installed app is fixed until a new build is uploaded; current server-side evidence proves eligibility, not the phone’s installed binary or selected connection.
+- Do not treat `.claude/worktrees` as Codex projects.
 
 Critical learnings:
-- The attempted merge from the build-49 work branch conflicted broadly because `master` has advanced through build 55 with overlapping folderless/session changes.
-- Current `master` already had several newer session-list pieces, but still exact-listed every saved project `sessionPath` during bounded refresh before the unscoped grouped query.
-- The qlaw handoff failure requires bounded refresh to exact-list only the primary project cwd, then run the unscoped grouped query promptly; existing visible rows are retained until the exhaustive background load reconciles.
-- The stale Android tests timed out because they waited for folder `thread/started` events to trigger `thread/list` refreshes in scopes where those events should be ignored.
-- Verification on current `master`: Android `AppViewModelNewSessionTest`, iOS `MobidexTests` build, iOS `Mobidex` build, and focused qlaw AppViewModel XCTest cases pass.
-- TestFlight build `1.0 (56)` was uploaded from `master` commit `59eb7f5`, added to Internal Testers, and submitted to External Testers with build ID `6813cccc-4799-4fe5-8dbd-516b35de84d4`.
+- Current task `019f4973-ea2b-7552-bc22-491f85b4d8f5` is `source=vscode`, not `exec`.
+- Production discovery maps its cwd `/Users/mazdak/.codex/worktrees/71a6/mobidex` into `/Users/mazdak/Code/mobidex` and includes that session path.
+- A real local app-server `thread/list` using Mobidex’s new source filter returns this exact task ID.

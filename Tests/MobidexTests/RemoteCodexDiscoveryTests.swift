@@ -28,6 +28,8 @@ final class RemoteCodexDiscoveryTests: XCTestCase {
         XCTAssertFalse((RemoteCodexDiscovery.shellCommand + ";exit\n").contains("\nPY;exit"))
         XCTAssertFalse((RemoteCodexDiscovery.shellCommand + ";exit\n").contains("\n;exit"))
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("CODEX_HOME"))
+        XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains(#"USER_FACING_SOURCES = ("cli", "vscode", "appServer")"#))
+        XCTAssertFalse(RemoteCodexDiscovery.shellCommand.contains(#"USER_FACING_SOURCES = ("cli", "vscode", "exec", "appServer")"#))
         XCTAssertFalse(RemoteCodexDiscovery.shellCommand.contains("archived_sessions"))
         XCTAssertFalse(RemoteCodexDiscovery.shellCommand.contains("rollout-"))
         XCTAssertTrue(RemoteCodexDiscovery.shellCommand.contains("state_5.sqlite"))

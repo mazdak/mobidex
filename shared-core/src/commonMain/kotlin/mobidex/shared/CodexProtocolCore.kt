@@ -255,7 +255,7 @@ fun CodexRpcResultResponse.encodeJsonLine(): String = JsonValueCodec.encode(
 
 object CodexRpcRequests {
     val userFacingThreadSourceKinds: JsonValue = jsonArray(
-        listOf("cli", "vscode", "exec", "appServer").map(::jsonString)
+        listOf("cli", "vscode", "appServer").map(::jsonString)
     )
 
     fun threadList(

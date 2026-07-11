@@ -7,6 +7,38 @@ final class MobidexUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testFolderlessChatsExposeArchiveAction() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment = [
+            "MOBIDEX_DEMO_FOLDERLESS": "1",
+            "MOBIDEX_DISABLE_SPLASH": "1",
+        ]
+        app.launch()
+
+        let server = app.buttons["serverRow"].firstMatch
+        XCTAssertTrue(server.waitForExistence(timeout: timeout), "Folderless demo server did not appear.")
+        server.tap()
+
+        let chat = app.buttons["noFolderThreadRow"].firstMatch
+        XCTAssertTrue(chat.waitForExistence(timeout: timeout), "Folderless Chat row did not appear.")
+        chat.swipeLeft()
+        XCTAssertTrue(app.buttons["Archive"].waitForExistence(timeout: 5), "Folderless Chat row did not expose Archive.")
+        chat.swipeRight()
+
+        let archivedToggle = app.switches["Show archived chats"]
+        XCTAssertTrue(archivedToggle.waitForExistence(timeout: 5), "Chats did not expose the archived filter.")
+        XCTAssertTrue(archivedToggle.isEnabled, "Archived Chats filter was unexpectedly disabled.")
+        XCTAssertEqual(archivedToggle.value as? String, "0", "Archived Chats should be hidden initially.")
+        archivedToggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        app.swipeUp()
+        let archivedTitle = app.staticTexts["Archived Folderless Demo"]
+        XCTAssertTrue(archivedTitle.waitForExistence(timeout: 5), "Toggling archived Chats on did not reveal the archived row.")
+        let archivedChat = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Archived Folderless Demo")).firstMatch
+        XCTAssertTrue(archivedChat.exists, "Archived Chat row was not actionable.")
+        archivedChat.swipeLeft()
+        XCTAssertTrue(app.buttons["Unarchive"].waitForExistence(timeout: 5), "Archived Chat row did not expose Unarchive.")
+    }
+
     func testSeededControlFlowThroughVisibleUI() throws {
         let app = XCUIApplication()
         app.launchEnvironment = try smokeLaunchEnvironment()

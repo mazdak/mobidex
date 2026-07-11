@@ -77,10 +77,10 @@ internal fun JsonElement?.bool(key: String): Boolean? =
     (this as? JsonObject)?.get(key)?.jsonPrimitive?.booleanOrNull
 
 internal fun parseThread(element: JsonElement): CodexThread {
-    val source = element.obj("source")
+    val source = (element as? JsonObject)?.get("source")
     val sourceKind = element.string("sourceKind")
-        ?: element.string("source")
-        ?: source?.let { if (it.containsKey("subagent")) "subAgent" else null }
+        ?: (source as? JsonPrimitive)?.contentOrNull
+        ?: (source as? JsonObject)?.let { if (it.containsKey("subAgent")) "subAgent" else null }
     return CodexThread(
         id = element.string("id") ?: UUID.randomUUID().toString(),
         preview = element.string("preview") ?: "",
